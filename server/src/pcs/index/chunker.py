@@ -199,24 +199,76 @@ def _symbol_name(node: _TSNode, source: bytes) -> str | None:
     return None
 
 
+_WRAPPER_TYPES: frozenset[str] = frozenset({"export_statement"})
+
+
+def _has_boundary_descendant_at_end(node: _TSNode, types: frozenset[str]) -> bool:
+    """True if a nested boundary node ends where ``node`` ends (F4: ``export function`` twice)."""
+    for child in node.children:
+        is_inner_boundary = (
+            child.type in types
+            and child.type not in _WRAPPER_TYPES
+            and child.end_byte == node.end_byte
+        )
+        if is_inner_boundary or _has_boundary_descendant_at_end(child, types):
+            return True
+    return False
+
+
+def _collect_boundary_nodes(node: _TSNode, types: frozenset[str], out: list[_TSNode]) -> None:
+    if node.type in types and not (
+        node.type in _WRAPPER_TYPES and _has_boundary_descendant_at_end(node, types)
+    ):
+        out.append(node)
+    for child in node.children:
+        _collect_boundary_nodes(child, types, out)
+
+
+def _dedupe(chunks: list[Chunk]) -> list[Chunk]:
+    """Drop exact-span duplicates and fully-nested same-symbol/kind duplicates (F4).
+
+    A class and its methods (different kinds) are intentionally kept — that
+    granularity helps retrieval — but ``export function foo`` chunked twice, or a
+    ``function_expression`` nested in an ``arrow_function`` with identical text,
+    collapses to one chunk so it is embedded once (NFR10).
+    """
+    ordered = sorted(chunks, key=lambda c: (c.start_line, -(c.end_line), c.kind))
+    kept: list[Chunk] = []
+    for chunk in ordered:
+        duplicate = False
+        for other in kept:
+            same_span = other.start_line == chunk.start_line and other.end_line == chunk.end_line
+            nested_same = (
+                other.start_line <= chunk.start_line
+                and other.end_line >= chunk.end_line
+                and other.symbol == chunk.symbol
+                and other.kind == chunk.kind
+            )
+            if same_span or nested_same:
+                duplicate = True
+                break
+        if not duplicate:
+            kept.append(chunk)
+    return sorted(kept, key=lambda c: (c.start_line, c.end_line))
+
+
 def _walk_boundaries(
     node: _TSNode, source: bytes, types: frozenset[str], out: list[Chunk], language: str
 ) -> None:
-    if node.type in types:
-        start = int(node.start_point[0]) + 1
-        end = int(node.end_point[0]) + 1
-        out.append(
-            Chunk(
-                start_line=start,
-                end_line=end,
-                kind=_KIND.get(node.type, "code"),
-                symbol=_symbol_name(node, source),
-                content=_node_text(source, node),
-                language=language,
-            )
+    nodes: list[_TSNode] = []
+    _collect_boundary_nodes(node, types, nodes)
+    raw = [
+        Chunk(
+            start_line=int(n.start_point[0]) + 1,
+            end_line=int(n.end_point[0]) + 1,
+            kind=_KIND.get(n.type, "code"),
+            symbol=_symbol_name(n, source),
+            content=_node_text(source, n),
+            language=language,
         )
-    for child in node.children:
-        _walk_boundaries(child, source, types, out, language)
+        for n in nodes
+    ]
+    out.extend(_dedupe(raw))
 
 
 def _plaintext_chunks(text: str, language: str | None) -> list[Chunk]:

@@ -30,6 +30,27 @@ async def blob_for(root: Path, relpath: str) -> str | None:
     return await _git(root, "rev-parse", f"HEAD:{relpath}")
 
 
+async def blob_map(root: Path) -> dict[str, str]:
+    """``{repo-relative path: blob SHA}`` for every tracked file at HEAD (F2).
+
+    One ``git ls-tree`` instead of a ``git rev-parse`` subprocess per file. An
+    empty dict means "no git / no HEAD" — callers just get ``None`` blobs, which
+    is fine because ``content_hash`` already drives staleness (T03 review F2).
+    """
+    out = await _git(root, "ls-tree", "-r", "-z", "HEAD")
+    if not out:
+        return {}
+    mapping: dict[str, str] = {}
+    for record in out.split("\0"):
+        if "\t" not in record:
+            continue
+        meta, path = record.split("\t", 1)
+        parts = meta.split()
+        if len(parts) >= 3:
+            mapping[path] = parts[2]
+    return mapping
+
+
 async def changed_paths_since(root: Path, since_commit: str | None) -> set[str] | None:
     """Repo-relative paths that changed vs ``since_commit`` plus working-tree dirty files.
 

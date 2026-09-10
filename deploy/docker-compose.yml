@@ -51,13 +51,13 @@ services:
     ports:
       - "127.0.0.1:${PCS_PORT:-8080}:8080"
     volumes:
+      # Read-write: the requirements file (FR16a/D12) is a git-tracked artifact
+      # written back into each project's own tree — at ${root}/.project-context/
+      # for any root, not just /repos. The server only ever writes that
+      # path-guarded per-project file; indexing and the source route read only.
       - type: bind
         source: ${PCS_REPOS_DIR:-../repos}
         target: /repos
-        read_only: true
-      - type: bind
-        source: ${PCS_REQUIREMENTS_DIR:-../repos/.project-context}
-        target: /repos/.project-context
         read_only: false
       - pcs_index:/var/lib/pcs/index
     healthcheck:

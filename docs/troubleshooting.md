@@ -10,13 +10,12 @@ Keep PCS and indexed repositories in separate directories:
 /root/MCP_Project_Server/       # PCS checkout
 /root/pcs-repos/                # repositories PCS indexes
 /root/pcs-repos/my-project/     # one indexed repository
-/root/pcs-repos/.project-context/
 ```
 
-Create the directories and clone a project on the VPS host:
+Create the directory and clone a project on the VPS host:
 
 ```bash
-mkdir -p /root/pcs-repos/.project-context
+mkdir -p /root/pcs-repos
 git clone YOUR_GIT_REPOSITORY_URL /root/pcs-repos/my-project
 ls -la /root/pcs-repos/my-project
 ```
@@ -25,21 +24,25 @@ PCS does not clone repositories. The repository must already exist in the host d
 
 ## 2. Configure the repository mount
 
-Set these values in `/root/MCP_Project_Server/.env`:
+Set this value in `/root/MCP_Project_Server/.env`:
 
 ```dotenv
 PCS_REPOS_DIR=/root/pcs-repos
-PCS_REQUIREMENTS_DIR=/root/pcs-repos/.project-context
 ```
 
-The Compose file maps them as follows:
+The Compose file maps it as follows:
 
 ```text
 VPS host                              Server container
-/root/pcs-repos                       /repos
+/root/pcs-repos                       /repos           (read-write)
 /root/pcs-repos/my-project            /repos/my-project
-/root/pcs-repos/.project-context      /repos/.project-context
 ```
+
+`/repos` is mounted read-write so the requirements file can be written back into
+`/repos/my-project/.project-context/requirements.md`. `/root/pcs-repos` (and the
+project checkout under it) must be writable by the container's `pcs` user
+(uid 1000): `chown -R 1000:1000 /root/pcs-repos` on the host, or the requirements
+screen will report the file as read-only (the store still works).
 
 The dashboard **Root path** must use the container path:
 
@@ -75,7 +78,6 @@ Expected:
 
 ```text
 /root/pcs-repos -> /repos
-/root/pcs-repos/.project-context -> /repos/.project-context
 ```
 
 Confirm the project is visible inside the container:
@@ -310,7 +312,52 @@ Successful semantic indexing reports:
 
 The exact chunk count depends on the repository.
 
-## 7. Fix OpenAI HTTP 429 errors
+## 7. Fix "Read-only file system" on requirements sync
+
+The requirements screen shows a sync report ending with:
+
+```text
+cannot create requirements file at /repos/my-project/.project-context/requirements.md:
+[Errno 30] Read-only file system: '/repos/my-project/.project-context'
+```
+
+`/repos` must be mounted **read-write** — the requirements file (FR16a) is written
+back into `<project root>/.project-context/requirements.md`. Older Compose files
+mounted `/repos` read-only with a narrow read-write overlay at
+`/repos/.project-context`, which only worked when the project root was exactly
+`/repos`.
+
+1. Update to a build where `deploy/docker-compose.yml` mounts `/repos` with
+   `read_only: false` and has no separate `.project-context` mount. Confirm:
+
+   ```bash
+   grep -A6 'volumes:' deploy/docker-compose.yml
+   ```
+
+2. Remove any `PCS_REQUIREMENTS_DIR=` line from `.env` (the variable is gone).
+
+3. Make the host repository tree writable by the container's `pcs` user (uid 1000):
+
+   ```bash
+   chown -R 1000:1000 /root/pcs-repos
+   ```
+
+4. Recreate the server:
+
+   ```bash
+   docker compose --env-file .env -f deploy/docker-compose.yml \
+     up -d --build --force-recreate server
+   ```
+
+5. Press **Sync file** again. The report should now show `File updated` and no error.
+
+If you deliberately keep the tree read-only, PCS degrades gracefully: the sync
+report shows *"The requirements file location is read-only"*, and every change is
+still saved in the store (which is authoritative). To keep an editable file, set
+`PCS_REQUIREMENTS_FILE` to an absolute path on a writable volume — the file then
+lives outside the repository and is no longer git-diffable.
+
+## 8. Fix OpenAI HTTP 429 errors
 
 This log means PCS is configured correctly but the provider rejected the request:
 
@@ -334,7 +381,7 @@ A ChatGPT Pro subscription does not include OpenAI API credit. Check:
 
 After fixing billing or limits, run another full reindex. Alternatively, switch to the local `hashing` backend and full-reindex without API cost.
 
-## 8. Routine diagnostics
+## 9. Routine diagnostics
 
 ```bash
 # Container status

@@ -60,8 +60,7 @@ These are stored per project and changed with MCP `configure_project` or `PATCH 
 
 | Variable | Default | Meaning |
 |---|---:|---|
-| `PCS_REPOS_DIR` | `../repos` | Host directory mounted read-only at `/repos`. Relative paths resolve from `deploy/docker-compose.yml`. |
-| `PCS_REQUIREMENTS_DIR` | `../repos/.project-context` | Host directory mounted read-write at `/repos/.project-context`. |
+| `PCS_REPOS_DIR` | `../repos` | Host directory mounted **read-write** at `/repos`. Relative paths resolve from `deploy/docker-compose.yml`. Read-write because the requirements file (FR16a) is written back into each project's own `.project-context/`; indexing and the source route only read. The host directory must be writable by the container's `pcs` user (uid 1000). |
 | `PCS_IMAGE` | empty | Image name substituted into Compose; see deployment notes about the simultaneous `build` declaration. |
 | `POSTGRES_USER` | `pcs` | PostgreSQL user. |
 | `POSTGRES_PASSWORD` | `pcs` | PostgreSQL password; change outside local development. |

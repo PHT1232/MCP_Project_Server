@@ -147,9 +147,11 @@ def test_ac25_compose_stack_has_server_postgres_and_safe_mounts() -> None:
     assert "Funnel" not in text or "must not" in text
     assert "pcs_pgdata" in text
     assert "pcs_index" in text
-    assert "read_only: true" in text
-    assert "target: /repos/.project-context" in text
-    assert "read_only: false" in text
+    # /repos is mounted read-write: the requirements file (FR16a) is written back
+    # into each project's own .project-context/, at any root — not just /repos.
+    assert "target: /repos" in text
+    assert "read_only: true" not in text
+    assert "/repos/.project-context" not in text
     assert "alembic" in (ROOT / "deploy" / "entrypoint.sh").read_text(encoding="utf-8")
     assert "pcs http" in (ROOT / "deploy" / "entrypoint.sh").read_text(encoding="utf-8")
 

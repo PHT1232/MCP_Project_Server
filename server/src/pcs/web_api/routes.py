@@ -62,6 +62,7 @@ async def _sync_if_requirement(
     return {
         "path": report.file_path,
         "written": report.file_written,
+        "writable": report.file_writable,
         "errors": list(report.errors),
         "reconciliations": [n.as_dict() for n in report.reconciliations],
     }

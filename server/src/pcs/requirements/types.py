@@ -127,6 +127,10 @@ class SyncReport:
     ok: bool
     file_existed: bool
     file_written: bool
+    # False when the file's directory is read-only (e.g. an indexed repo mounted
+    # read-only): the store still reconciles and is authoritative, but the file
+    # mirror cannot be created or updated (FR16a, D15).
+    file_writable: bool = True
     created: tuple[str, ...] = ()
     updated: tuple[str, ...] = ()
     archived: tuple[str, ...] = ()
@@ -151,6 +155,7 @@ class SyncReport:
             "ok": self.ok,
             "file_existed": self.file_existed,
             "file_written": self.file_written,
+            "file_writable": self.file_writable,
             "created": list(self.created),
             "updated": list(self.updated),
             "archived": list(self.archived),

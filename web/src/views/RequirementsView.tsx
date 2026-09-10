@@ -40,6 +40,13 @@ function SyncSummary({ report }: { report: SyncReport }): ReactNode {
           created {report.created.length} · updated {report.updated.length} ·
           archived {report.archived.length}
         </span>
+        {!report.file_writable && (
+          <span className="text-fey-mist">
+            The requirements file location is read-only. Changes are saved in the
+            store (it is authoritative) — mount the project tree read-write to
+            keep the file in sync.
+          </span>
+        )}
         {report.errors.map((err) => (
           <span key={err} className="text-fey-ember">
             {err}

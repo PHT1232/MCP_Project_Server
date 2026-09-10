@@ -96,6 +96,8 @@ export interface ReconciliationNote {
 export interface RequirementsFileSync {
   path: string;
   written: boolean;
+  /** False when the file's directory is read-only — the store still applied the change. */
+  writable: boolean;
   errors: string[];
   reconciliations: ReconciliationNote[];
 }
@@ -129,6 +131,8 @@ export interface SyncReport {
   ok: boolean;
   file_existed: boolean;
   file_written: boolean;
+  /** False when the file's directory is read-only — the store is authoritative. */
+  file_writable: boolean;
   created: string[];
   updated: string[];
   archived: string[];

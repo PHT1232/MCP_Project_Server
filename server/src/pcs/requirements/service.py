@@ -100,6 +100,11 @@ def _atomic_write(path: Path, text: str) -> None:
         tmp.unlink(missing_ok=True)
 
 
+def _dir_writable(directory: Path) -> bool:
+    """True if the requirements file's directory exists and accepts writes."""
+    return directory.is_dir() and os.access(directory, os.W_OK)
+
+
 def _snap(title: str, prose: str, status: str) -> dict[str, Any]:
     return {"title": title, "prose_hash": _sha256(prose), "status": status}
 
@@ -217,7 +222,9 @@ async def sync_requirements(
     path = resolve_requirements_path(proj.root_path)
     state = await _load_state(session, proj.id, str(path))
 
-    file_existed = path.exists()
+    file_existed = path.exists()  # existed *before* this sync — reported as-is
+    file_present = file_existed  # is there a file to read/parse now?
+    file_writable = True
     if not file_existed:
         if not create_if_missing:
             return _report(
@@ -231,27 +238,34 @@ async def sync_requirements(
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
             _atomic_write(path, DEFAULT_TEMPLATE)
+            file_present = True
+        except OSError as exc:
+            # Read-only location (e.g. the repo tree mounted read-only). The
+            # store stays authoritative — reconcile it and flag the file as
+            # unwritable instead of failing the whole sync (FR16a, D15).
+            logger.warning(
+                "requirements_file_read_only",
+                extra={"context": {"project": proj.id, "path": str(path), "error": str(exc)}},
+            )
+            file_writable = False
+
+    if file_present and file_writable:
+        file_writable = _dir_writable(path.parent)
+
+    if file_present:
+        try:
+            text = path.read_text(encoding="utf-8")
         except OSError as exc:
             return _report(
                 proj,
                 path,
                 ok=False,
-                file_existed=False,
-                errors=(f"cannot create requirements file at {path}: {exc}",),
+                file_existed=file_existed,
+                errors=(f"cannot read requirements file {path}: {exc}",),
                 requirements=await _current_requirements(session, proj.id),
             )
-
-    try:
-        text = path.read_text(encoding="utf-8")
-    except OSError as exc:
-        return _report(
-            proj,
-            path,
-            ok=False,
-            file_existed=file_existed,
-            errors=(f"cannot read requirements file {path}: {exc}",),
-            requirements=await _current_requirements(session, proj.id),
-        )
+    else:
+        text = DEFAULT_TEMPLATE
 
     parsed = parse_requirements(text)
     if parsed.fatal_errors:
@@ -259,12 +273,15 @@ async def sync_requirements(
             proj,
             path,
             ok=False,
-            file_existed=True,
+            file_existed=file_existed,
+            file_writable=file_writable,
             errors=tuple(parsed.fatal_errors),
             requirements=await _current_requirements(session, proj.id),
         )
 
-    result = await _merge(session, proj, path, state, parsed, text, author, file_existed)
+    result = await _merge(
+        session, proj, path, state, parsed, text, author, file_existed, file_writable
+    )
     await session.flush()
     return result
 
@@ -278,6 +295,7 @@ async def _merge(
     text: str,
     author: str,
     file_existed: bool,
+    file_writable: bool = True,
 ) -> SyncReport:
     store_rows = (
         (
@@ -498,7 +516,7 @@ async def _merge(
         )
 
     file_written = False
-    if edits or appended:
+    if (edits or appended) and file_writable:
         new_text = serialise(parsed, edits, appended)
         if new_text != text:
             try:
@@ -506,10 +524,22 @@ async def _merge(
                 file_written = True
                 text = new_text
             except OSError as exc:
-                errors.append(f"could not write requirements file {path}: {exc}")
+                # Turned read-only under us / disk full: keep the store, don't
+                # advance the snapshot, report the file as unwritable.
+                logger.warning(
+                    "requirements_file_write_failed",
+                    extra={"context": {"project": proj.id, "path": str(path), "error": str(exc)}},
+                )
+                file_writable = False
 
-    state.file_sha256 = _sha256(text)
-    state.snapshot = [{"req_key": k, **v} for k, v in sorted(new_snapshot.items())]
+    if file_writable:
+        # Only record a file baseline we actually wrote — otherwise the next sync
+        # would treat store requirements as "removed from the file" and archive
+        # them (AC22).
+        state.file_sha256 = _sha256(text)
+        state.snapshot = [{"req_key": k, **v} for k, v in sorted(new_snapshot.items())]
+    else:
+        written_back = []
     state.last_synced_at = _now()
 
     errors_t = tuple(errors)
@@ -522,6 +552,7 @@ async def _merge(
         ok=not errors_t,
         file_existed=file_existed,
         file_written=file_written,
+        file_writable=file_writable,
         created=tuple(dict.fromkeys(created)),
         updated=tuple(dict.fromkeys(updated)),
         archived=tuple(dict.fromkeys(archived)),

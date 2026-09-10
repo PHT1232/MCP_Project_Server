@@ -23,12 +23,13 @@ stdio MCP is independent of HTTP binding and may be run on the host with `(cd se
 
 Compose mounts:
 
-- `PCS_REPOS_DIR` at `/repos` read-only for source indexing.
-- `PCS_REQUIREMENTS_DIR` at `/repos/.project-context` read-write for requirements-file synchronization.
+- `PCS_REPOS_DIR` at `/repos` **read-write** for source indexing and requirements-file sync.
 
-Defaults are `../repos` and `../repos/.project-context`, resolved relative to `deploy/docker-compose.yml`. Register `/repos` or `/repos/<subdir>` as the project root.
+Default is `../repos`, resolved relative to `deploy/docker-compose.yml`. Register `/repos` or `/repos/<subdir>` as the project root.
 
-The narrow read-write mount overlays `.project-context` within the otherwise read-only `/repos` tree. Configure `PCS_REQUIREMENTS_FILE` so writable requirements files remain in that mounted directory. The server reads source but does not execute project code (NFR5).
+`/repos` is read-write because the requirements file (FR16a) is a git-tracked artifact the server writes back into each project's own `.project-context/requirements.md` — which works for any project root, not just `/repos`. The server only ever writes that one path-guarded file per project (`..` is rejected); indexing and the source route read only, and the server never executes project code (NFR5). The host directory must be writable by the container's `pcs` user (uid 1000) — if it is owned by another user, `chown` it or run Compose with a matching `user:`.
+
+If you must keep the tree read-only, set `PCS_REQUIREMENTS_FILE` to an absolute path on a writable volume (the file then leaves the repo and loses git-diffability), or accept the degraded mode: the store stays authoritative and the requirements screen reports the file as read-only.
 
 ## Persistence and backup
 

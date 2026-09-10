@@ -17,11 +17,19 @@ export function RequirementsFileNotice({
   }
   const hasErrors = sync.errors.length > 0;
   const hasNotes = sync.reconciliations.length > 0;
-  if (!hasErrors && !hasNotes) {
+  const readOnly = !sync.writable;
+  if (!hasErrors && !hasNotes && !readOnly) {
     return null;
   }
   return (
     <div className="flex flex-col gap-8">
+      {readOnly && (
+        <Callout tone="muted" title="Requirements file is read-only">
+          The change was saved in the store (it is authoritative). The file mirror
+          at <span className="text-fey-mist">{sync.path}</span> could not be
+          written — mount the project tree read-write to keep the file in sync.
+        </Callout>
+      )}
       {hasErrors && (
         <Callout tone="alert" title="Requirements file errors">
           <ul className="flex flex-col gap-4">

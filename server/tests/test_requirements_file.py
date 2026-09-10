@@ -184,6 +184,72 @@ async def test_malformed_block_is_skipped_and_last_good_is_retained(
     assert statuses["R-002"] == "in-progress"  # malformed block: last-good retained
 
 
+async def test_read_only_location_degrades_gracefully(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A read-only requirements dir (e.g. the repo mounted read-only): the store
+    still reconciles and stays authoritative, the report flags the file as
+    unwritable rather than failing, and a later sync does not archive the store
+    requirement just because the file never received it (FR16a, D15, AC22)."""
+    import errno
+
+    def _read_only(*_args: object, **_kwargs: object) -> None:
+        raise OSError(errno.EROFS, "Read-only file system")
+
+    monkeypatch.setattr(reqs, "_atomic_write", _read_only)
+    monkeypatch.setattr(reqs, "_dir_writable", lambda _dir: False)
+
+    await _register(tmp_path)
+    await _add_req("proj", "Keep me", "in-progress")
+
+    first = await _sync()
+    assert first.ok is True  # a read-only file is not a sync failure
+    assert first.file_writable is False
+    assert first.file_written is False
+    assert first.errors == ()
+    assert not (tmp_path / REL_PATH).exists()  # nothing was written
+
+    # the requirement is keyed and visible in the store view
+    assert [r.title for r in first.requirements] == ["Keep me"]
+    only_key = first.requirements[0].req_key
+    assert only_key.startswith("R-")
+    assert await _statuses() == {only_key: "in-progress"}
+
+    # a second sync must NOT archive it (the file baseline was never advanced)
+    second = await _sync()
+    assert second.file_writable is False
+    assert second.archived == ()
+    assert await _statuses() == {only_key: "in-progress"}
+
+
+async def test_read_only_location_surfaces_through_mcp_write_through(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import errno
+
+    def _read_only(*_args: object, **_kwargs: object) -> None:
+        raise OSError(errno.EROFS, "Read-only file system")
+
+    monkeypatch.setattr(reqs, "_atomic_write", _read_only)
+    monkeypatch.setattr(reqs, "_dir_writable", lambda _dir: False)
+
+    await mcp.call_tool(
+        "register_project",
+        {"name": "roproj", "root_path": str(tmp_path), "overview": "o"},
+    )
+    added = await mcp.call_tool(
+        "add_requirement",
+        {"project": "roproj", "headline": "Saved anyway", "status": "not-started"},
+    )
+    file_info = cast(dict[str, object], _tool_payload(added)["requirements_file"])
+    assert file_info["writable"] is False
+    assert file_info["written"] is False
+    assert file_info["errors"] == []
+    async with session_scope() as session:
+        views = await reqs.list_requirements(session, project="roproj")
+    assert [v.title for v in views] == ["Saved anyway"]
+
+
 async def test_ac18_end_to_end_through_mcp_tools(tmp_path: Path) -> None:
     await mcp.call_tool(
         "register_project",

@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 import { App } from "./App";
+import { RouterProvider } from "./router/router";
 import "./styles/tokens.css";
 
 const queryClient = new QueryClient({
@@ -17,7 +18,9 @@ if (container === null) {
 createRoot(container).render(
   <StrictMode>
     <QueryClientProvider client={queryClient}>
-      <App />
+      <RouterProvider>
+        <App />
+      </RouterProvider>
     </QueryClientProvider>
   </StrictMode>,
 );

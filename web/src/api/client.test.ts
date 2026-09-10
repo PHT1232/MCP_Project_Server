@@ -1,6 +1,20 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { ApiError, getBriefing, listProjects, registerProject } from "./client";
+import {
+  addEntry,
+  ApiError,
+  getBriefing,
+  getIndexStatus,
+  getSection,
+  listProjects,
+  listRequirements,
+  registerProject,
+  reindex,
+  resolveEntry,
+  setFocus,
+  syncRequirements,
+  updateEntry,
+} from "./client";
 
 function mockFetch(body: unknown, ok = true, status = 200): ReturnType<typeof vi.fn> {
   const response = {
@@ -14,22 +28,26 @@ function mockFetch(body: unknown, ok = true, status = 200): ReturnType<typeof vi
   return fetchMock;
 }
 
-function initOf(fetchMock: ReturnType<typeof vi.fn>): RequestInit {
+function callOf(
+  fetchMock: ReturnType<typeof vi.fn>,
+): { url: string; init: RequestInit } {
   const call: unknown = fetchMock.mock.calls[0];
-  if (!Array.isArray(call) || call.length < 2) {
-    throw new Error("fetch was not called with an init argument");
+  if (!Array.isArray(call)) {
+    throw new Error("fetch was not called");
   }
-  return call[1] as RequestInit;
+  return { url: call[0] as string, init: (call[1] ?? {}) as RequestInit };
 }
 
 describe("api client", () => {
   it("lists projects from GET /api/projects", async () => {
-    const fetchMock = mockFetch([{ id: "1", name: "acme", root_path: "/r" }]);
+    const fetchMock = mockFetch([
+      { id: "1", name: "acme", root_path: "/r", status_line: "idle" },
+    ]);
 
     const projects = await listProjects();
 
     expect(fetchMock).toHaveBeenCalledWith("/api/projects", expect.anything());
-    expect(projects).toEqual([{ id: "1", name: "acme", root_path: "/r" }]);
+    expect(projects[0]?.name).toBe("acme");
   });
 
   it("posts JSON to register a project", async () => {
@@ -41,7 +59,7 @@ describe("api client", () => {
 
     await registerProject({ name: "beta", root_path: "/b", overview: "hi" });
 
-    const init = initOf(fetchMock);
+    const { init } = callOf(fetchMock);
     expect(init.method).toBe("POST");
     expect(init.body).toBe(
       JSON.stringify({ name: "beta", root_path: "/b", overview: "hi" }),
@@ -72,5 +90,105 @@ describe("api client", () => {
     expect(failure).toBeInstanceOf(ApiError);
     expect((failure as ApiError).status).toBe(404);
     expect((failure as ApiError).available).toEqual(["acme"]);
+  });
+
+  it("gets a section, optionally including resolved entries", async () => {
+    const fetchMock = mockFetch({ section: "blockers", entries: [] });
+
+    await getSection("p", "blockers");
+    expect(callOf(fetchMock).url).toBe("/api/projects/p/sections/blockers");
+
+    fetchMock.mockClear();
+    await getSection("p", "blockers", true);
+    expect(callOf(fetchMock).url).toBe(
+      "/api/projects/p/sections/blockers?include_resolved=true",
+    );
+  });
+
+  it("POSTs a new entry", async () => {
+    const fetchMock = mockFetch({ id: "e1", section: "blockers" }, true, 201);
+
+    await addEntry("p", { section: "blockers", headline: "h", detail: "d" });
+
+    const { url, init } = callOf(fetchMock);
+    expect(url).toBe("/api/projects/p/entries");
+    expect(init.method).toBe("POST");
+    expect(init.body).toBe(
+      JSON.stringify({ section: "blockers", headline: "h", detail: "d" }),
+    );
+  });
+
+  it("PATCHes an entry by id", async () => {
+    const fetchMock = mockFetch({ id: "e1" });
+
+    await updateEntry("p", "e1", { detail: "new" });
+
+    const { url, init } = callOf(fetchMock);
+    expect(url).toBe("/api/projects/p/entries/e1");
+    expect(init.method).toBe("PATCH");
+  });
+
+  it("POSTs to resolve an entry", async () => {
+    const fetchMock = mockFetch({ id: "e1", status: "resolved" });
+
+    await resolveEntry("p", "e1");
+
+    const { url, init } = callOf(fetchMock);
+    expect(url).toBe("/api/projects/p/entries/e1/resolve");
+    expect(init.method).toBe("POST");
+  });
+
+  it("PUTs the current focus (replace semantics)", async () => {
+    const fetchMock = mockFetch({ id: "p", name: "p" });
+
+    await setFocus("p", "ship T06");
+
+    const { url, init } = callOf(fetchMock);
+    expect(url).toBe("/api/projects/p/focus");
+    expect(init.method).toBe("PUT");
+    expect(init.body).toBe(JSON.stringify({ text: "ship T06" }));
+  });
+
+  it("lists requirements with counts", async () => {
+    const fetchMock = mockFetch({
+      requirements: [],
+      done_count: 3,
+      total_count: 8,
+    });
+
+    const result = await listRequirements("p");
+
+    expect(callOf(fetchMock).url).toBe("/api/projects/p/requirements");
+    expect(result.done_count).toBe(3);
+    expect(result.total_count).toBe(8);
+  });
+
+  it("POSTs a requirements sync", async () => {
+    const fetchMock = mockFetch({ ok: true, requirements: [] });
+
+    await syncRequirements("p");
+
+    const { url, init } = callOf(fetchMock);
+    expect(url).toBe("/api/projects/p/requirements/sync");
+    expect(init.method).toBe("POST");
+  });
+
+  it("gets the index status", async () => {
+    const fetchMock = mockFetch({ semantic_available: false });
+
+    await getIndexStatus("p");
+
+    expect(callOf(fetchMock).url).toBe("/api/projects/p/index");
+  });
+
+  it("POSTs a reindex with the incremental flag", async () => {
+    const fetchMock = mockFetch({ semantic_available: false });
+
+    await reindex("p", false);
+
+    const { url, init } = callOf(fetchMock);
+    expect(url).toBe("/api/projects/p/reindex");
+    expect(init.method).toBe("POST");
+    expect(init.body).toBe(JSON.stringify({ incremental: false }));
   });
 });

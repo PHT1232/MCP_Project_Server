@@ -1,16 +1,15 @@
 import { useState, type ReactNode } from "react";
 
 import type { RegisterProjectInput } from "../api/types";
+import { Callout } from "./Callout";
 import { PillButton } from "./PillButton";
+import { Field, TextArea, TextInput } from "./fields";
 
 interface RegisterFormProps {
   onSubmit: (input: RegisterProjectInput) => void;
   pending: boolean;
   error: string | null;
 }
-
-const FIELD_CLASS =
-  "rounded-small border border-fey-smoke bg-fey-obsidian px-14 py-10 text-body text-fey-white outline-none focus:border-fey-mist";
 
 export function RegisterForm({
   onSubmit,
@@ -29,21 +28,17 @@ export function RegisterForm({
       }}
       className="flex flex-col gap-16"
     >
-      <label className="flex flex-col gap-6 text-caption uppercase text-fey-graphite">
-        Name
-        <input
-          className={FIELD_CLASS}
+      <Field label="Name">
+        <TextInput
           value={name}
           onChange={(event) => {
             setName(event.target.value);
           }}
           required
         />
-      </label>
-      <label className="flex flex-col gap-6 text-caption uppercase text-fey-graphite">
-        Root path
-        <input
-          className={FIELD_CLASS}
+      </Field>
+      <Field label="Root path">
+        <TextInput
           value={rootPath}
           onChange={(event) => {
             setRootPath(event.target.value);
@@ -51,11 +46,9 @@ export function RegisterForm({
           placeholder="/repos/my-project"
           required
         />
-      </label>
-      <label className="flex flex-col gap-6 text-caption uppercase text-fey-graphite">
-        Overview
-        <textarea
-          className={FIELD_CLASS}
+      </Field>
+      <Field label="Overview">
+        <TextArea
           value={overview}
           rows={3}
           onChange={(event) => {
@@ -63,10 +56,8 @@ export function RegisterForm({
           }}
           required
         />
-      </label>
-      {error !== null && (
-        <p className="text-body text-fey-ember">{error}</p>
-      )}
+      </Field>
+      {error !== null && <Callout tone="alert">{error}</Callout>}
       <div>
         <PillButton type="submit" disabled={pending}>
           {pending ? "Registering…" : "Register project"}

@@ -1,22 +1,25 @@
 import type { ReactNode } from "react";
 
 import type { Project } from "../api/types";
+import { Link } from "../router/router";
 
 interface ProjectListProps {
   projects: Project[];
+  /** Currently-open project name, if any (gets the Signal underline). */
   selected: string | null;
-  onSelect: (name: string) => void;
+  /** Route to open when a project is picked, `{name}` substituted. */
+  hrefFor: (name: string) => string;
 }
 
 /**
- * The project picker. The selected row carries the one Fey Signal underline
- * (DESIGN.md "Pill Navigation Button" active state) — the page's single
- * chromatic accent.
+ * The project picker (FR31): each row is a name + its one-line status. The open
+ * row carries the single Fey Signal underline (DESIGN.md "Pill Navigation
+ * Button" active state) — Signal as a navigation accent, not a status colour.
  */
 export function ProjectList({
   projects,
   selected,
-  onSelect,
+  hrefFor,
 }: ProjectListProps): ReactNode {
   if (projects.length === 0) {
     return (
@@ -27,24 +30,28 @@ export function ProjectList({
   }
 
   return (
-    <ul className="flex flex-col gap-8">
+    <ul className="flex flex-col gap-14">
       {projects.map((project) => {
         const active = project.name === selected;
         return (
           <li key={project.id}>
-            <button
-              type="button"
-              onClick={() => {
-                onSelect(project.name);
-              }}
-              className={
-                active
-                  ? "border-b border-fey-signal pb-4 text-body font-medium text-fey-white"
-                  : "border-b border-transparent pb-4 text-body text-fey-graphite"
-              }
+            <Link
+              to={hrefFor(project.name)}
+              className={`flex flex-col gap-4 border-b pb-8 no-underline ${
+                active ? "border-fey-signal" : "border-fey-smoke"
+              }`}
             >
-              {project.name}
-            </button>
+              <span
+                className={`text-body font-medium ${
+                  active ? "text-fey-white" : "text-fey-mist"
+                }`}
+              >
+                {project.name}
+              </span>
+              <span className="text-caption uppercase text-fey-graphite">
+                {project.status_line || "no status yet"}
+              </span>
+            </Link>
           </li>
         );
       })}

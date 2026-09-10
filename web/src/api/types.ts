@@ -145,6 +145,116 @@ export interface SkippedFile {
   reason: string;
 }
 
+/* --------------------------------------------------------------------------
+ * Code map (FR32–FR34) — mirrors pcs.codemap.service.get_code_map.
+ * ------------------------------------------------------------------------ */
+
+/** Per-node context overlay counts (FR33). `hot = blockers + bugs > 0`. */
+export interface CodeMapOverlay {
+  focus: number;
+  blockers: number;
+  bugs: number;
+  requirements: number;
+  hot: boolean;
+}
+
+export type CodeMapNodeKind = "directory" | "file" | "symbol" | "external";
+
+/** One node of a code-map tier (directory / file) or a file's symbol. */
+export interface CodeMapNode {
+  id: string;
+  kind: CodeMapNodeKind;
+  path: string;
+  label: string;
+  language: string | null;
+  loc: number;
+  size_bytes: number;
+  file_count: number;
+  symbol_count: number;
+  fan_in: number;
+  fan_out: number;
+  has_children: boolean;
+  outside_scope: boolean;
+  overlay: CodeMapOverlay;
+  /** Present only on `kind: "symbol"` nodes (file scope). */
+  symbol_kind?: string;
+  start_line?: number;
+  end_line?: number;
+  signature?: string | null;
+}
+
+export interface CodeMapEdge {
+  source: string;
+  target: string;
+  kind: string;
+  weight: number;
+}
+
+export interface CodeMapProvenance {
+  indexed: boolean;
+  last_full_at?: string | null;
+  last_incremental_at?: string | null;
+  last_commit?: string | null;
+  symbol_modes?: Record<string, string>;
+}
+
+export interface CodeMapStats {
+  total_files?: number;
+  total_resolved_edges?: number;
+  node_count: number;
+  edge_count: number;
+  truncated: boolean;
+}
+
+export interface CodeMap {
+  project: string;
+  project_name: string;
+  scope: string | null;
+  scope_kind: "directory" | "file";
+  depth: number;
+  generated_from: CodeMapProvenance;
+  nodes: CodeMapNode[];
+  edges: CodeMapEdge[];
+  /** File scope only (FR34): resolved file-level deps / dependents. */
+  dependencies?: string[];
+  dependents?: string[];
+  stats: CodeMapStats;
+  overlay_legend: string[];
+}
+
+/** FR34 — read-only file source for the inspector. */
+export interface SourceFile {
+  path: string;
+  language: string | null;
+  content: string;
+  truncated: boolean;
+}
+
+/* --------------------------------------------------------------------------
+ * Code search (FR35) — mirrors pcs.index.service.search_code.
+ * ------------------------------------------------------------------------ */
+
+export interface SearchHit {
+  path: string;
+  start_line: number;
+  end_line: number;
+  snippet: string;
+  score: number;
+  matched_mode: string;
+  retrieval_modes?: string[];
+  stale: boolean;
+  symbol: string | null;
+  kind: string;
+  language: string | null;
+}
+
+export interface SearchResponse {
+  hits: SearchHit[];
+  semantic_available: boolean;
+  mode: string;
+  note?: string | null;
+}
+
 /**
  * pcs.index.service.IndexStatusView.as_dict (FR26). `semantic_available` is
  * always present; `semantic_note` arrives once T04 lands the embedding backend

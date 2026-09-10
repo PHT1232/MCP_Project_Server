@@ -4,13 +4,16 @@ import {
   addEntry,
   ApiError,
   getBriefing,
+  getCodeMap,
   getIndexStatus,
   getSection,
+  getSource,
   listProjects,
   listRequirements,
   registerProject,
   reindex,
   resolveEntry,
+  searchCode,
   setFocus,
   syncRequirements,
   updateEntry,
@@ -190,5 +193,43 @@ describe("api client", () => {
     expect(url).toBe("/api/projects/p/reindex");
     expect(init.method).toBe("POST");
     expect(init.body).toBe(JSON.stringify({ incremental: false }));
+  });
+
+  it("gets the top tier of the code map with no scope (FR32a)", async () => {
+    const fetchMock = mockFetch({ nodes: [], edges: [], scope: null });
+
+    await getCodeMap("p");
+
+    expect(callOf(fetchMock).url).toBe("/api/projects/p/code-map");
+  });
+
+  it("gets a code-map subtree with scope + depth", async () => {
+    const fetchMock = mockFetch({ nodes: [], edges: [], scope: "services" });
+
+    await getCodeMap("p", "services", 2);
+
+    expect(callOf(fetchMock).url).toBe(
+      "/api/projects/p/code-map?scope=services&depth=2",
+    );
+  });
+
+  it("gets read-only source with an encoded path", async () => {
+    const fetchMock = mockFetch({ path: "a b.py", content: "x", truncated: false });
+
+    await getSource("p", "src/a b.py");
+
+    expect(callOf(fetchMock).url).toBe(
+      "/api/projects/p/source?path=src%2Fa+b.py",
+    );
+  });
+
+  it("searches code with the q param and a limit", async () => {
+    const fetchMock = mockFetch({ hits: [], semantic_available: false, mode: "keyword" });
+
+    await searchCode("p", "make_invoice", { limit: 30 });
+
+    expect(callOf(fetchMock).url).toBe(
+      "/api/projects/p/search?q=make_invoice&limit=30",
+    );
   });
 });

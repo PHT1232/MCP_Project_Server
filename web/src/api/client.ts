@@ -6,6 +6,7 @@
  */
 import type {
   Briefing,
+  CodeMap,
   Entry,
   EntryInput,
   EntryWriteResponse,
@@ -14,7 +15,9 @@ import type {
   Project,
   RegisterProjectInput,
   RequirementsResponse,
+  SearchResponse,
   SectionResponse,
+  SourceFile,
   SyncReport,
 } from "./types";
 
@@ -175,6 +178,64 @@ export function reindex(
     method: "POST",
     ...jsonBody({ incremental }),
   });
+}
+
+/**
+ * FR32 / FR32a — one tier of the code map. `scope` omitted = the top directory
+ * tier; a subtree path returns only that slice; an indexed file path returns its
+ * symbol / dependency view (FR34). The client never asks for the whole graph.
+ */
+export function getCodeMap(
+  project: string,
+  scope?: string,
+  depth?: number,
+): Promise<CodeMap> {
+  const params = new URLSearchParams();
+  if (scope !== undefined && scope !== "") {
+    params.set("scope", scope);
+  }
+  if (depth !== undefined) {
+    params.set("depth", String(depth));
+  }
+  const query = params.toString();
+  return request<CodeMap>(
+    projectPath(project, `/code-map${query === "" ? "" : `?${query}`}`),
+  );
+}
+
+/** FR34 — the read-only source of one indexed file for the node inspector. */
+export function getSource(project: string, path: string): Promise<SourceFile> {
+  const params = new URLSearchParams({ path });
+  return request<SourceFile>(
+    projectPath(project, `/source?${params.toString()}`),
+  );
+}
+
+export interface SearchOptions {
+  scope?: "project" | "subtree" | "files" | "focus";
+  subtree?: string;
+  limit?: number;
+}
+
+/** FR35 — hybrid keyword + semantic code search for the search panel. */
+export function searchCode(
+  project: string,
+  query: string,
+  options: SearchOptions = {},
+): Promise<SearchResponse> {
+  const params = new URLSearchParams({ q: query });
+  if (options.scope !== undefined) {
+    params.set("scope", options.scope);
+  }
+  if (options.subtree !== undefined) {
+    params.set("subtree", options.subtree);
+  }
+  if (options.limit !== undefined) {
+    params.set("limit", String(options.limit));
+  }
+  return request<SearchResponse>(
+    projectPath(project, `/search?${params.toString()}`),
+  );
 }
 
 export type { Entry };

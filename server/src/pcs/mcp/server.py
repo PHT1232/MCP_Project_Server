@@ -23,6 +23,7 @@ from pcs.mcp.tools import register_tools
 from pcs.web_api import register_routes
 from pcs.web_api.codemap_routes import register_codemap_routes
 from pcs.web_api.index_routes import register_index_routes
+from pcs.web_api.source_routes import register_source_routes
 from pcs.web_static import register_frontend
 
 _settings = get_settings()
@@ -48,6 +49,7 @@ register_resources(mcp)
 register_routes(mcp)
 register_index_routes(mcp)
 register_codemap_routes(mcp)
+register_source_routes(mcp)
 
 
 def build_http_app() -> Starlette:

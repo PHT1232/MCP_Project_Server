@@ -869,6 +869,7 @@ version = "0.0.0"
 source = { editable = "." }
 dependencies = [
     { name = "alembic" },
+    { name = "httpx" },
     { name = "mcp" },
     { name = "pathspec" },
     { name = "psycopg", extra = ["binary"] },
@@ -893,6 +894,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "alembic", specifier = ">=1.14.0" },
+    { name = "httpx", specifier = ">=0.27" },
     { name = "mcp", specifier = ">=1.13,<2" },
     { name = "pathspec", specifier = ">=1.1.1" },
     { name = "psycopg", extras = ["binary"], specifier = ">=3.2.3" },

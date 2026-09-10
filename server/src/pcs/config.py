@@ -100,6 +100,68 @@ class Settings(BaseSettings):
             "requirements section of the store (D15)."
         ),
     )
+    embedding_backend: str = Field(
+        default="",
+        description=(
+            "Embedding backend for semantic search (FR28, D7). Empty → semantic search "
+            "is disabled and only keyword/structural search runs (AC10, AC21). "
+            "'openai' → an OpenAI-compatible /embeddings HTTP endpoint. "
+            "'hashing' → a bundled zero-dependency local n-gram hashing vectoriser "
+            "(opt-in, lower quality; useful offline / for CI)."
+        ),
+    )
+    embedding_base_url: str = Field(
+        default="https://api.openai.com/v1",
+        description="Base URL for embedding_backend='openai' (OpenAI-compatible). No trailing /.",
+    )
+    embedding_api_key: str = Field(
+        default="",
+        description="Bearer token for embedding_backend='openai'. Sent only to embedding_base_url.",
+    )
+    embedding_model: str = Field(
+        default="text-embedding-3-small",
+        description="Model name passed to the embedding endpoint (or 'hashing').",
+    )
+    embedding_dimensions: int = Field(
+        default=1536,
+        description="Vector dimension stored in pgvector. Must match the configured model.",
+    )
+    embedding_batch_size: int = Field(
+        default=64,
+        description="Chunks embedded per backend request during indexing (NFR10).",
+    )
+    embedding_timeout_seconds: float = Field(
+        default=30.0,
+        description="Per-request timeout for the embedding HTTP backend.",
+    )
+    summary_backend: str = Field(
+        default="",
+        description=(
+            "FR9d LLM-summarisation backend for long context entries. Empty → deterministic "
+            "truncation fallback (FR9e). 'openai' → an OpenAI-compatible /chat/completions "
+            "endpoint. Data leaves the host only via this endpoint (NFR11)."
+        ),
+    )
+    summary_base_url: str = Field(
+        default="https://api.openai.com/v1",
+        description="Base URL for summary_backend='openai' (OpenAI-compatible). No trailing /.",
+    )
+    summary_api_key: str = Field(
+        default="",
+        description="Bearer token for summary_backend='openai'. Sent only to summary_base_url.",
+    )
+    summary_model: str = Field(
+        default="gpt-4o-mini",
+        description="Chat model used for FR9d summarisation.",
+    )
+    scip_indexers: str = Field(
+        default="",
+        description=(
+            "Comma-separated 'language=binary' overrides for SCIP indexers (FR23c). "
+            "Empty → probe the default binary names on PATH; missing → tree-sitter tags "
+            "fallback (AC23)."
+        ),
+    )
 
     @property
     def bind_host(self) -> str:

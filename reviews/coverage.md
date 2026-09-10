@@ -23,21 +23,21 @@ State: `—` not started · `wip` in progress · `claimed` agent says done ·
 | AC11 | Code map top-level nodes match real modules + edges | T05 | T07 | — | |
 | AC12 | Open blocker/bug marked on its node | T05 | T07 | — | |
 | AC13 | Node select → inspector (source, deps, related context) | T07 | T05 | — | |
-| AC14 | Frontend edit ↔ next briefing (both directions) | T06 | T01 | server-side verified | T01 `test_http_app_and_ac14_http_mcp_share_the_store` (HTTP write ↔ MCP briefing); frontend half is T06 |
-| AC14a | Requirements view N/M accurate; store ↔ file both reflected | T06 | T02 | — | |
+| AC14 | Frontend edit ↔ next briefing (both directions) | T06 | T01 | verified | T01 server test + T06 `DashboardEdit.test.tsx` (edit → refetch); agent confirmed live both directions |
+| AC14a | Requirements view N/M accurate; store ↔ file both reflected | T06 | T02 | verified | T06 `requirements.test.ts` (`doneSummary`) + `RequirementsView` surfaces `requirements_file` errors/recon; T02 server tests |
 | AC15 | Drop index schema + restart → clean rebuild, context intact | T03 | | verified | `test_ac15_drop_index_schema_rebuild_preserves_context` (`DROP SCHEMA … CASCADE`); see reviews/T03.md F1 |
 | AC16 | Missing/unknown project → error listing projects, no guess | T01 | T00 | verified | `test_ac16_unknown_and_missing_project_list_registered` + MCP/HTTP paths |
 | AC17 | Two edits → two revisions; deleted entry gone from reads, in history | T01 | | verified | `test_ac17_two_edits_two_revisions_deleted_gone_from_reads` |
 | AC18 | Add requirement in frontend → block in file; file edit + sync → store+view | T02 | T06 | verified (server) | `test_ac18_*` (store→file, file→store, MCP e2e); frontend half is T06 |
 | AC19 | `prepare_task` = briefing + code in one response, adaptive split | T04 | | verified | `test_ac19_prepare_task_reports_split_within_budget` |
 | AC20 | `get_code_map` default = top-level only; expand = lazy children | T05 | T07 | — | |
-| AC21 | No embedding backend → frontend + `get_index_status` show unavailable | T04 | T06 | verified (server) | `test_ac21_status_shows_semantic_unavailable`; frontend indicator is T06 |
+| AC21 | No embedding backend → frontend + `get_index_status` show unavailable | T04 | T06 | verified | server `test_ac21_*` + T06 `semantic.test.ts` / `semanticIndicator` |
 | AC22 | Status conflict → store wins, file token rewritten, reconciliation reported; deleted block archived | T02 | | verified | `test_ac22_status_changed_in_both_*`, `test_ac22_deleted_block_is_archived_and_never_resurrected` |
 | AC23 | Supported language, no SCIP indexer → tags fallback, status shows mode | T04 | | verified | `test_ac23_tags_fallback_symbol_mode`, `test_ac23_status_dict_reports_modes`; real SCIP-binary run deferred (reviews/T04.md D1) |
 | AC24 | `prepare_task` reports split; small context → code expands | T04 | | verified | `test_ac24_small_context_expands_code_pack` |
 | AC25 | `docker compose up` clean → register + briefing with only mount config | T08 | | verified | reviewer ran the live stack (health + register + briefing from host); `test_b1_*`, `test_ac25_*` |
 | AC26 | Tailscale on → tailnet-only reachable; off → localhost only | T08 | | partial | bind policy + compose asserted (`test_ac26_*`, `test_s2_*`, `test_b1_bind_address_is_ignored_in_tailscale_mode`); two-device tailnet check deferred to T09 |
-| AC27 | Frontend computed styles = DESIGN.md tokens; no "Don't"-list violations | T06 | T07 | — | |
+| AC27 | Frontend computed styles = DESIGN.md tokens; no "Don't"-list violations | T06 | T07 | verified (shell) | grep: no hex/px literals outside tokens.css; outline-only badges; no blue-as-status. T07 does the full 6-pillar pass + N1 |
 
 ## NFR checks (T09 unless noted)
 

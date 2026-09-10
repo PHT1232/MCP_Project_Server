@@ -104,7 +104,7 @@ files get fleshed out against the real skeleton structure at that point.
 | T02 | `task/T02-requirements-file` | **merged** (`320bf39`) — [reviews/T02.md](reviews/T02.md) |
 | T04 | `task/T04-index-semantic` | **merged** (`23a93e7`, renumbered 0005) — [reviews/T04.md](reviews/T04.md) |
 | T05 | `task/T05-codemap-api` | **in progress** (agent running) |
-| T06 | `task/T06-frontend-shell` | **in review** |
+| T06 | `task/T06-frontend-shell` | **merged** — [reviews/T06.md](reviews/T06.md) |
 | T07 | — | blocked (needs T05 + T06) |
 | T09 | — | blocked on Phase 1 |
 

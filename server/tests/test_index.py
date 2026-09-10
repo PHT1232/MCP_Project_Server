@@ -289,3 +289,5 @@ async def test_http_index_routes_are_registered() -> None:
     assert "/api/projects/{project}/index" in paths
     assert "/api/projects/{project}/reindex" in paths
     assert "/api/projects/{project}/search" in paths
+    assert "/api/projects/{project}/retrieve-context" in paths
+    assert "/api/projects/{project}/prepare-task" in paths

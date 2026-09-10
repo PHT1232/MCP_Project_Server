@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from pcs.context.assembly import assemble_briefing
 from pcs.context.types import (
+    ACTION_ARCHIVE,
     ACTION_CREATE,
     ACTION_DELETE,
     ACTION_RESOLVE,
@@ -25,11 +26,13 @@ from pcs.context.types import (
     EXPIRY_OFF,
     EXPIRY_POLICIES,
     HEADLINE_MAX_CHARS,
+    HIDDEN_STATUSES,
     PREPARE_TASK_TOKEN_MAX,
     PREPARE_TASK_TOKEN_MIN,
     SECTION_FOCUS,
     SECTION_OVERVIEW,
     SECTION_REQUIREMENTS,
+    STATUS_ARCHIVED,
     STATUS_DELETED,
     STATUS_OPEN,
     STATUS_RESOLVED,
@@ -60,6 +63,7 @@ __all__ = [
     "ProjectSummary",
     "ValidationError",
     "add_entry",
+    "archive_entry",
     "configure_project",
     "delete_entry",
     "get_entry",
@@ -97,6 +101,7 @@ def _as_view(row: ContextEntry) -> EntryView:
         requirement_status=row.requirement_status,
         linked_files=tuple(str(f) for f in files),
         related_entry_id=row.related_entry_id,
+        req_key=row.req_key,
     )
 
 
@@ -178,7 +183,7 @@ def _is_visible(
     include_resolved: bool,
     include_deleted: bool = False,
 ) -> bool:
-    if entry.status == STATUS_DELETED and not include_deleted:
+    if entry.status in HIDDEN_STATUSES and not include_deleted:
         return False
     if entry.status == STATUS_RESOLVED and not include_resolved:
         return False
@@ -222,7 +227,7 @@ async def _load_entry(
         )
     )
     row = result.scalar_one_or_none()
-    if row is None or (row.status == STATUS_DELETED and not include_deleted):
+    if row is None or (row.status in HIDDEN_STATUSES and not include_deleted):
         raise EntryNotFoundError(entry_id, project.name)
     return row
 
@@ -236,7 +241,7 @@ async def _assert_related(
         select(ContextEntry).where(
             ContextEntry.id == related_entry_id.strip(),
             ContextEntry.project_id == project.id,
-            ContextEntry.status != STATUS_DELETED,
+            ContextEntry.status.notin_((STATUS_DELETED, STATUS_ARCHIVED)),
         )
     )
     if related.scalar_one_or_none() is None:
@@ -250,7 +255,8 @@ async def _status_line(session: AsyncSession, project: Project) -> str:
     now = _now()
     result = await session.execute(
         select(ContextEntry).where(
-            ContextEntry.project_id == project.id, ContextEntry.status != STATUS_DELETED
+            ContextEntry.project_id == project.id,
+            ContextEntry.status.notin_((STATUS_DELETED, STATUS_ARCHIVED)),
         )
     )
     entries = [
@@ -384,8 +390,13 @@ async def add_entry(
     requirement_status: str | None = None,
     linked_files: Sequence[str] | None = None,
     related_entry_id: str | None = None,
+    req_key: str | None = None,
 ) -> EntryView:
-    """Append a new entry in ``section`` (FR10, FR13, FR17 append/merge)."""
+    """Append a new entry in ``section`` (FR10, FR13, FR17 append/merge).
+
+    ``req_key`` is the server-assigned ``R-NNN`` identity for a requirement
+    (FR16a); it is set by :mod:`pcs.requirements` and is unique per project.
+    """
     section_key = validate_section(section)
     if section_key == SECTION_OVERVIEW:
         raise ValidationError("overview is updated via update_overview, not added")
@@ -409,6 +420,7 @@ async def add_entry(
         requirement_status=req_status,
         linked_files=_linked_files(linked_files),
         related_entry_id=related,
+        req_key=(req_key.strip() or None) if req_key else None,
     )
     session.add(entry)
     await session.flush()
@@ -511,6 +523,25 @@ async def delete_entry(
     entry.updated_at = _now()
     await session.flush()
     _record_revision(session, entry, ACTION_DELETE, author)
+    await session.flush()
+    return _as_view(entry)
+
+
+async def archive_entry(
+    session: AsyncSession, *, project: str, entry_id: str, author: str = "agent"
+) -> EntryView:
+    """Archive a requirement whose block was removed from the file (FR16a, AC22).
+
+    Like a soft-delete, but a distinct state: gone from reads, history retained,
+    and never resurrected by a later ``sync_requirements`` (D5, D15).
+    """
+    row = await resolve_project(session, project, for_update=True)
+    entry = await _load_entry(session, row, entry_id)
+    entry.status = STATUS_ARCHIVED
+    entry.author = author
+    entry.updated_at = _now()
+    await session.flush()
+    _record_revision(session, entry, ACTION_ARCHIVE, author)
     await session.flush()
     return _as_view(entry)
 
@@ -684,7 +715,8 @@ async def get_project_briefing(
         )
     result = await session.execute(
         select(ContextEntry).where(
-            ContextEntry.project_id == row.id, ContextEntry.status != STATUS_DELETED
+            ContextEntry.project_id == row.id,
+            ContextEntry.status.notin_((STATUS_DELETED, STATUS_ARCHIVED)),
         )
     )
     now = _now()

@@ -14,6 +14,7 @@ from sqlalchemy import (
     CheckConstraint,
     DateTime,
     ForeignKey,
+    Index,
     Integer,
     String,
     Text,
@@ -82,8 +83,17 @@ class ContextEntry(Base):
     __tablename__ = "context_entries"
     __table_args__ = (
         CheckConstraint(
-            "status IN ('open', 'resolved', 'deleted')",
+            "status IN ('open', 'resolved', 'deleted', 'archived')",
             name="ck_context_entries_status",
+        ),
+        # FR16a: requirement key R-NNN is unique per project when set. Requirements
+        # created store-first (add_requirement) get their key on the next sync.
+        Index(
+            "uq_context_entries_project_req_key",
+            "project_id",
+            "req_key",
+            unique=True,
+            postgresql_where=text("req_key IS NOT NULL"),
         ),
     )
 
@@ -92,6 +102,8 @@ class ContextEntry(Base):
         ForeignKey("projects.id", ondelete="CASCADE"), index=True
     )
     section: Mapped[str] = mapped_column(String(32), index=True)
+    # FR16a — stable, server-assigned R-NNN identity for requirements; never reused.
+    req_key: Mapped[str | None] = mapped_column(String(16), nullable=True)
     headline: Mapped[str] = mapped_column(Text)
     detail: Mapped[str] = mapped_column(Text, default="")
     status: Mapped[str] = mapped_column(String(16), default="open")

@@ -11,6 +11,10 @@ dependencies = [
     "pydantic-settings>=2.6.1",
     "uvicorn>=0.34.0",
     "starlette>=0.46.0",
+    "pathspec>=1.1.1",
+    "tree-sitter>=0.23",
+    "tree-sitter-language-pack>=0.7,<0.8",
+    "watchfiles>=1.2.0",
 ]
 
 [dependency-groups]
@@ -54,5 +58,5 @@ files = ["src", "tests"]
 exclude = ["^src/pcs/alembic/env\\.py$"]
 
 [[tool.mypy.overrides]]
-module = ["testcontainers.*"]
+module = ["testcontainers.*", "pathspec", "pathspec.*", "tree_sitter_language_pack", "watchfiles"]
 ignore_missing_imports = true

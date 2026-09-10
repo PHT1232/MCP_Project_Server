@@ -16,6 +16,8 @@ from starlette.responses import JSONResponse, Response
 from pcs.config import get_settings
 from pcs.context import service
 from pcs.db.base import session_scope
+from pcs.index.service import index_if_root_exists
+from pcs.index.watch import ensure_watch
 from pcs.logging import log_tool_call
 
 if TYPE_CHECKING:
@@ -84,6 +86,8 @@ async def _register_project(request: Request) -> Response:
                 overview=str(body.get("overview", "")),
                 author=caller,
             )
+            await index_if_root_exists(session, project=summary.id, root_path=summary.root_path)
+            await ensure_watch(summary.id, summary.root_path)
     except Exception as exc:
         log_tool_call(tool="register_project", project=name, caller=caller, outcome=f"error: {exc}")
         return _error_response(exc)

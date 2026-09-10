@@ -13,6 +13,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from pcs.context import service
 from pcs.context.types import SECTION_REQUIREMENTS
+from pcs.index.service import index_if_root_exists
+from pcs.index.watch import ensure_watch
 from pcs.mcp.support import caller, run_tool
 
 _CRUD_SECTIONS: tuple[tuple[str, str], ...] = (
@@ -146,6 +148,8 @@ def _register_lifecycle_tools(mcp: FastMCP) -> None:
                 overview=overview,
                 author=caller(ctx),
             )
+            await index_if_root_exists(session, project=summary.id, root_path=summary.root_path)
+            await ensure_watch(summary.id, summary.root_path)
             return _project_dict(summary)
 
         return await run_tool("register_project", name, ctx, op)

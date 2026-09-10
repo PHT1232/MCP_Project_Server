@@ -8,13 +8,19 @@ message lists the registered projects (D3, FR8, AC16).
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+
 from mcp.server.fastmcp import FastMCP
 from starlette.applications import Starlette
 
 from pcs.config import get_settings
+from pcs.index import watch as index_watch
+from pcs.mcp.index_tools import register_index_tools
 from pcs.mcp.resources import register_resources
 from pcs.mcp.tools import register_tools
 from pcs.web_api import register_routes
+from pcs.web_api.index_routes import register_index_routes
 
 _settings = get_settings()
 
@@ -31,10 +37,25 @@ mcp: FastMCP = FastMCP(
 )
 
 register_tools(mcp)
+register_index_tools(mcp)
 register_resources(mcp)
 register_routes(mcp)
+register_index_routes(mcp)
 
 
 def build_http_app() -> Starlette:
     """The streamable-HTTP MCP app with the ``/api`` routes mounted."""
-    return mcp.streamable_http_app()
+    app = mcp.streamable_http_app()
+    inner = app.router.lifespan_context
+
+    @asynccontextmanager
+    async def lifespan(app_: Starlette) -> AsyncIterator[None]:
+        await index_watch.start_all()
+        try:
+            async with inner(app_):
+                yield
+        finally:
+            await index_watch.stop_all()
+
+    app.router.lifespan_context = lifespan
+    return app

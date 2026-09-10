@@ -42,12 +42,17 @@ SECTION_HEADINGS: Final[dict[str, str]] = {
 }
 
 # Lifecycle status (FR3, FR11). "deleted" is a soft-delete; the row is kept.
+# "archived" (FR16a, AC22) is a requirement whose block was removed from the
+# requirements file — kept in history, never resurrected.
 STATUS_OPEN: Final = "open"
 STATUS_RESOLVED: Final = "resolved"
 STATUS_DELETED: Final = "deleted"
+STATUS_ARCHIVED: Final = "archived"
 LIFECYCLE_STATUSES: Final[frozenset[str]] = frozenset(
-    {STATUS_OPEN, STATUS_RESOLVED, STATUS_DELETED}
+    {STATUS_OPEN, STATUS_RESOLVED, STATUS_DELETED, STATUS_ARCHIVED}
 )
+# Statuses hidden from normal reads (briefing, get_section) but kept in history.
+HIDDEN_STATUSES: Final[frozenset[str]] = frozenset({STATUS_DELETED, STATUS_ARCHIVED})
 
 # FR2 / FR16a requirement status tokens (store form; T02 maps the file tokens).
 REQ_NOT_STARTED: Final = "not-started"
@@ -62,8 +67,9 @@ ACTION_CREATE: Final = "create"
 ACTION_UPDATE: Final = "update"
 ACTION_RESOLVE: Final = "resolve"
 ACTION_DELETE: Final = "delete"
+ACTION_ARCHIVE: Final = "archive"
 REVISION_ACTIONS: Final[frozenset[str]] = frozenset(
-    {ACTION_CREATE, ACTION_UPDATE, ACTION_RESOLVE, ACTION_DELETE}
+    {ACTION_CREATE, ACTION_UPDATE, ACTION_RESOLVE, ACTION_DELETE, ACTION_ARCHIVE}
 )
 
 EXPIRY_OFF: Final = "off"
@@ -149,6 +155,7 @@ class EntryView:
     requirement_status: str | None = None
     linked_files: tuple[str, ...] = ()
     related_entry_id: str | None = None
+    req_key: str | None = None
 
     def as_dict(self) -> dict[str, object]:
         """JSON-ready dict (ISO timestamps)."""
@@ -166,6 +173,7 @@ class EntryView:
             "requirement_status": self.requirement_status,
             "linked_files": list(self.linked_files),
             "related_entry_id": self.related_entry_id,
+            "req_key": self.req_key,
         }
 
 

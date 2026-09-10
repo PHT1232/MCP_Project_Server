@@ -15,6 +15,7 @@ from pcs.config import get_settings
 # Importing the models modules registers every table on ``Base.metadata``.
 from pcs.db.models import Base
 import pcs.index.models as _index_models  # noqa: F401
+import pcs.requirements.models as _requirements_models  # noqa: F401
 
 config = context.config
 if config.config_file_name is not None:

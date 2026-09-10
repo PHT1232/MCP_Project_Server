@@ -10,15 +10,18 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from typing import TYPE_CHECKING
 
+from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
 from pcs.config import get_settings
 from pcs.context import service
+from pcs.context.types import SECTION_REQUIREMENTS
 from pcs.db.base import session_scope
 from pcs.index.service import index_if_root_exists
 from pcs.index.watch import ensure_watch
 from pcs.logging import log_tool_call
+from pcs.requirements import service as requirements_service
 
 if TYPE_CHECKING:
     from mcp.server.fastmcp import FastMCP
@@ -43,6 +46,33 @@ def _project_json(summary: service.ProjectSummary) -> dict[str, object]:
 
 def _caller(request: Request) -> str:
     return request.headers.get("x-pcs-caller", "frontend")
+
+
+async def _sync_if_requirement(
+    session: AsyncSession, project: str, caller: str, section: str
+) -> dict[str, object] | None:
+    """Write a requirements-section change through to the file (FR16a, D12)."""
+    if section != SECTION_REQUIREMENTS:
+        return None
+    report = await requirements_service.write_through_requirement_change(
+        session, project=project, author=caller
+    )
+    if report is None:
+        return None
+    return {
+        "path": report.file_path,
+        "written": report.file_written,
+        "errors": list(report.errors),
+        "reconciliations": [n.as_dict() for n in report.reconciliations],
+    }
+
+
+def _with_file_sync(
+    payload: dict[str, object], file_sync: dict[str, object] | None
+) -> dict[str, object]:
+    if file_sync is not None:
+        payload["requirements_file"] = file_sync
+    return payload
 
 
 def _error_response(exc: Exception) -> JSONResponse:
@@ -88,6 +118,9 @@ async def _register_project(request: Request) -> Response:
             )
             await index_if_root_exists(session, project=summary.id, root_path=summary.root_path)
             await ensure_watch(summary.id, summary.root_path)
+            await requirements_service.write_through_requirement_change(
+                session, project=summary.id, author=caller
+            )
     except Exception as exc:
         log_tool_call(tool="register_project", project=name, caller=caller, outcome=f"error: {exc}")
         return _error_response(exc)
@@ -180,11 +213,12 @@ async def _add_entry(request: Request) -> Response:
                 linked_files=_opt_str_list(body, "linked_files"),
                 related_entry_id=_opt_str(body, "related_entry_id"),
             )
+            file_sync = await _sync_if_requirement(session, project, caller, view.section)
     except Exception as exc:
         log_tool_call(tool="add_entry", project=project, caller=caller, outcome=f"error: {exc}")
         return _error_response(exc)
     log_tool_call(tool="add_entry", project=project, caller=caller, outcome="ok")
-    return JSONResponse(view.as_dict(), status_code=201)
+    return JSONResponse(_with_file_sync(view.as_dict(), file_sync), status_code=201)
 
 
 async def _get_entry(request: Request) -> Response:
@@ -220,11 +254,12 @@ async def _patch_entry(request: Request) -> Response:
                 linked_files=_opt_str_list(body, "linked_files"),
                 related_entry_id=_opt_str(body, "related_entry_id"),
             )
+            file_sync = await _sync_if_requirement(session, project, caller, view.section)
     except Exception as exc:
         log_tool_call(tool="update_entry", project=project, caller=caller, outcome=f"error: {exc}")
         return _error_response(exc)
     log_tool_call(tool="update_entry", project=project, caller=caller, outcome="ok")
-    return JSONResponse(view.as_dict())
+    return JSONResponse(_with_file_sync(view.as_dict(), file_sync))
 
 
 async def _resolve_entry(request: Request) -> Response:
@@ -236,11 +271,12 @@ async def _resolve_entry(request: Request) -> Response:
             view = await service.resolve_entry(
                 session, project=project, entry_id=entry_id, author=caller
             )
+            file_sync = await _sync_if_requirement(session, project, caller, view.section)
     except Exception as exc:
         log_tool_call(tool="resolve_entry", project=project, caller=caller, outcome=f"error: {exc}")
         return _error_response(exc)
     log_tool_call(tool="resolve_entry", project=project, caller=caller, outcome="ok")
-    return JSONResponse(view.as_dict())
+    return JSONResponse(_with_file_sync(view.as_dict(), file_sync))
 
 
 async def _delete_entry(request: Request) -> Response:
@@ -252,11 +288,12 @@ async def _delete_entry(request: Request) -> Response:
             view = await service.delete_entry(
                 session, project=project, entry_id=entry_id, author=caller
             )
+            file_sync = await _sync_if_requirement(session, project, caller, view.section)
     except Exception as exc:
         log_tool_call(tool="delete_entry", project=project, caller=caller, outcome=f"error: {exc}")
         return _error_response(exc)
     log_tool_call(tool="delete_entry", project=project, caller=caller, outcome="ok")
-    return JSONResponse(view.as_dict())
+    return JSONResponse(_with_file_sync(view.as_dict(), file_sync))
 
 
 async def _entry_history(request: Request) -> Response:
@@ -291,6 +328,47 @@ async def _set_focus(request: Request) -> Response:
         return _error_response(exc)
     log_tool_call(tool="set_current_focus", project=project, caller=caller, outcome="ok")
     return JSONResponse(_project_json(summary))
+
+
+async def _list_requirements(request: Request) -> Response:
+    """Read-only requirements list for the frontend view (AC14a). No file write."""
+    caller = _caller(request)
+    project = str(request.path_params["project"])
+    try:
+        async with session_scope() as session:
+            reqs = await requirements_service.list_requirements(session, project=project)
+    except Exception as exc:
+        log_tool_call(
+            tool="list_requirements", project=project, caller=caller, outcome=f"error: {exc}"
+        )
+        return _error_response(exc)
+    log_tool_call(tool="list_requirements", project=project, caller=caller, outcome="ok")
+    done = sum(1 for r in reqs if r.status == "done")
+    return JSONResponse(
+        {
+            "requirements": [r.as_dict() for r in reqs],
+            "done_count": done,
+            "total_count": len(reqs),
+        }
+    )
+
+
+async def _sync_requirements(request: Request) -> Response:
+    """Re-parse the requirements file and reconcile with the store (FR16a, D12)."""
+    caller = _caller(request)
+    project = str(request.path_params["project"])
+    try:
+        async with session_scope() as session:
+            report = await requirements_service.sync_requirements(
+                session, project=project, author=caller
+            )
+    except Exception as exc:
+        log_tool_call(
+            tool="sync_requirements", project=project, caller=caller, outcome=f"error: {exc}"
+        )
+        return _error_response(exc)
+    log_tool_call(tool="sync_requirements", project=project, caller=caller, outcome="ok")
+    return JSONResponse(report.as_dict())
 
 
 def _opt_str(body: Mapping[str, object], key: str) -> str | None:
@@ -341,6 +419,8 @@ _ROUTES: list[tuple[str, list[str], _Handler]] = [
     ("/api/projects/{project}/entries/{entry_id}", ["DELETE"], _delete_entry),
     ("/api/projects/{project}/entries/{entry_id}/resolve", ["POST"], _resolve_entry),
     ("/api/projects/{project}/entries/{entry_id}/history", ["GET"], _entry_history),
+    ("/api/projects/{project}/requirements", ["GET"], _list_requirements),
+    ("/api/projects/{project}/requirements/sync", ["POST"], _sync_requirements),
 ]
 
 

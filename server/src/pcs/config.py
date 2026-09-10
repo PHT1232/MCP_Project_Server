@@ -91,6 +91,15 @@ class Settings(BaseSettings):
         default=True,
         description="Watch registered project roots and trigger incremental reindex (FR24).",
     )
+    requirements_file: str = Field(
+        default=".project-context/requirements.md",
+        description=(
+            "Requirements template file (FR16a, D12). Relative paths resolve under the "
+            "project's root_path; an absolute path is used as-is. Created from a template "
+            "on register_project if absent. The server keeps it in two-way sync with the "
+            "requirements section of the store (D15)."
+        ),
+    )
 
     @property
     def bind_host(self) -> str:

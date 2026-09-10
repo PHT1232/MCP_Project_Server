@@ -16,6 +16,7 @@ from pcs.context.types import SECTION_REQUIREMENTS
 from pcs.index.service import index_if_root_exists
 from pcs.index.watch import ensure_watch
 from pcs.mcp.support import caller, run_tool
+from pcs.requirements import service as requirements_service
 
 _CRUD_SECTIONS: tuple[tuple[str, str], ...] = (
     ("focus", "focus"),
@@ -25,6 +26,26 @@ _CRUD_SECTIONS: tuple[tuple[str, str], ...] = (
     ("decisions", "decision"),
     ("glossary", "glossary"),
 )
+
+
+async def _attach_file_sync(
+    session: AsyncSession,
+    project: str | None,
+    ctx: Context[Any, Any] | None,
+    payload: dict[str, object],
+) -> dict[str, object]:
+    """Write a store-side requirement change through to the file (FR16a, D12)."""
+    report = await requirements_service.write_through_requirement_change(
+        session, project=project or "", author=caller(ctx)
+    )
+    if report is not None:
+        payload["requirements_file"] = {
+            "path": report.file_path,
+            "written": report.file_written,
+            "errors": list(report.errors),
+            "reconciliations": [n.as_dict() for n in report.reconciliations],
+        }
+    return payload
 
 
 def register_tools(mcp: FastMCP) -> None:
@@ -150,6 +171,10 @@ def _register_lifecycle_tools(mcp: FastMCP) -> None:
             )
             await index_if_root_exists(session, project=summary.id, root_path=summary.root_path)
             await ensure_watch(summary.id, summary.root_path)
+            # FR16a: create the requirements template file if absent and sync it.
+            await requirements_service.write_through_requirement_change(
+                session, project=summary.id, author=caller(ctx)
+            )
             return _project_dict(summary)
 
         return await run_tool("register_project", name, ctx, op)
@@ -330,7 +355,7 @@ def _register_requirement_tools(mcp: FastMCP) -> None:
                 linked_files=linked_files,
                 related_entry_id=related_entry_id,
             )
-            return view.as_dict()
+            return await _attach_file_sync(session, project, ctx, view.as_dict())
 
         return await run_tool("add_requirement", project, ctx, op)
 
@@ -360,7 +385,7 @@ def _register_requirement_tools(mcp: FastMCP) -> None:
                 related_entry_id=related_entry_id,
                 expected_section=SECTION_REQUIREMENTS,
             )
-            return view.as_dict()
+            return await _attach_file_sync(session, project, ctx, view.as_dict())
 
         return await run_tool("update_requirement", project, ctx, op)
 
@@ -381,7 +406,7 @@ def _register_requirement_tools(mcp: FastMCP) -> None:
                 status=status,
                 author=caller(ctx),
             )
-            return view.as_dict()
+            return await _attach_file_sync(session, project, ctx, view.as_dict())
 
         return await run_tool("set_requirement_status", project, ctx, op)
 
@@ -401,9 +426,31 @@ def _register_requirement_tools(mcp: FastMCP) -> None:
                 author=caller(ctx),
                 expected_section=SECTION_REQUIREMENTS,
             )
-            return view.as_dict()
+            return await _attach_file_sync(session, project, ctx, view.as_dict())
 
         return await run_tool("resolve_requirement", project, ctx, op)
+
+    @mcp.tool()
+    async def sync_requirements(
+        project: str | None = None,
+        ctx: Context[Any, Any] | None = None,
+    ) -> dict[str, object]:
+        """Re-parse the requirements template file and reconcile it with the store (FR16a).
+
+        3-way merge against the last-synced snapshot (D15): blocks added in the
+        file are created; blocks removed are archived (kept in history, never
+        resurrected); title/prose changes flow file→store; on a status conflict
+        the store wins and the file's ``status=`` token is rewritten. Unparseable
+        blocks are skipped with their last-good state retained and reported.
+        """
+
+        async def op(session: AsyncSession) -> dict[str, object]:
+            report = await requirements_service.sync_requirements(
+                session, project=project or "", author=caller(ctx)
+            )
+            return report.as_dict()
+
+        return await run_tool("sync_requirements", project, ctx, op)
 
 
 def _register_delete(mcp: FastMCP) -> None:

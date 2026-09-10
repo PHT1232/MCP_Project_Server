@@ -18,6 +18,11 @@ from pcs.db.base import reset_engine, session_scope
 PGVECTOR_IMAGE = "pgvector/pgvector:pg16"
 
 
+def pytest_configure() -> None:
+    """Disable the HTTP file watcher in tests; they call reindex directly (FR24)."""
+    os.environ.setdefault("PCS_INDEX_WATCH", "false")
+
+
 @pytest.fixture(scope="session")
 def database_url() -> Iterator[str]:
     """Start Postgres once per test session and expose an async SQLAlchemy URL."""

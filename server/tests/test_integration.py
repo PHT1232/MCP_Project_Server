@@ -59,6 +59,9 @@ EXPECTED_TOOLS = frozenset(
         "update_requirement",
         "set_requirement_status",
         "resolve_requirement",
+        "get_index_status",
+        "reindex",
+        "search_code",
     }
 )
 
@@ -163,6 +166,9 @@ async def test_http_app_and_ac14_http_mcp_share_the_store() -> None:
     assert "/api/health" in paths
     assert "/api/projects" in paths
     assert "/api/projects/{project}/entries" in paths
+    assert "/api/projects/{project}/index" in paths
+    assert "/api/projects/{project}/reindex" in paths
+    assert "/api/projects/{project}/search" in paths
 
     with TestClient(app) as client:
         health = client.get("/api/health")
@@ -180,6 +186,15 @@ async def test_http_app_and_ac14_http_mcp_share_the_store() -> None:
 
         briefing = client.get(f"/api/projects/{PROJECT}/briefing").json()
         assert "ACME" in briefing["briefing"]
+
+        index_status = client.get(f"/api/projects/{PROJECT}/index")
+        assert index_status.status_code == 200
+        assert index_status.json()["file_count"] == 0
+
+        empty_search = client.get(f"/api/projects/{PROJECT}/search", params={"q": "greet"})
+        assert empty_search.status_code == 200
+        assert empty_search.json()["hits"] == []
+        assert empty_search.json()["semantic_available"] is False
 
         missing = client.get("/api/projects/nope/briefing")
         assert missing.status_code == 404

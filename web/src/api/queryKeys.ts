@@ -11,6 +11,16 @@ export const queryKeys = {
     ["section", project, section] as const,
   requirements: (project: string) => ["requirements", project] as const,
   indexStatus: (project: string) => ["index", project] as const,
+  /**
+   * FR32 — one tier of the code map. `scope === null` is the top tier; a subtree
+   * path is a lazily-expanded slice. `isRefreshable` picks these up by `project`.
+   */
+  codeMap: (project: string, scope: string | null) =>
+    ["code-map", project, scope ?? "__root__"] as const,
+  /** FR34 — read-only source for the node inspector. */
+  source: (project: string, path: string) => ["source", project, path] as const,
+  /** FR35 — a search-panel query. */
+  search: (project: string, query: string) => ["search", project, query] as const,
 };
 
 /**

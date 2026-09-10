@@ -1,0 +1,36 @@
+# --- scratch / local notes ---
+something.txt
+*.scratch
+.worktrees/
+reviews/*.local.md
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+.coverage
+htmlcov/
+dist/
+build/
+*.egg-info/
+
+# --- Node / frontend ---
+node_modules/
+web/dist/
+web/.vite/
+*.tsbuildinfo
+
+# --- env / secrets ---
+.env
+.env.*
+!.env.example
+
+# --- editor / OS ---
+.DS_Store
+.idea/
+.vscode/
+*.swp

@@ -64,13 +64,9 @@ def upgrade() -> None:
             server_default=sa.func.now(),
             nullable=False,
         ),
-        sa.ForeignKeyConstraint(
-            ["project_id"], ["projects.id"], ondelete="CASCADE"
-        ),
+        sa.ForeignKeyConstraint(["project_id"], ["projects.id"], ondelete="CASCADE"),
     )
-    op.create_index(
-        "ix_context_entries_project_id", "context_entries", ["project_id"]
-    )
+    op.create_index("ix_context_entries_project_id", "context_entries", ["project_id"])
     op.create_index("ix_context_entries_section", "context_entries", ["section"])
 
 

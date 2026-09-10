@@ -43,6 +43,6 @@ async def clean_db(migrated_db: str) -> AsyncIterator[None]:
     """Truncate all skeleton tables before each test."""
     await reset_engine()
     async with session_scope() as session:
-        await session.execute(text("TRUNCATE projects, context_entries CASCADE"))
+        await session.execute(text("TRUNCATE projects CASCADE"))
     yield
     await reset_engine()

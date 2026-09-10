@@ -1,0 +1,66 @@
+# Overlay: join the user's Tailscale tailnet (FR41, D16, AC26).
+# Usage:
+#   TS_AUTHKEY=tskey-auth-... docker compose \
+#     -f deploy/docker-compose.yml -f deploy/docker-compose.tailscale.yml up
+#
+# Never enables Funnel. Host publishes stay 127.0.0.1-only on Postgres.
+# The server shares the sidecar network namespace and binds the tailnet IPv4.
+
+name: pcs
+
+services:
+  postgres:
+    networks:
+      pcs:
+        ipv4_address: 172.30.0.2
+
+  tailscale:
+    image: tailscale/tailscale:v1.80.3
+    hostname: ${TS_HOSTNAME:-pcs}
+    environment:
+      TS_AUTHKEY: ${TS_AUTHKEY:-}
+      TS_STATE_DIR: /var/lib/tailscale
+      TS_USERSPACE: "false"
+      TS_AUTH_ONCE: "true"
+      # Funnel is not passed here and must not be added to TS_EXTRA_ARGS (NFR14).
+      TS_EXTRA_ARGS: ${TS_EXTRA_ARGS:---accept-dns=false}
+      TS_SERVE_CONFIG: ${TS_SERVE_CONFIG:-}
+    volumes:
+      - pcs_ts_state:/var/lib/tailscale
+    cap_add:
+      - NET_ADMIN
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    extra_hosts:
+      - "postgres:172.30.0.2"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      pcs:
+        ipv4_address: 172.30.0.3
+    restart: unless-stopped
+
+  server:
+    network_mode: service:tailscale
+    environment:
+      PCS_BIND_MODE: tailscale
+      PCS_DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-pcs}:${POSTGRES_PASSWORD:-pcs}@postgres:5432/${POSTGRES_DB:-pcs}
+    # Drop host publishes and the bridge network so we can join the sidecar
+    # namespace (loopback-only host ports stay on postgres; FR41, NFR14, AC26).
+    ports: !reset []
+    networks: !reset []
+    depends_on:
+      postgres:
+        condition: service_healthy
+      tailscale:
+        condition: service_started
+
+networks:
+  pcs:
+    ipam:
+      config:
+        - subnet: 172.30.0.0/24
+
+volumes:
+  pcs_ts_state:

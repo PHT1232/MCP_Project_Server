@@ -1,0 +1,40 @@
+# Multi-stage: Vite frontend + uv server. No secrets in the image (FR40).
+# Bind address is decided at runtime via PCS_BIND_MODE (NFR14).
+
+# --- frontend ---
+FROM node:22-alpine AS web
+WORKDIR /web
+COPY web/package.json web/package-lock.json ./
+RUN npm ci
+COPY web/ ./
+RUN npm run build
+
+# --- python deps ---
+FROM python:3.12-slim-bookworm AS build
+COPY --from=ghcr.io/astral-sh/uv:0.12.11 /uv /usr/local/bin/uv
+WORKDIR /app
+ENV UV_COMPILE_BYTECODE=1 UV_LINK_MODE=copy
+COPY server/pyproject.toml server/uv.lock server/.python-version ./
+RUN uv sync --frozen --no-dev --no-install-project
+COPY server/src ./src
+COPY server/alembic.ini ./
+RUN uv sync --frozen --no-dev
+
+# --- runtime ---
+FROM python:3.12-slim-bookworm
+RUN useradd --system --uid 1000 --create-home pcs \
+    && mkdir -p /var/lib/pcs/index \
+    && chown pcs:pcs /var/lib/pcs/index
+COPY --from=build --chown=pcs:pcs /app /app
+COPY --from=web /web/dist /app/web/dist
+COPY deploy/entrypoint.sh /app/entrypoint.sh
+RUN chmod 755 /app/entrypoint.sh
+WORKDIR /app
+ENV PATH="/app/.venv/bin:${PATH}" \
+    PYTHONUNBUFFERED=1 \
+    PCS_STATIC_DIR=/app/web/dist \
+    PCS_BIND_MODE=localhost \
+    PCS_PORT=8080
+USER pcs
+EXPOSE 8080
+ENTRYPOINT ["/app/entrypoint.sh"]

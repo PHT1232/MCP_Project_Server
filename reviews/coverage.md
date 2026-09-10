@@ -35,8 +35,8 @@ State: `—` not started · `wip` in progress · `claimed` agent says done ·
 | AC22 | Status conflict → store wins, file token rewritten, reconciliation reported; deleted block archived | T02 | | — | |
 | AC23 | Supported language, no SCIP indexer → tags fallback, status shows mode | T04 | | — | |
 | AC24 | `prepare_task` reports split; small context → code expands | T04 | | — | |
-| AC25 | `docker compose up` clean → register + briefing with only mount config | T08 | | — | |
-| AC26 | Tailscale on → tailnet-only reachable; off → localhost only | T08 | | — | |
+| AC25 | `docker compose up` clean → register + briefing with only mount config | T08 | | verified | reviewer ran the live stack (health + register + briefing from host); `test_b1_*`, `test_ac25_*` |
+| AC26 | Tailscale on → tailnet-only reachable; off → localhost only | T08 | | partial | bind policy + compose asserted (`test_ac26_*`, `test_s2_*`, `test_b1_bind_address_is_ignored_in_tailscale_mode`); two-device tailnet check deferred to T09 |
 | AC27 | Frontend computed styles = DESIGN.md tokens; no "Don't"-list violations | T06 | T07 | — | |
 
 ## NFR checks (T09 unless noted)

@@ -1,0 +1,112 @@
+@import "tailwindcss";
+
+/*
+ * The single style source for the frontend (D17, FR39a, NFR15).
+ * Values are transcribed verbatim from DESIGN.md "Quick Start / Tailwind v4".
+ * Components reference these tokens through Tailwind utilities only — never a
+ * literal hex / px / shadow.
+ */
+@theme {
+  /* Colors */
+  --color-fey-white: #ffffff;
+  --color-fey-ink: #0b0b0b;
+  --color-fey-charcoal: #191919;
+  --color-fey-obsidian: #131313;
+  --color-fey-graphite: #868f97;
+  --color-fey-mist: #cccccc;
+  --color-fey-smoke: #525252;
+  --color-fey-pale: #e6e6e6;
+  --color-fey-ash: #999999;
+  --color-fey-ember: #ffa16c;
+  --color-fey-signal: #479ffa;
+  --color-fey-growth: #4ebe96;
+  --color-fey-abyss: #000000;
+  --color-fey-frost: #b6d6ff;
+  --color-fey-volt: #d6fe51;
+
+  /* Typography */
+  --font-calibre: "Calibre", ui-sans-serif, system-ui, -apple-system,
+    BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+
+  /* Typography — Scale */
+  --text-caption: 10px;
+  --text-caption--line-height: 1.5;
+  --text-body: 14px;
+  --text-body--line-height: 1.5;
+  --text-heading-sm: 18px;
+  --text-heading-sm--line-height: 1.32;
+  --text-heading: 24px;
+  --text-heading--line-height: 1.25;
+  --text-heading--letter-spacing: -1.27px;
+  --text-heading-lg: 26px;
+  --text-heading-lg--line-height: 1.2;
+  --text-heading-lg--letter-spacing: -1.38px;
+  --text-display: 48px;
+  --text-display--line-height: 1.1;
+  --text-display--letter-spacing: -3.84px;
+  --text-display-lg: 54px;
+  --text-display-lg--line-height: 1;
+  --text-display-lg--letter-spacing: -4.32px;
+
+  /* Spacing */
+  --spacing-4: 4px;
+  --spacing-6: 6px;
+  --spacing-8: 8px;
+  --spacing-10: 10px;
+  --spacing-14: 14px;
+  --spacing-15: 15px;
+  --spacing-16: 16px;
+  --spacing-18: 18px;
+  --spacing-20: 20px;
+  --spacing-21: 21px;
+  --spacing-24: 24px;
+  --spacing-28: 28px;
+  --spacing-32: 32px;
+  --spacing-40: 40px;
+  --spacing-42: 42px;
+  --spacing-103: 103px;
+
+  /* Border Radius */
+  --radius-md: 3.2px;
+  --radius-md-2: 6px;
+  --radius-lg: 10px;
+  --radius-xl: 13.9806px;
+  --radius-2xl: 16px;
+  --radius-full: 50px;
+  --radius-full-2: 99px;
+  --radius-full-3: 275px;
+  /* Named radii (DESIGN.md "Named Radii") */
+  --radius-cards: 16px;
+  --radius-icons: 6px;
+  --radius-small: 10px;
+  --radius-buttons: 99px;
+  --radius-featured: 275px;
+
+  /* Shadows */
+  --shadow-xl: rgba(0, 0, 0, 0.8) 0px 0px 44px 0px;
+  --shadow-subtle: rgba(0, 0, 0, 0.85) 0px 1px 0px 0px;
+  --shadow-md: rgba(255, 255, 255, 0.25) 0px 0px 14px 0px;
+  --shadow-xl-2: rgba(0, 0, 0, 0.5) 0px 0px 35px 0px;
+
+  /* Layout */
+  --page-max-width: 1200px;
+}
+
+@layer base {
+  html {
+    color-scheme: dark;
+    background-color: var(--color-fey-ink);
+  }
+
+  body {
+    margin: 0;
+    min-height: 100vh;
+    background-color: var(--color-fey-ink);
+    color: var(--color-fey-graphite);
+    font-family: var(--font-calibre);
+    font-size: var(--text-body);
+    line-height: var(--text-body--line-height);
+    font-feature-settings: "ss01" on, "tnum" on;
+    -webkit-font-smoothing: antialiased;
+  }
+}

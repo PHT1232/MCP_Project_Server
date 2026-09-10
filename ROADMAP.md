@@ -99,9 +99,10 @@ files get fleshed out against the real skeleton structure at that point.
 |------|--------|-------|
 | T00 | `task/T00-skeleton` | **merged** (`371d4c7`) — [reviews/T00.md](reviews/T00.md) |
 | T01 | `task/T01-context-store` | **merged** (`dc9921a`) — [reviews/T01.md](reviews/T01.md) |
-| T02, T04, T06 | — | unblocked (depend on T01) |
-| T03 | `task/T03-index-keyword` | **in review** |
-| T08 | — | ready to start (depend only on T00) |
+| T03 | `task/T03-index-keyword` | **merged** (`2c1a99f`) — [reviews/T03.md](reviews/T03.md) |
+| T02, T06 | — | ready (depend on T01) |
+| T04 | — | ready (depends on T01 + T03, both merged) |
+| T08 | — | ready (depends only on T00) |
 | T05, T07 | — | blocked (T04 / T05+T06) |
 | T09 | — | blocked on Phase 1 |
 

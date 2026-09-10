@@ -18,14 +18,14 @@ State: `—` not started · `wip` in progress · `claimed` agent says done ·
 | AC6 | Restart preserves context | T01 | T00 | verified | `test_ac6_engine_reset_preserves_context` |
 | AC7 | Fewer orientation tokens vs. baseline | T09 | T01, T04 | — | measured run |
 | AC8 | NL query → right file+symbol in top results | T04 | | — | |
-| AC9 | Edit file → fresh result in seconds; stale flagged | T03 | T04 | — | |
-| AC10 | No embedding backend → keyword results + notice | T04 | | — | |
+| AC9 | Edit file → fresh result in seconds; stale flagged | T03 | T04 | verified | `test_ac9_edit_incremental_fresh_and_stale_flagged` |
+| AC10 | No embedding backend → keyword results + notice | T04 | T03 | seeded | T03 `search_code` returns `semantic_available: false` + note; T04 finalizes |
 | AC11 | Code map top-level nodes match real modules + edges | T05 | T07 | — | |
 | AC12 | Open blocker/bug marked on its node | T05 | T07 | — | |
 | AC13 | Node select → inspector (source, deps, related context) | T07 | T05 | — | |
 | AC14 | Frontend edit ↔ next briefing (both directions) | T06 | T01 | server-side verified | T01 `test_http_app_and_ac14_http_mcp_share_the_store` (HTTP write ↔ MCP briefing); frontend half is T06 |
 | AC14a | Requirements view N/M accurate; store ↔ file both reflected | T06 | T02 | — | |
-| AC15 | Drop index schema + restart → clean rebuild, context intact | T03 | | — | |
+| AC15 | Drop index schema + restart → clean rebuild, context intact | T03 | | verified | `test_ac15_drop_index_schema_rebuild_preserves_context` (`DROP SCHEMA … CASCADE`); see reviews/T03.md F1 |
 | AC16 | Missing/unknown project → error listing projects, no guess | T01 | T00 | verified | `test_ac16_unknown_and_missing_project_list_registered` + MCP/HTTP paths |
 | AC17 | Two edits → two revisions; deleted entry gone from reads, in history | T01 | | verified | `test_ac17_two_edits_two_revisions_deleted_gone_from_reads` |
 | AC18 | Add requirement in frontend → block in file; file edit + sync → store+view | T02 | T06 | — | |

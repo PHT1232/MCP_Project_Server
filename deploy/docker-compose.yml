@@ -35,6 +35,10 @@ services:
     environment:
       PCS_DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-pcs}:${POSTGRES_PASSWORD:-pcs}@postgres:5432/${POSTGRES_DB:-pcs}
       PCS_BIND_MODE: ${PCS_BIND_MODE:-localhost}
+      # Listen on the container's routable interface so the published port below
+      # can reach it. NFR14 is enforced by that publish being 127.0.0.1-only, not
+      # by the in-container bind. Ignored when PCS_BIND_MODE=tailscale.
+      PCS_BIND_ADDRESS: ${PCS_BIND_ADDRESS:-0.0.0.0}
       PCS_PORT: "8080"
       PCS_LOG_LEVEL: ${PCS_LOG_LEVEL:-INFO}
       PCS_STATIC_DIR: /app/web/dist

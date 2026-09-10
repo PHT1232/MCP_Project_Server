@@ -38,6 +38,12 @@ def main() -> None:
         mcp.run(transport="stdio")
         return
 
+    # Serve our wrapped app (frontend + index-watch lifespan), not
+    # FastMCP.run(), which would build a bare streamable_http_app without them.
+    import uvicorn
+
+    from pcs.mcp import build_http_app
+
     host = settings.bind_host
     apply_listen_host(mcp, host)
     logger.info(
@@ -51,7 +57,12 @@ def main() -> None:
             }
         },
     )
-    mcp.run(transport="streamable-http")
+    uvicorn.run(
+        build_http_app(),
+        host=host,
+        port=settings.port,
+        log_level=settings.log_level.lower(),
+    )
 
 
 if __name__ == "__main__":

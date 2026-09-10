@@ -130,3 +130,30 @@ None in Python. Images: `node:22-alpine` (build), `python:3.12-slim-bookworm`,
 - T04: may write under `/var/lib/pcs/index` (`pcs_index` volume).
 - T09: full AC25 smoke (compose up + register + briefing) and AC26 two-device
   check can wrap `docs/deploy.md`.
+
+---
+
+## Review resolution (applied by reviewer, 2026-09-10)
+
+`reviews/T08.md` requested changes. Fixed on this branch and verified with a
+live `docker compose up` (health, register, briefing, frontend all reachable
+from the host):
+
+- **B1** — the container bound `127.0.0.1` so the published port was dead.
+  New `PCS_BIND_ADDRESS` (bind_mode=localhost only, memoised in `pcs.bind`);
+  `deploy/docker-compose.yml` sets it to `0.0.0.0`. NFR14 stays enforced by the
+  `127.0.0.1:8080:8080` host publish. Ignored in tailscale mode.
+- **B2** *(found while fixing B1)* — `pcs http` ran `mcp.run("streamable-http")`,
+  which builds a bare `streamable_http_app()` — so `register_frontend` **and**
+  the T03 index-watch lifespan from `build_http_app()` never ran in production
+  (frontend 404). `__main__.py` now serves `build_http_app()` via `uvicorn.run`.
+- **B3** — same root cause as B2; the index watcher now starts under `pcs http`.
+- **S1** — `git` installed in the runtime image (`Dockerfile.server`).
+- **S2** — `resolve_tailscale_ipv4` now requires the address in `100.64.0.0/10`.
+- **S3** — bind-host resolution memoised (`pcs.bind._cached_bind_host`).
+- **S4** — `.gitignore` excludes `repos/*` except the placeholder READMEs.
+- **N2** — SPA catch-all fallback added to `web_static.py` so client-side routes
+  survive a reload; `/api/*` and `/mcp` excluded.
+
+Tests: `test_b1_*`, `test_b2_*`, `test_s1_*`, `test_s2_*`, `test_s3_*` in
+`test_deploy.py`. `just check` green (60 pytest + 4 vitest).

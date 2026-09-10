@@ -34,7 +34,7 @@ class Settings(BaseSettings):
     )
     host: str = Field(
         default="127.0.0.1",
-        description="Unused for the actual bind; see bind_mode / bind_host (NFR14).",
+        description="Unused for the actual bind; see bind_mode / bind_address / bind_host (NFR14).",
     )
     port: int = Field(
         default=8080,
@@ -43,7 +43,16 @@ class Settings(BaseSettings):
     bind_mode: BindMode = Field(
         default="localhost",
         description=(
-            "'localhost' binds 127.0.0.1 (NFR14). 'tailscale' binds the tailnet IPv4 (FR41)."
+            "'localhost' binds `bind_address` (default 127.0.0.1). "
+            "'tailscale' binds the tailnet IPv4 (FR41, NFR14)."
+        ),
+    )
+    bind_address: str = Field(
+        default="",
+        description=(
+            "Explicit HTTP listen address for bind_mode=localhost. Empty → 127.0.0.1. "
+            "Docker deployments set 0.0.0.0 here and rely on the loopback-only host "
+            "port publish in deploy/docker-compose.yml for NFR14 (B1)."
         ),
     )
     tailscale_ip: str = Field(
@@ -87,11 +96,14 @@ class Settings(BaseSettings):
     def bind_host(self) -> str:
         """Address the HTTP server actually binds (FR41, NFR14, AC26).
 
-        ``localhost`` is always ``127.0.0.1``. ``tailscale`` is the tailnet IPv4.
-        Never ``0.0.0.0``. stdio MCP does not call this (FR42).
+        ``localhost`` → ``bind_address`` (default ``127.0.0.1``; ``0.0.0.0`` in a
+        container behind a loopback-only publish). ``tailscale`` → the tailnet
+        IPv4, validated to ``100.64.0.0/10``. stdio MCP does not call this (FR42).
+        Memoised in :mod:`pcs.bind`.
         """
         return resolve_bind_host(
             mode=self.bind_mode,
+            explicit=self.bind_address,
             tailscale_ip=self.tailscale_ip,
             tailscale_iface=self.tailscale_iface,
         )

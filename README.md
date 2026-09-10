@@ -126,3 +126,4 @@ just check
 - [MCP tools and resources](docs/mcp-reference.md)
 - [HTTP API](docs/http-api.md)
 - [Deployment, persistence, and Tailscale](docs/deploy.md)
+- [VPS troubleshooting runbook](docs/troubleshooting.md)

@@ -14,6 +14,8 @@ The server uses `pydantic-settings`: environment names are the uppercase field n
 | `PCS_TAILSCALE_IP` | IPv4 string | empty | Explicit tailnet address. Must be in `100.64.0.0/10`. |
 | `PCS_TAILSCALE_IFACE` | string | `tailscale0` | Interface probed after `tailscale ip -4` when no explicit address is set. |
 | `PCS_TAILSCALE_SERVE` | boolean | `false` | Configuration marker only; current server/Compose code does not start `tailscale serve`. |
+| `PCS_MCP_ALLOWED_HOSTS` | comma-separated hosts | empty | Additional MCP `Host` headers allowed by DNS-rebinding protection. Localhost is always allowed. Use exact hosts or `host:*`; bare `*` is rejected. |
+| `PCS_MCP_ALLOWED_ORIGINS` | comma-separated origins | empty | Additional MCP browser origins allowed by DNS-rebinding protection. Localhost HTTP origins are always allowed. |
 | `PCS_STATIC_DIR` | path | empty | Built frontend directory. Empty or nonexistent disables static UI serving. |
 | `PCS_LOG_LEVEL` | string | `INFO` | Structured `pcs` logger level, normally `DEBUG`, `INFO`, `WARNING`, or `ERROR`. |
 | `PCS_INDEX_IGNORE` | comma-separated patterns | empty | Additional gitignore-style exclusions. |
@@ -69,7 +71,7 @@ These are stored per project and changed with MCP `configure_project` or `PATCH 
 | `TS_EXTRA_ARGS` | `--accept-dns=false` | Extra `tailscaled` arguments. Never add Funnel. |
 | `TS_SERVE_CONFIG` | empty | Path inside the sidecar to a mounted, rendered Serve JSON config. No mount is supplied by the current overlay. |
 
-Important: `deploy/docker-compose.yml` does not declare `env_file:` and forwards only database, bind, port, log, static, Tailscale, and watch settings. Values such as `PCS_INDEX_IGNORE`, embedding, summary, SCIP, and requirements-file settings in the repository `.env` are not automatically passed into the container. Add them under the server service in a local Compose override when needed.
+Important: `deploy/docker-compose.yml` does not declare `env_file:` and forwards only database, bind, port, log, static, Tailscale, MCP allowlist, and watch settings. Values such as `PCS_INDEX_IGNORE`, embedding, summary, SCIP, and requirements-file settings in the repository `.env` are not automatically passed into the container. Add them under the server service in a local Compose override when needed.
 
 ## Frontend build and development
 

@@ -67,6 +67,20 @@ class Settings(BaseSettings):
         default=False,
         description="When true, the Tailscale sidecar should run tailscale serve for HTTPS (FR41).",
     )
+    mcp_allowed_hosts: str = Field(
+        default="",
+        description=(
+            "Comma-separated additional Host headers accepted by MCP DNS-rebinding protection. "
+            "Localhost is always allowed; add the exact tailnet IP/hostname with an optional :*."
+        ),
+    )
+    mcp_allowed_origins: str = Field(
+        default="",
+        description=(
+            "Comma-separated additional browser Origin headers accepted by MCP DNS-rebinding "
+            "protection. Localhost origins are always allowed."
+        ),
+    )
     static_dir: str = Field(
         default="",
         description="Directory of the built web/ frontend to serve (NFR13). Empty disables.",

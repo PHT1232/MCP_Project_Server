@@ -57,6 +57,8 @@ def test_b1_localhost_bind_address_is_honoured(monkeypatch: pytest.MonkeyPatch) 
 def test_b1_compose_server_binds_a_routable_address() -> None:
     text = COMPOSE.read_text(encoding="utf-8")
     assert "PCS_BIND_ADDRESS: ${PCS_BIND_ADDRESS:-0.0.0.0}" in text
+    assert "PCS_MCP_ALLOWED_HOSTS: ${PCS_MCP_ALLOWED_HOSTS:-}" in text
+    assert "PCS_MCP_ALLOWED_ORIGINS: ${PCS_MCP_ALLOWED_ORIGINS:-}" in text
 
 
 def test_b1_bind_address_is_ignored_in_tailscale_mode(monkeypatch: pytest.MonkeyPatch) -> None:

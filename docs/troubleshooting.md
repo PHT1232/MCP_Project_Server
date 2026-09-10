@@ -180,13 +180,29 @@ sudo tailscale serve --bg http://127.0.0.1:8989
 tailscale serve status
 ```
 
-From another device on the same tailnet, use the HTTPS hostname printed by `tailscale serve status`:
+From another device on the same tailnet, use the HTTPS hostname printed by `tailscale serve status`. Add that hostname to `.env` so FastMCP's DNS-rebinding protection accepts remote MCP requests:
+
+```dotenv
+PCS_MCP_ALLOWED_HOSTS=<vps-name>.<tailnet>.ts.net
+PCS_MCP_ALLOWED_ORIGINS=https://<vps-name>.<tailnet>.ts.net
+```
+
+For direct tailnet-IP access instead:
+
+```dotenv
+PCS_MCP_ALLOWED_HOSTS=100.86.141.82:*
+PCS_MCP_ALLOWED_ORIGINS=http://100.86.141.82:*
+```
+
+Multiple values are comma-separated. Do not use a bare `*`. Recreate the server after changing the allowlist.
 
 ```text
 https://<vps-name>.<tailnet>.ts.net/
 https://<vps-name>.<tailnet>.ts.net/api/health
 https://<vps-name>.<tailnet>.ts.net/mcp
 ```
+
+A `421 Misdirected Request` with `Invalid Host header` means the requested IP or hostname is missing from `PCS_MCP_ALLOWED_HOSTS` (or the server was not recreated after the value changed — the allowlist is read once at startup). A `403 Forbidden` with `Invalid Origin header` means a browser sent an `Origin` that is not in `PCS_MCP_ALLOWED_ORIGINS`; native clients that send no `Origin` (e.g. Zed) are never affected.
 
 Do not enable `tailscale funnel`; Funnel makes the service public.
 

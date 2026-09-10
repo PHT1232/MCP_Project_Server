@@ -9,7 +9,7 @@ from starlette.responses import JSONResponse, Response
 
 from pcs.context import service as context_service
 from pcs.db.base import session_scope
-from pcs.index import service
+from pcs.index import retrieval, service
 from pcs.index.ignore import PathTraversalError
 from pcs.index.search import SearchScopeName
 from pcs.index.watch import ensure_watch
@@ -108,8 +108,59 @@ async def _search(request: Request) -> Response:
     return JSONResponse(payload)
 
 
+async def _retrieve_context(request: Request) -> Response:
+    caller = _caller(request)
+    project = str(request.path_params["project"])
+    try:
+        try:
+            body: Any = await request.json()
+        except Exception:
+            body = {}
+        if not isinstance(body, dict):
+            body = {}
+        task = str(body.get("task") or request.query_params.get("task") or "")
+        max_tokens = int(body.get("max_tokens") or request.query_params.get("max_tokens") or 1500)
+        async with session_scope() as session:
+            payload = await retrieval.retrieve_context(
+                session, project=project, task=task, max_tokens=max_tokens
+            )
+    except Exception as exc:
+        log_tool_call(
+            tool="retrieve_context", project=project, caller=caller, outcome=f"error: {exc}"
+        )
+        return _error_response(exc)
+    log_tool_call(tool="retrieve_context", project=project, caller=caller, outcome="ok")
+    return JSONResponse(payload)
+
+
+async def _prepare_task(request: Request) -> Response:
+    caller = _caller(request)
+    project = str(request.path_params["project"])
+    try:
+        try:
+            body: Any = await request.json()
+        except Exception:
+            body = {}
+        if not isinstance(body, dict):
+            body = {}
+        task = str(body.get("task") or request.query_params.get("task") or "")
+        raw_budget = body.get("max_tokens") or request.query_params.get("max_tokens")
+        max_tokens = int(raw_budget) if raw_budget else None
+        async with session_scope() as session:
+            payload = await retrieval.prepare_task(
+                session, project=project, task=task, max_tokens=max_tokens
+            )
+    except Exception as exc:
+        log_tool_call(tool="prepare_task", project=project, caller=caller, outcome=f"error: {exc}")
+        return _error_response(exc)
+    log_tool_call(tool="prepare_task", project=project, caller=caller, outcome="ok")
+    return JSONResponse(payload)
+
+
 def register_index_routes(mcp: FastMCP) -> None:
     """Attach index HTTP endpoints without modifying T01's route table."""
     mcp.custom_route("/api/projects/{project}/index", ["GET"])(_index_status)
     mcp.custom_route("/api/projects/{project}/reindex", ["POST"])(_reindex)
     mcp.custom_route("/api/projects/{project}/search", ["GET"])(_search)
+    mcp.custom_route("/api/projects/{project}/retrieve-context", ["POST"])(_retrieve_context)
+    mcp.custom_route("/api/projects/{project}/prepare-task", ["POST"])(_prepare_task)

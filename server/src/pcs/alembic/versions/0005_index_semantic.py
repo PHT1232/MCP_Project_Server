@@ -1,7 +1,7 @@
 """T04: symbols + semantic retrieval — SCIP-style symbol model + pgvector cache.
 
-Revision ID: 0004_index_semantic
-Revises: 0003_code_index
+Revision ID: 0005_index_semantic
+Revises: 0004_requirements_file
 Create Date: 2026-09-10
 
 Adds, all inside schema ``code_index`` so AC15's drop-and-rebuild still holds:
@@ -21,8 +21,8 @@ import sqlalchemy as sa
 from alembic import op
 from sqlalchemy.dialects import postgresql
 
-revision: str = "0004_index_semantic"
-down_revision: str | None = "0003_code_index"
+revision: str = "0005_index_semantic"
+down_revision: str | None = "0004_requirements_file"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

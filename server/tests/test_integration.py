@@ -65,6 +65,7 @@ EXPECTED_TOOLS = frozenset(
         "search_code",
         "retrieve_context",
         "prepare_task",
+        "get_code_map",
     }
 )
 

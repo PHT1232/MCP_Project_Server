@@ -102,9 +102,10 @@ files get fleshed out against the real skeleton structure at that point.
 | T03 | `task/T03-index-keyword` | **merged** (`2c1a99f`) — [reviews/T03.md](reviews/T03.md) |
 | T08 | `task/T08-deploy` | **merged** (fixes applied) — [reviews/T08.md](reviews/T08.md) |
 | T02 | `task/T02-requirements-file` | **merged** (`320bf39`) — [reviews/T02.md](reviews/T02.md) |
-| T04 | `task/T04-index-semantic` | **in review** — symbols + semantic retrieval, F1/F2/F4/F5 |
+| T04 | `task/T04-index-semantic` | **merged** (`23a93e7`, renumbered 0005) — [reviews/T04.md](reviews/T04.md) |
+| T05 | `task/T05-codemap-api` | **in progress** (agent running) |
 | T06 | `task/T06-frontend-shell` | **in progress** (agent running) |
-| T05, T07 | — | blocked (T04 / T05+T06) |
+| T07 | — | blocked (needs T05 + T06) |
 | T09 | — | blocked on Phase 1 |
 
 Update this table as tasks move: `not started → in progress → in review → changes requested → merged`.

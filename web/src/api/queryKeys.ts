@@ -17,6 +17,8 @@ export const queryKeys = {
    */
   codeMap: (project: string, scope: string | null) =>
     ["code-map", project, scope ?? "__root__"] as const,
+  /** FR32 — the two-tier read-down "codebase map" document. */
+  codeMapDoc: (project: string) => ["code-map-doc", project] as const,
   /** FR34 — read-only source for the node inspector. */
   source: (project: string, path: string) => ["source", project, path] as const,
   /** FR35 — a search-panel query. */

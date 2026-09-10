@@ -1,9 +1,9 @@
 /**
  * Pure code-map model: turn `get_code_map` responses (FR32/FR32a) into a merged
- * node/edge model the tree view renders, and the small algorithms the view needs
- * — lazy-expand merge (D9/AC20: never re-fetch the whole graph), overlay tone
- * (FR33), the filtered flat tree list (FR32), search-hit → node location (FR35),
- * and related-context matching (FR34).
+ * node/edge model, and the small algorithms the code-map view needs — lazy-expand
+ * merge (D9/AC20: never re-fetch the whole graph), overlay tone (FR33),
+ * search-hit → node location (FR35), and related-context matching (FR34). The
+ * read-down document projection lives in `codemapDoc.ts`.
  *
  * No React, no DOM — everything here is unit-tested in `codemap.test.ts`.
  */
@@ -158,30 +158,6 @@ function topSegment(path: string): string {
   return path.split("/")[0] ?? path;
 }
 
-/** Tree indent depth for a node path (`""` and top-level = 0). */
-export function pathDepth(path: string): number {
-  return path === "" ? 0 : path.split("/").length - 1;
-}
-
-/**
- * The currently-loaded nodes as a flat, path-sorted list for the tree renderer,
- * narrowed by the path + language filter (FR32). Directory nodes sort before the
- * files beside them so the indentation reads as a hierarchy.
- */
-export function treeRows(
-  graph: CodeGraph,
-  filter: { path: string; language: string | null },
-): MergedNode[] {
-  return [...graph.nodes.values()]
-    .filter((node) => nodeMatchesFilter(node, filter))
-    .sort(
-      (a, b) =>
-        a.path.localeCompare(b.path) ||
-        Number(b.kind === "directory") - Number(a.kind === "directory") ||
-        a.id.localeCompare(b.id),
-    );
-}
-
 export type LocateResult =
   | { kind: "node"; nodeId: string }
   | { kind: "expand"; scope: string }
@@ -258,29 +234,4 @@ export function relatedEntries(
     }
   }
   return out;
-}
-
-/** Distinct languages present in the graph, for the language filter (FR32). */
-export function graphLanguages(graph: CodeGraph): string[] {
-  const langs = new Set<string>();
-  for (const node of graph.nodes.values()) {
-    if (node.language !== null && node.language !== "") {
-      langs.add(node.language);
-    }
-  }
-  return [...langs].sort();
-}
-
-/** FR32 filter: does a node pass the path substring + language filters? */
-export function nodeMatchesFilter(
-  node: MergedNode,
-  filter: { path: string; language: string | null },
-): boolean {
-  if (filter.path !== "" && !node.path.toLowerCase().includes(filter.path.toLowerCase())) {
-    return false;
-  }
-  if (filter.language !== null && node.language !== filter.language) {
-    return false;
-  }
-  return true;
 }

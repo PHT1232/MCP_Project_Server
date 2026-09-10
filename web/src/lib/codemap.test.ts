@@ -7,7 +7,6 @@ import {
   mergeCodeMap,
   overlayTone,
   relatedEntries,
-  treeRows,
 } from "./codemap";
 
 function overlay(
@@ -139,52 +138,6 @@ describe("overlayTone (FR33 / AC12)", () => {
     expect(overlayTone(overlay({ focus: 1 }))).toBe("growth");
     expect(overlayTone(overlay({ requirements: 1 }))).toBe("mist");
     expect(overlayTone(overlay())).toBeNull();
-  });
-});
-
-describe("treeRows (FR32)", () => {
-  it("returns loaded nodes path-sorted", () => {
-    const graph = mergeCodeMap(emptyGraph(), ROOT);
-    const rows = treeRows(graph, { path: "", language: null });
-    expect(rows.map((r) => r.id)).toEqual(["dir:lib", "file:main.py", "dir:services"]);
-  });
-
-  it("puts a directory before a file that shares its path prefix, then by id", () => {
-    const graph = mergeCodeMap(
-      emptyGraph(),
-      map(
-        null,
-        [
-          node("file:pkg", { path: "pkg", kind: "file", has_children: false }),
-          node("dir:pkg", { path: "pkg", kind: "directory", has_children: true }),
-        ],
-        [],
-      ),
-    );
-    expect(treeRows(graph, { path: "", language: null }).map((r) => r.id)).toEqual([
-      "dir:pkg",
-      "file:pkg",
-    ]);
-  });
-
-  it("narrows by the path and language filters", () => {
-    const graph = mergeCodeMap(
-      emptyGraph(),
-      map(
-        null,
-        [
-          node("file:api.go", { path: "api.go", language: "go" }),
-          node("file:lib/util.py", { path: "lib/util.py" }),
-        ],
-        [],
-      ),
-    );
-    expect(treeRows(graph, { path: "lib", language: null }).map((r) => r.id)).toEqual([
-      "file:lib/util.py",
-    ]);
-    expect(treeRows(graph, { path: "", language: "go" }).map((r) => r.id)).toEqual([
-      "file:api.go",
-    ]);
   });
 });
 

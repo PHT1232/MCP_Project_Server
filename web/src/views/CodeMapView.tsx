@@ -1,51 +1,48 @@
-import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 
 import type { Entry, SearchHit } from "../api/types";
 import { Callout } from "../components/Callout";
 import { Card } from "../components/Card";
-import { CodeTree, type TreeFilter } from "../components/CodeTree";
-import { CodeMapLegend } from "../components/CodeMapLegend";
+import { CodeMapDocument } from "../components/CodeMapDocument";
 import { NodeInspector } from "../components/NodeInspector";
-import { Field, Select, TextInput } from "../components/fields";
-import { PillButton } from "../components/PillButton";
 import { SearchPanel } from "../components/SearchPanel";
 import { Caption, SectionTitle } from "../components/Typography";
 import { useSection } from "../hooks/useSections";
 import {
   fetchCodeMapScope,
   useCodeMap,
+  useCodeMapDoc,
   useFileScope,
   useSource,
 } from "../hooks/useCodeMap";
 import {
   emptyGraph,
-  graphLanguages,
   locateHit,
   mergeCodeMap,
   relatedEntries,
   type CodeGraph as CodeGraphModel,
   type MergedNode,
 } from "../lib/codemap";
+import { buildCodeMapDoc, hotSpotsFromEntries } from "../lib/codemapDoc";
 import { errorText } from "../lib/errors";
 import { projectRoute } from "../routes";
 import { Link } from "../router/router";
 
 const SUBTREE_DEPTH = 2;
 
-/** FR32–FR35 — the interactive code map, node inspector and search panel. */
+/** FR32–FR35 — the code map as a read-down document, plus inspector and search. */
 export function CodeMapView({ project }: { project: string }): ReactNode {
   const queryClient = useQueryClient();
   const root = useCodeMap(project);
+  const detail = useCodeMapDoc(project);
   const [graph, setGraph] = useState<CodeGraphModel>(() => emptyGraph());
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [pathFilter, setPathFilter] = useState("");
-  const [language, setLanguage] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [expandError, setExpandError] = useState<string | null>(null);
 
   // Re-seed from the (single) top-tier query. A manual refresh (FR38) re-pulls
-  // only this query; expansions are re-opened by the user.
+  // only this query; expansions are re-opened as the user clicks paths.
   useEffect(() => {
     if (root.data !== undefined) {
       setGraph(mergeCodeMap(emptyGraph(), root.data));
@@ -59,7 +56,8 @@ export function CodeMapView({ project }: { project: string }): ReactNode {
   const fileScope = useFileScope(project, selectedPath);
   const source = useSource(project, selectedPath);
 
-  // Reuse T06's section data for the inspector's "related context" (FR34).
+  // Reuse T06's section data for the document + the inspector's related context.
+  const overviewSection = useSection(project, "overview");
   const focusSection = useSection(project, "focus");
   const blockersSection = useSection(project, "blockers");
   const bugsSection = useSection(project, "bugs");
@@ -77,33 +75,29 @@ export function CodeMapView({ project }: { project: string }): ReactNode {
       ? []
       : relatedEntries(entriesBySection, selectedNode.path);
 
-  const expand = useCallback(
-    async (scope: string): Promise<CodeGraphModel> => {
-      const map = await fetchCodeMapScope(queryClient, project, scope, SUBTREE_DEPTH);
-      const next = mergeCodeMap(graph, map);
-      setGraph(next);
-      return next;
-    },
-    [graph, project, queryClient],
+  const overviewEntry = overviewSection.data?.entries.find(
+    (item) => item.status === "open",
   );
-
-  const onExpandNode = useCallback(
-    (node: MergedNode) => {
-      if (!node.has_children || node.kind !== "directory") {
-        setSelectedId(node.id);
-        return;
-      }
-      setBusy(true);
-      setExpandError(null);
-      void expand(node.path)
-        .catch((error: unknown) => {
-          setExpandError(errorText(error));
-        })
-        .finally(() => {
-          setBusy(false);
-        });
-    },
-    [expand],
+  const overviewText =
+    overviewEntry === undefined
+      ? null
+      : overviewEntry.detail !== "" && overviewEntry.detail !== overviewEntry.headline
+        ? `${overviewEntry.headline}\n\n${overviewEntry.detail}`
+        : overviewEntry.headline;
+  const doc = useMemo(
+    () =>
+      root.data === undefined
+        ? null
+        : buildCodeMapDoc(root.data, detail.data, { overview: overviewText }),
+    [root.data, detail.data, overviewText],
+  );
+  const hotSpots = useMemo(
+    () =>
+      hotSpotsFromEntries(
+        blockersSection.data?.entries ?? [],
+        bugsSection.data?.entries ?? [],
+      ),
+    [blockersSection.data, bugsSection.data],
   );
 
   const locate = useCallback(
@@ -132,11 +126,11 @@ export function CodeMapView({ project }: { project: string }): ReactNode {
     [graph, project, queryClient],
   );
 
-  const onLocateHit = useCallback(
-    (hit: SearchHit) => {
+  const onSelectPath = useCallback(
+    (path: string) => {
       setBusy(true);
       setExpandError(null);
-      void locate(hit.path)
+      void locate(path)
         .catch((error: unknown) => {
           setExpandError(errorText(error));
         })
@@ -147,8 +141,12 @@ export function CodeMapView({ project }: { project: string }): ReactNode {
     [locate],
   );
 
-  const filter: TreeFilter = { path: pathFilter, language };
-  const languages = graphLanguages(graph);
+  const onLocateHit = useCallback(
+    (hit: SearchHit) => {
+      onSelectPath(hit.path);
+    },
+    [onSelectPath],
+  );
 
   if (root.isPending) {
     return (
@@ -191,71 +189,34 @@ export function CodeMapView({ project }: { project: string }): ReactNode {
     <div className="flex flex-col gap-24">
       <Card>
         <div className="flex flex-col gap-16">
-          <div className="flex flex-wrap items-start justify-between gap-16">
-            <div className="flex flex-col gap-4">
-              <SectionTitle>Code map</SectionTitle>
-              <Caption>
-                {String(graph.nodes.size)} nodes shown ·{" "}
-                {root.data.stats.total_files ?? 0} files indexed
-                {provenance.last_commit !== undefined && provenance.last_commit !== null
-                  ? ` · @ ${provenance.last_commit.slice(0, 10)}`
-                  : ""}
-              </Caption>
-            </div>
-            <div className="flex flex-wrap items-end gap-10">
-              <div className="w-[14rem]">
-                <Field label="Filter by path">
-                  <TextInput
-                    value={pathFilter}
-                    placeholder="services/billing"
-                    onChange={(event) => {
-                      setPathFilter(event.target.value);
-                    }}
-                  />
-                </Field>
-              </div>
-              <Field label="Language">
-                <Select
-                  value={language ?? ""}
-                  onChange={(event) => {
-                    setLanguage(event.target.value === "" ? null : event.target.value);
-                  }}
-                >
-                  <option value="">All</option>
-                  {languages.map((lang) => (
-                    <option key={lang} value={lang}>
-                      {lang}
-                    </option>
-                  ))}
-                </Select>
-              </Field>
-              <PillButton
-                size="sm"
-                onClick={() => {
-                  setGraph(mergeCodeMap(emptyGraph(), root.data));
-                  setSelectedId(null);
-                  setExpandError(null);
-                }}
-              >
-                Reset view
-              </PillButton>
-            </div>
+          <div className="flex flex-col gap-4">
+            <SectionTitle>Code map</SectionTitle>
+            <Caption>
+              {String(doc?.totalFiles ?? root.data.stats.total_files ?? 0)} files
+              {doc !== null && doc.languages.length > 0
+                ? ` · ${doc.languages.join(", ")}`
+                : ""}
+              {provenance.last_commit !== undefined && provenance.last_commit !== null
+                ? ` · @ ${provenance.last_commit.slice(0, 10)}`
+                : ""}
+            </Caption>
+            <p className="text-caption text-fey-graphite">
+              A low-resolution written map of the codebase. Click any path to open
+              it in the inspector below.
+            </p>
           </div>
 
-          <CodeMapLegend legend={root.data.overlay_legend} />
-          {busy && <Caption>Loading…</Caption>}
+          {(busy || detail.isPending) && <Caption>Loading…</Caption>}
           {expandError !== null && <Callout tone="alert">{expandError}</Callout>}
-          <p className="text-caption text-fey-graphite">
-            Click a row to inspect it. Use “Expand” to open a directory.
-          </p>
 
-          <CodeTree
-            graph={graph}
-            filter={filter}
-            selectedId={selectedId}
-            onSelect={setSelectedId}
-            onExpand={onExpandNode}
-          />
+          {doc !== null && (
+            <CodeMapDocument
+              doc={doc}
+              hotSpots={hotSpots}
+              legend={root.data.overlay_legend}
+              onSelectPath={onSelectPath}
+            />
+          )}
         </div>
       </Card>
 

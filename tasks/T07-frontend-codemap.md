@@ -199,3 +199,33 @@ source), the search panel with hit → node location, the context overlay
   `treeRows` cases; new `components/CodeTree.test.tsx`.
 - **Bundle:** `dist/assets/index-*.js` is now **315 kB raw / 95 kB gzip** (was
   475 kB / 134 kB).
+
+---
+
+## Post-merge change: tree → read-down document (2026-09-11)
+
+The interactive tree was itself replaced with a **read-down "codebase map"
+document** — a low-resolution written overview you read top to bottom, not a
+widget to drive. The interactive graph is the agent's job now (`get_code_map`
+over MCP / `context://{project}/code-map`); the web view is for a human building
+a mental model. The node inspector and the search panel are **kept** — a path
+anywhere in the document is a button that locates + opens it in the inspector,
+exactly as a search hit does.
+
+- **Removed:** `web/src/components/CodeTree.tsx` + test; `lib/codemap.ts` lost
+  `treeRows`, `pathDepth`, `nodeMatchesFilter`, `graphLanguages` (tree/filter
+  only). The path + language filter UI and the "Reset view" button are gone.
+- **Added:**
+  - `web/src/lib/codemapDoc.ts` — pure `buildCodeMapDoc(top, detail, {overview})`
+    projecting the top two `get_code_map` tiers into `{ overview, areas[],
+    connections[] }`, plus `hotSpotsFromEntries(blockers, bugs)` (open blockers /
+    bugs → their `linked_files`). Unit-tested in `codemapDoc.test.ts`.
+  - `web/src/components/CodeMapDocument.tsx` — renders it: Overview · Structure
+    (per-area metrics, overlay badges, "depends on", child list) · Hot spots ·
+    How it connects. Tested in `CodeMapDocument.test.tsx`.
+  - `useCodeMapDoc` (hook) — a second top-level query at `depth=2` for the
+    per-area child list; `queryKeys.codeMapDoc` (refresh picks it up by project).
+- **Server:** untouched — same `get_code_map` / `/source` APIs, now called with
+  `depth=2` for the document tier.
+- **Bundle:** `dist/assets/index-*.js` **318 kB raw / 96 kB gzip** (unchanged —
+  the tree was not the weight).

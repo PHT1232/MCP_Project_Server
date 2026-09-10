@@ -22,6 +22,19 @@ export function useCodeMap(project: string | null): UseQueryResult<CodeMap> {
   });
 }
 
+/**
+ * FR32 — one level below the top tier (`depth=2`), for the read-down document's
+ * per-area child list. Separate from `useCodeMap` so a refresh (FR38) re-pulls
+ * both tiers and nothing else.
+ */
+export function useCodeMapDoc(project: string | null): UseQueryResult<CodeMap> {
+  return useQuery({
+    queryKey: queryKeys.codeMapDoc(project ?? ""),
+    queryFn: () => getCodeMap(project ?? "", undefined, 2),
+    enabled: project !== null && project !== "",
+  });
+}
+
 /** FR32a — fetch one subtree / file scope on demand, cached under its own key. */
 export function fetchCodeMapScope(
   queryClient: QueryClient,

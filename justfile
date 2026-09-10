@@ -62,14 +62,13 @@ down:
 perf:
     cd {{server_dir}} && uv run pytest tests/test_performance.py -v -s
 
-# Run adversarial security checks and scan tracked files for likely secrets.
+# Run adversarial security checks and scan tracked files for selected secret formats.
 security:
     cd {{server_dir}} && uv run pytest tests/test_security.py -v
     ./scripts/check-secrets.sh
 
-# Run a task's acceptance suite. T09 is the project-wide release gate.
+# Run a task's acceptance suite. `just check` already includes all pytest suites.
 accept task:
     @test "{{task}}" = "T09" || (echo "No acceptance suite is registered for {{task}}" && exit 2)
-    just perf
-    just security
     just check
+    ./scripts/check-secrets.sh

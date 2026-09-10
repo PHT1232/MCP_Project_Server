@@ -108,10 +108,19 @@ async def test_nfr1_typical_briefing_p95_under_200ms(tmp_path: Path) -> None:
 
 
 async def test_nfr2_briefing_obeys_configured_budget(tmp_path: Path) -> None:
-    """Briefing assembly honours a non-default configured token budget (NFR2)."""
+    """Briefing stays self-contained under default and configured budgets (NFR2)."""
+    default_project = "nfr2-default-budget"
+    await _register_project(name=default_project, root=tmp_path / "default")
+    async with session_scope() as session:
+        default_briefing = await context_service.get_project_briefing(
+            session, project=default_project
+        )
+    assert estimate_tokens(default_briefing) <= 1_500
+    assert "Representative local project" in default_briefing
+
     project = "nfr2-budget"
     budget = 600
-    await _register_project(name=project, root=tmp_path, budget=budget)
+    await _register_project(name=project, root=tmp_path / "configured", budget=budget)
     async with session_scope() as session:
         for number in range(60):
             await context_service.add_entry(
@@ -150,6 +159,14 @@ async def test_nfr9_incremental_changed_file_reindexes_within_seconds(
         await index_service.reindex(session, project=project, incremental=False)
 
     target.write_text("def greeting() -> str:\n    return 'after-change'\n", encoding="utf-8")
+    async with session_scope() as session:
+        stale_result = await index_service.search_code(
+            session, project=project, query="before", limit=5
+        )
+    stale_hits = cast(list[dict[str, object]], stale_result["hits"])
+    assert stale_hits
+    assert stale_hits[0]["stale"] is True
+
     started = time.perf_counter()
     async with session_scope() as session:
         status = await index_service.reindex(session, project=project, incremental=True)
@@ -165,6 +182,11 @@ async def test_nfr9_incremental_changed_file_reindexes_within_seconds(
     assert hits
     assert hits[0]["path"] == "src/app.py"
     assert hits[0]["stale"] is False
+    async with session_scope() as session:
+        old_result = await index_service.search_code(
+            session, project=project, query="before", limit=5
+        )
+    assert old_result["hits"] == []
 
 
 async def test_nfr10_approximately_100k_loc_full_index_within_minutes(

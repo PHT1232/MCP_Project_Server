@@ -2,7 +2,7 @@
 
 `pcs http` serves JSON routes under `/api` on the same Starlette application as streamable HTTP MCP (`/mcp`). Path `{project}` accepts an exact project name or ID and should be URL-encoded.
 
-Requests may set `X-PCS-Caller`; absent values are logged as `frontend`. Errors use `{ "error": "..." }`. Unknown projects also include `available` and return `404`. Validation normally returns `400`; missing entries/source return `404`.
+Requests may set `X-PCS-Caller`; absent values are logged as `frontend`. Handled service-validation errors use `{ "error": "..." }` and return `400`; unknown projects also include `available` and return `404`; missing entries/source return `404`. Malformed input rejected by framework-level parsing may use the framework's error response.
 
 ## Health and projects
 

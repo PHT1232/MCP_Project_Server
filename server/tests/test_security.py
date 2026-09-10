@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Iterator
 from pathlib import Path
 from typing import cast
 from unittest.mock import patch
@@ -14,9 +15,20 @@ from pcs.context import service as context_service
 from pcs.db.base import session_scope
 from pcs.index import gitutil
 from pcs.index import service as index_service
+from pcs.index.embedding import set_embedding_backend_override
 from pcs.index.ignore import PathTraversalError, resolve_under_root, walk_repo
 
 pytestmark = pytest.mark.usefixtures("clean_db")
+
+
+@pytest.fixture(autouse=True)
+def no_embedding_backend() -> Iterator[None]:
+    """Keep security checks deterministic and prevent external data transfer."""
+    set_embedding_backend_override(None, active=True)
+    try:
+        yield
+    finally:
+        set_embedding_backend_override(None, active=False)
 
 
 @pytest.mark.parametrize(

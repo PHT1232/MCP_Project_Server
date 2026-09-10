@@ -60,4 +60,4 @@ Sources: `server/src/pcs/index/`, `server/src/pcs/codemap/service.py`, `server/s
 
 Local Docker deployment publishes HTTP and PostgreSQL only on host loopback. The HTTP process binds `0.0.0.0` inside the container so Docker can route the loopback-only publish. The Tailscale overlay removes the HTTP host publish and binds the server to a validated CGNAT tailnet IPv4; Funnel is not enabled.
 
-Code or context leaves the host only when an operator configures an OpenAI-compatible embedding or summarization backend. Requests are sent to `PCS_EMBEDDING_BASE_URL` or `PCS_SUMMARY_BASE_URL` with their respective API key. See [Configuration](configuration.md) and [Deployment](deploy.md).
+Code or context is sent to a third-party inference endpoint only when an operator configures an OpenAI-compatible embedding or summarization backend. MCP, HTTP, browser, and Tailscale clients can also receive requested project data. Provider requests use `PCS_EMBEDDING_BASE_URL` or `PCS_SUMMARY_BASE_URL` with their respective API key. See [Configuration](configuration.md) and [Deployment](deploy.md).

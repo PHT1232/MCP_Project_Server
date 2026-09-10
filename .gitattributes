@@ -1,0 +1,13 @@
+# Source and text files are always text (a stray control char must not make git treat them as binary).
+*.ts   text
+*.tsx  text
+*.js   text
+*.jsx  text
+*.py   text
+*.md   text
+*.json text
+*.yml  text
+*.yaml text
+*.css  text
+*.toml text
+*.sh   text eol=lf

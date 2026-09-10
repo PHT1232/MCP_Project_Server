@@ -176,3 +176,26 @@ No server dependencies added.
 15.69 kB / 3.93 kB gzip. Sigma + graphology account for ~230 kB raw of that; still
 under Vite's 500 kB warning threshold and a single chunk. If it needs trimming later,
 Sigma can be a lazy `import()` gated on the code-map route.
+
+---
+
+## Post-merge change: graph → tree (2026-09-11)
+
+The interactive Sigma.js/graphology graph was replaced with a **filterable file
+tree** — the visual graph read as too convoluted. Everything else is unchanged:
+the node inspector (symbols, dependencies/dependents, related context, read-only
+source), the search panel with hit → node location, the context overlay
+(hot-spot badges + legend), lazy per-subtree expansion (D9/AC20), and the
+`get_code_map` / `/source` server APIs (untouched).
+
+- **Removed:** `web/src/components/CodeGraph.tsx`, `web/src/lib/tokens.ts`, and
+  the `sigma` + `graphology` dependencies. `lib/codemap.ts` lost `layout`,
+  `Point`, and `nodeWeight` (graph-renderer-only).
+- **Added:** `web/src/components/CodeTree.tsx` — an indented, path-sorted list of
+  the loaded nodes; each row shows kind, label, language, LOC, fan-in/out and an
+  overlay badge; directory rows with unloaded children get an "Expand" button.
+  `lib/codemap.ts` gained `treeRows()` and `pathDepth()`.
+- **Tests:** `codemap.test.ts` swapped the `layout`/`nodeWeight` cases for
+  `treeRows` cases; new `components/CodeTree.test.tsx`.
+- **Bundle:** `dist/assets/index-*.js` is now **315 kB raw / 95 kB gzip** (was
+  475 kB / 134 kB).

@@ -4,7 +4,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import type { Entry, SearchHit } from "../api/types";
 import { Callout } from "../components/Callout";
 import { Card } from "../components/Card";
-import { CodeGraph, type GraphFilter } from "../components/CodeGraph";
+import { CodeTree, type TreeFilter } from "../components/CodeTree";
 import { CodeMapLegend } from "../components/CodeMapLegend";
 import { NodeInspector } from "../components/NodeInspector";
 import { Field, Select, TextInput } from "../components/fields";
@@ -147,7 +147,7 @@ export function CodeMapView({ project }: { project: string }): ReactNode {
     [locate],
   );
 
-  const filter: GraphFilter = { path: pathFilter, language };
+  const filter: TreeFilter = { path: pathFilter, language };
   const languages = graphLanguages(graph);
 
   if (root.isPending) {
@@ -246,15 +246,15 @@ export function CodeMapView({ project }: { project: string }): ReactNode {
           {busy && <Caption>Loading…</Caption>}
           {expandError !== null && <Callout tone="alert">{expandError}</Callout>}
           <p className="text-caption text-fey-graphite">
-            Click a node to inspect it · double-click a directory to expand it.
+            Click a row to inspect it. Use “Expand” to open a directory.
           </p>
 
-          <CodeGraph
+          <CodeTree
             graph={graph}
             filter={filter}
             selectedId={selectedId}
-            onSelectNode={setSelectedId}
-            onExpandNode={onExpandNode}
+            onSelect={setSelectedId}
+            onExpand={onExpandNode}
           />
         </div>
       </Card>

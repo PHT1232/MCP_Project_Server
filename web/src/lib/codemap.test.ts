@@ -3,12 +3,11 @@ import { describe, expect, it } from "vitest";
 import type { CodeMap, CodeMapEdge, CodeMapNode, Entry } from "../api/types";
 import {
   emptyGraph,
-  layout,
   locateHit,
   mergeCodeMap,
-  nodeWeight,
   overlayTone,
   relatedEntries,
+  treeRows,
 } from "./codemap";
 
 function overlay(
@@ -143,14 +142,49 @@ describe("overlayTone (FR33 / AC12)", () => {
   });
 });
 
-describe("nodeWeight (D11 — static only)", () => {
-  it("grows with LOC and with fan-in/out", () => {
-    const small = nodeWeight({ loc: 4, fan_in: 0, fan_out: 0 });
-    const bigger = nodeWeight({ loc: 400, fan_in: 0, fan_out: 0 });
-    const connected = nodeWeight({ loc: 4, fan_in: 5, fan_out: 5 });
-    expect(bigger).toBeGreaterThan(small);
-    expect(connected).toBeGreaterThan(small);
-    expect(small).toBeGreaterThanOrEqual(1);
+describe("treeRows (FR32)", () => {
+  it("returns loaded nodes path-sorted", () => {
+    const graph = mergeCodeMap(emptyGraph(), ROOT);
+    const rows = treeRows(graph, { path: "", language: null });
+    expect(rows.map((r) => r.id)).toEqual(["dir:lib", "file:main.py", "dir:services"]);
+  });
+
+  it("puts a directory before a file that shares its path prefix, then by id", () => {
+    const graph = mergeCodeMap(
+      emptyGraph(),
+      map(
+        null,
+        [
+          node("file:pkg", { path: "pkg", kind: "file", has_children: false }),
+          node("dir:pkg", { path: "pkg", kind: "directory", has_children: true }),
+        ],
+        [],
+      ),
+    );
+    expect(treeRows(graph, { path: "", language: null }).map((r) => r.id)).toEqual([
+      "dir:pkg",
+      "file:pkg",
+    ]);
+  });
+
+  it("narrows by the path and language filters", () => {
+    const graph = mergeCodeMap(
+      emptyGraph(),
+      map(
+        null,
+        [
+          node("file:api.go", { path: "api.go", language: "go" }),
+          node("file:lib/util.py", { path: "lib/util.py" }),
+        ],
+        [],
+      ),
+    );
+    expect(treeRows(graph, { path: "lib", language: null }).map((r) => r.id)).toEqual([
+      "file:lib/util.py",
+    ]);
+    expect(treeRows(graph, { path: "", language: "go" }).map((r) => r.id)).toEqual([
+      "file:api.go",
+    ]);
   });
 });
 
@@ -218,17 +252,3 @@ describe("relatedEntries (FR34)", () => {
   });
 });
 
-describe("layout", () => {
-  it("gives every node a finite, distinct position", () => {
-    const graph = mergeCodeMap(emptyGraph(), ROOT);
-    const positions = layout([...graph.nodes.values()]);
-    expect(positions.size).toBe(3);
-    const keys = new Set(
-      [...positions.values()].map((p) => `${String(p.x)},${String(p.y)}`),
-    );
-    expect(keys.size).toBe(3);
-    for (const p of positions.values()) {
-      expect(Number.isFinite(p.x) && Number.isFinite(p.y)).toBe(true);
-    }
-  });
-});

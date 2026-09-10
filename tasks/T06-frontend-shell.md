@@ -1,8 +1,39 @@
 # T06 — Frontend shell + context dashboard
 
-**Branch:** `task/T06-frontend-shell`  ·  **Depends on:** T01, T02  ·  **Blocks:** T07
+**Branch:** `task/T06-frontend-shell`  ·  **Depends on:** T01 + T02 (merged)  ·  **Blocks:** T07
 
-> Stub — flesh out after T01/T02.
+**Read first:** `AGENTS.md`, `DESIGN.md` (normative — its Do's/Don'ts, token
+block, and component specs), `REQUIREMENTS.md` FR30/31/36/36a/37/38 + FR39a +
+D6/D17 + AC14/AC14a/AC21/AC27, `reviews/T01.md` + `reviews/T02.md` + `reviews/T03.md`
+"Notes for dependents → T06", and the T01/T02/T03 handoffs. Base off current `main`.
+
+**What exists (T00 scaffold + T01–T03 HTTP surface):**
+- `web/src/`: `styles/tokens.css` (DESIGN.md `@theme` verbatim — the ONLY style
+  source), `api/client.ts` + `api/types.ts` (typed client, the only `fetch`
+  caller), `hooks/useProjects.ts` (TanStack Query), components `Card`,
+  `PillButton`, `ProjectList`, `RegisterForm`, `BriefingPanel`, `App.tsx`.
+- Server `/api` routes (all JSON, `x-pcs-caller` header optional):
+  - `GET /api/health`, `GET|POST /api/projects`, `PATCH /api/projects/{p}` (budgets/expiry)
+  - `GET /api/projects/{p}/briefing?sections=&max_tokens=`
+  - `PUT /api/projects/{p}/focus`
+  - `GET /api/projects/{p}/sections/{section}`, `POST /api/projects/{p}/entries`,
+    `GET|PATCH|DELETE /api/projects/{p}/entries/{id}`, `POST …/entries/{id}/resolve`,
+    `GET …/entries/{id}/history`
+  - `GET /api/projects/{p}/requirements` → `{requirements[], done_count, total_count}`;
+    `POST /api/projects/{p}/requirements/sync` → `SyncReport.as_dict()`
+  - `GET /api/projects/{p}/index`, `POST /api/projects/{p}/reindex`,
+    `GET /api/projects/{p}/search?q=&scope=&subtree=&files=&globs=&limit=`
+- Entry JSON carries `req_key`; requirement write responses carry a
+  `requirements_file` object (`{path, written, errors, reconciliations}`) —
+  surface `errors` to the user (AC14a).
+- Sections: `overview, focus, blockers, bugs, conventions, decisions, requirements, glossary`.
+  Requirement status tokens: `not-started | in-progress | blocked | done`.
+- **S-T06 from reviews/T01.md:** `add_focus`/`update_focus`/`resolve_focus` exist
+  alongside `set_current_focus` — pick one model for the dashboard (recommend
+  `set_current_focus` replace-semantics; don't surface the generic focus CRUD).
+
+**Out of scope:** the code map / graph / node inspector / code search UI — all T07.
+You build the shell T07 mounts into.
 
 ## Goal
 The frontend application shell and everything that isn't the code map: project

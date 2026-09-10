@@ -34,3 +34,6 @@ web/.vite/
 .idea/
 .vscode/
 *.swp
+
+# --- build info ---
+web/node_modules/.tmp/

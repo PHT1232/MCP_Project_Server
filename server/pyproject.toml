@@ -1,0 +1,58 @@
+[project]
+name = "pcs"
+version = "0.0.0"
+description = "Project Context MCP Server — walking skeleton (T00)"
+requires-python = ">=3.12"
+dependencies = [
+    "mcp>=1.13,<2",
+    "sqlalchemy[asyncio]>=2.0.36",
+    "psycopg[binary]>=3.2.3",
+    "alembic>=1.14.0",
+    "pydantic-settings>=2.6.1",
+    "uvicorn>=0.34.0",
+    "starlette>=0.46.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3.4",
+    "pytest-asyncio>=0.25.0",
+    "testcontainers[postgres]>=4.9.0",
+    "ruff>=0.9.1",
+    "mypy>=1.14.1",
+]
+
+[project.scripts]
+pcs = "pcs.__main__:main"
+
+[build-system]
+requires = ["uv_build>=0.9,<0.10"]
+build-backend = "uv_build"
+
+[tool.uv.build-backend]
+module-name = "pcs"
+module-root = "src"
+
+[tool.ruff]
+line-length = 100
+src = ["src", "tests"]
+extend-exclude = ["src/pcs/alembic/versions"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+plugins = ["pydantic.mypy"]
+mypy_path = "src"
+files = ["src", "tests"]
+exclude = ["^src/pcs/alembic/"]
+
+[[tool.mypy.overrides]]
+module = ["testcontainers.*"]
+ignore_missing_imports = true

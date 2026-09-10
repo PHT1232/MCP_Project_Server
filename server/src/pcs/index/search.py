@@ -19,7 +19,7 @@ from pcs.context.types import SECTION_FOCUS
 from pcs.index.ignore import PathTraversalError, resolve_project_root, resolve_under_root
 from pcs.index.schema import ensure_index_schema
 
-MatchedMode = Literal["exact", "fuzzy", "symbol", "fts", "glob"]
+MatchedMode = Literal["exact", "fuzzy", "symbol", "fts", "glob", "semantic", "hybrid"]
 SearchScopeName = Literal["project", "subtree", "files", "focus"]
 
 _PATH_TOKEN = re.compile(
@@ -47,6 +47,7 @@ class SearchHit:
     language: str | None
     git_blob: str | None
     git_commit: str | None
+    content: str = ""
 
 
 @dataclass(frozen=True)
@@ -154,6 +155,114 @@ def _scope_sql(
     return "AND c.path IN :file_set", {"file_set": focus_paths}
 
 
+@dataclass(frozen=True)
+class ScopeClause:
+    """Reusable ``WHERE`` fragments for chunk queries (keyword *and* semantic, FR29)."""
+
+    scope_sql: str
+    scope_params: dict[str, object]
+    glob_sql: str
+    glob_params: dict[str, object]
+    root: Path | None
+
+    @property
+    def all_params(self) -> dict[str, object]:
+        return {**self.scope_params, **self.glob_params}
+
+    @property
+    def has_file_set(self) -> bool:
+        return "file_set" in self.scope_params
+
+
+async def resolve_search_scope(
+    session: AsyncSession,
+    *,
+    project_row: object,
+    scope: SearchScopeName,
+    subtree: str | None,
+    files: list[str] | None,
+    globs: list[str] | None,
+    query: str,
+) -> ScopeClause:
+    """Turn scope/glob options into SQL fragments over alias ``c`` with path safety (FR29, NFR5).
+
+    Shared by :func:`keyword_search` and the semantic path so the FTS SQL is never
+    duplicated (T03 review, notes for T04).
+    """
+    row = project_row  # a Project ORM row
+    root: Path | None
+    try:
+        root = resolve_project_root(row.root_path)  # type: ignore[attr-defined]
+    except FileNotFoundError:
+        root = None
+
+    if subtree:
+        if root is None:
+            raise PathTraversalError("cannot resolve subtree without a readable project root")
+        resolve_under_root(root, subtree)
+    if files:
+        if root is None:
+            raise PathTraversalError("cannot resolve file scope without a readable project root")
+        for rel in files:
+            resolve_under_root(root, rel)
+
+    focus_paths: list[str] = []
+    if scope == "focus":
+        entries = await get_section(
+            session,
+            project=row.id,  # type: ignore[attr-defined]
+            section=SECTION_FOCUS,
+        )
+        focus_paths = _extract_focus_paths([f"{e.headline}\n{e.detail}" for e in entries])
+        if root is not None:
+            safe: list[str] = []
+            for rel in focus_paths:
+                try:
+                    resolve_under_root(root, rel)
+                except PathTraversalError:
+                    continue
+                safe.append(rel)
+            focus_paths = safe
+
+    scope_sql, scope_params = _scope_sql(
+        scope=scope, subtree=subtree, files=files, focus_paths=focus_paths
+    )
+
+    glob_patterns = list(globs or [])
+    q = query.strip()
+    if _GLOB_CHARS.search(q) and ("/" in q or q.startswith("*.")):
+        glob_patterns.append(q)
+    glob_sql = ""
+    glob_params: dict[str, object] = {}
+    if glob_patterns:
+        clauses: list[str] = []
+        for i, pattern in enumerate(glob_patterns):
+            key = f"glob_{i}"
+            clauses.append(f"c.path LIKE :{key} ESCAPE '\\'")
+            glob_params[key] = _glob_to_like(pattern.lstrip("./"))
+        glob_sql = "AND (" + " OR ".join(clauses) + ")"
+
+    return ScopeClause(
+        scope_sql=scope_sql,
+        scope_params=scope_params,
+        glob_sql=glob_sql,
+        glob_params=glob_params,
+        root=root,
+    )
+
+
+def compute_stale(root: Path | None, path: str, digest: object) -> bool:
+    """Working-tree SHA-256 vs indexed hash (NFR9). Shared by keyword + semantic hits."""
+    if root is None:
+        return digest is not None
+    try:
+        disk = resolve_under_root(root, path)
+    except PathTraversalError:
+        return True
+    current = _file_digest(disk)
+    return current is None or (digest is not None and current != str(digest))
+
+
 async def keyword_search(
     session: AsyncSession,
     *,
@@ -176,53 +285,18 @@ async def keyword_search(
         raise ValueError("query must not be empty")
     cap = max(1, min(limit, 100))
 
-    root: Path | None
-    try:
-        root = resolve_project_root(row.root_path)
-    except FileNotFoundError:
-        root = None
-
-    if subtree:
-        if root is None:
-            raise PathTraversalError("cannot resolve subtree without a readable project root")
-        resolve_under_root(root, subtree)
-    if files:
-        if root is None:
-            raise PathTraversalError("cannot resolve file scope without a readable project root")
-        for rel in files:
-            resolve_under_root(root, rel)
-
-    focus_paths: list[str] = []
-    if scope == "focus":
-        entries = await get_section(session, project=row.id, section=SECTION_FOCUS)
-        focus_paths = _extract_focus_paths([f"{e.headline}\n{e.detail}" for e in entries])
-        if root is not None:
-            safe: list[str] = []
-            for rel in focus_paths:
-                try:
-                    resolve_under_root(root, rel)
-                except PathTraversalError:
-                    continue
-                safe.append(rel)
-            focus_paths = safe
-
-    scope_sql, scope_params = _scope_sql(
-        scope=scope, subtree=subtree, files=files, focus_paths=focus_paths
+    clause = await resolve_search_scope(
+        session,
+        project_row=row,
+        scope=scope,
+        subtree=subtree,
+        files=files,
+        globs=globs,
+        query=q,
     )
-
-    glob_patterns = list(globs or [])
-    if _GLOB_CHARS.search(q) and ("/" in q or q.startswith("*.")):
-        glob_patterns.append(q)
-
-    glob_sql = ""
-    glob_params: dict[str, object] = {}
-    if glob_patterns:
-        clauses: list[str] = []
-        for i, pattern in enumerate(glob_patterns):
-            key = f"glob_{i}"
-            clauses.append(f"c.path LIKE :{key} ESCAPE '\\'")
-            glob_params[key] = _glob_to_like(pattern.lstrip("./"))
-        glob_sql = "AND (" + " OR ".join(clauses) + ")"
+    root = clause.root
+    scope_sql, scope_params = clause.scope_sql, clause.scope_params
+    glob_sql, glob_params = clause.glob_sql, clause.glob_params
 
     ident = _IDENT.match(q) is not None
     like = "%" + _like_escape(q) + "%"
@@ -320,6 +394,7 @@ async def keyword_search(
                 language=str(rec["language"]) if rec["language"] is not None else None,
                 git_blob=str(rec["git_blob"]) if rec["git_blob"] is not None else None,
                 git_commit=str(rec["git_commit"]) if rec["git_commit"] is not None else None,
+                content=content,
             )
         )
     return SearchResult(hits=hits, semantic_available=False, mode="keyword")

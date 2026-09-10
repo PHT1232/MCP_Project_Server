@@ -8,19 +8,25 @@ from __future__ import annotations
 import hashlib
 import logging
 from dataclasses import dataclass
+from dataclasses import field as dataclass_field
 from datetime import UTC, datetime
 from pathlib import Path
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from pcs.config import get_settings
 from pcs.context.service import ProjectNotFoundError, resolve_project
 from pcs.index.chunker import chunk_source, language_for
-from pcs.index.gitutil import blob_for, changed_paths_since, head_commit
+from pcs.index.embedding import get_embedding_backend
+from pcs.index.gitutil import blob_map, changed_paths_since, head_commit
+from pcs.index.hybrid import HybridResult, hybrid_search
 from pcs.index.ignore import PathTraversalError, WalkResult, resolve_project_root, walk_repo
-from pcs.index.models import IndexChunk, IndexFile, IndexStatus
+from pcs.index.models import IndexChunk, IndexFile, IndexStatus, IndexSymbol
 from pcs.index.schema import ensure_index_schema
-from pcs.index.search import SearchHit, SearchResult, SearchScopeName, keyword_search
+from pcs.index.search import SearchScopeName
+from pcs.index.semantic import RankedHit, embed_pending_chunks
+from pcs.index.symbol_store import refresh_symbols
 
 logger = logging.getLogger("pcs")
 
@@ -49,6 +55,15 @@ class IndexStatusView:
     chunk_count: int
     skipped_count: int
     skipped: list[SkippedFile]
+    symbol_modes: dict[str, str] = dataclass_field(default_factory=dict)
+    symbol_count: int = 0
+    semantic_model: str | None = None
+    embedded_chunk_count: int = 0
+
+    @property
+    def semantic_available(self) -> bool:
+        """True only when a backend is configured AND chunks are embedded (AC21)."""
+        return self.semantic_model is not None and self.embedded_chunk_count > 0
 
     def as_dict(self) -> dict[str, object]:
         """JSON-ready payload for MCP/HTTP."""
@@ -65,7 +80,17 @@ class IndexStatusView:
             "chunk_count": self.chunk_count,
             "skipped_count": self.skipped_count,
             "skipped": [{"path": s.path, "reason": s.reason} for s in self.skipped],
-            "semantic_available": False,
+            "symbol_count": self.symbol_count,
+            "symbol_modes": dict(self.symbol_modes),
+            "semantic_available": self.semantic_available,
+            "semantic_model": self.semantic_model if self.semantic_available else None,
+            "embedded_chunk_count": self.embedded_chunk_count,
+            "semantic_note": (
+                None
+                if self.semantic_available
+                else "Semantic search unavailable — set PCS_EMBEDDING_BACKEND and reindex "
+                "(FR28, D7, AC10, AC21)."
+            ),
         }
 
 
@@ -150,6 +175,7 @@ async def _index_one_file(
     root: Path,
     path: Path,
     git_commit: str | None,
+    blobs: dict[str, str],
 ) -> str | None:
     """Index one file. Returns a skip reason or None on success."""
     rel = path.resolve().relative_to(root).as_posix()
@@ -161,7 +187,7 @@ async def _index_one_file(
         return "binary"
     text, raw = parsed
     digest = _digest_bytes(raw)
-    blob = await blob_for(root, rel)
+    blob = blobs.get(rel)  # F2: one `git ls-tree` per reindex, not per file
     language = language_for(path)
     chunks = chunk_source(path, text)
 
@@ -200,6 +226,7 @@ async def _index_one_file(
                 git_blob=blob,
                 git_commit=git_commit,
                 content_hash=digest,
+                chunk_hash=_digest_bytes(chunk.content.encode("utf-8")),
                 indexed_at=_now(),
             )
         )
@@ -238,11 +265,17 @@ async def _full_reindex(
     root: Path,
     walked: WalkResult,
     git_commit: str | None,
+    blobs: dict[str, str],
 ) -> None:
     await session.execute(delete(IndexFile).where(IndexFile.project_id == project_id))
     for path in walked.files:
         await _index_one_file(
-            session, project_id=project_id, root=root, path=path, git_commit=git_commit
+            session,
+            project_id=project_id,
+            root=root,
+            path=path,
+            git_commit=git_commit,
+            blobs=blobs,
         )
     for rel, reason in walked.skipped:
         await _upsert_skipped(
@@ -258,7 +291,9 @@ async def _incremental_reindex(
     walked: WalkResult,
     git_commit: str | None,
     last_commit: str | None,
-) -> None:
+    blobs: dict[str, str],
+) -> set[str]:
+    """Returns the set of repo-relative paths that were (re)indexed this run."""
     current = _rel_set(root, walked.files)
     skipped_map = dict(walked.skipped)
     existing_result = await session.execute(
@@ -300,7 +335,12 @@ async def _incremental_reindex(
             await _delete_path(session, project_id, rel)
             continue
         await _index_one_file(
-            session, project_id=project_id, root=root, path=current[rel], git_commit=git_commit
+            session,
+            project_id=project_id,
+            root=root,
+            path=current[rel],
+            git_commit=git_commit,
+            blobs=blobs,
         )
 
     for rel, reason in skipped_map.items():
@@ -313,6 +353,8 @@ async def _incremental_reindex(
         if rel not in current and rel not in skipped_map and rel not in dirty:
             await _delete_path(session, project_id, rel)
 
+    return {rel for rel in dirty if rel in current and rel not in skipped_map}
+
 
 async def reindex(
     session: AsyncSession,
@@ -320,41 +362,77 @@ async def reindex(
     project: str,
     incremental: bool = False,
 ) -> IndexStatusView:
-    """Build or refresh the code index (FR24, FR27). First pass is always full."""
+    """Build or refresh the code index (FR24, FR27). First pass is always full.
+
+    F5 (T03 review): the index lock is the ``code_index.status`` row, NOT the
+    ``projects`` row — a long reindex must not block T01 context writes.
+    """
     await ensure_index_schema(session)
-    row = await resolve_project(session, project, for_update=True)
+    row = await resolve_project(session, project)
     root = resolve_project_root(row.root_path)
     status = await _status_row(session, row.id)
+    await session.execute(
+        text("SELECT project_id FROM code_index.status WHERE project_id = :pid FOR UPDATE"),
+        {"pid": row.id},
+    )
     status.state = "running"
     await session.flush()
 
     walked = walk_repo(root)
     commit = await head_commit(root)
+    blobs = await blob_map(root)
     use_incremental = (
         incremental
         and status.last_full_at is not None
         and status.file_count + status.skipped_count > 0
     )
     try:
+        changed: set[str] | None
         if use_incremental:
-            await _incremental_reindex(
+            changed = await _incremental_reindex(
                 session,
                 project_id=row.id,
                 root=root,
                 walked=walked,
                 git_commit=commit,
                 last_commit=status.last_commit,
+                blobs=blobs,
             )
             status.last_incremental_at = _now()
         else:
             await _full_reindex(
-                session, project_id=row.id, root=root, walked=walked, git_commit=commit
+                session,
+                project_id=row.id,
+                root=root,
+                walked=walked,
+                git_commit=commit,
+                blobs=blobs,
             )
             status.last_full_at = _now()
             status.last_incremental_at = status.last_full_at
+            changed = None
+        await session.flush()
+        modes, symbol_count = await refresh_symbols(
+            session, project_id=row.id, root=root, only=changed
+        )
+        if changed is None:
+            status.symbol_modes = modes
+            status.symbol_count = symbol_count
+        else:
+            merged = dict(status.symbol_modes)
+            merged.update(modes)
+            status.symbol_modes = merged
+        await _embed_index(session, project_id=row.id, status=status)
         status.last_commit = commit
         status.state = "idle"
         await _refresh_counts(session, status)
+        if changed is not None:
+            symbol_total = await session.execute(
+                select(func.count())
+                .select_from(IndexSymbol)
+                .where(IndexSymbol.project_id == row.id)
+            )
+            status.symbol_count = int(symbol_total.scalar_one())
     except Exception:
         status.state = "error"
         logger.exception("reindex failed", extra={"context": {"project": row.id}})
@@ -367,10 +445,37 @@ async def reindex(
                 "incremental": use_incremental,
                 "files": status.file_count,
                 "chunks": status.chunk_count,
+                "symbols": status.symbol_count,
+                "embedded": status.embedded_chunk_count,
             }
         },
     )
     return await get_index_status(session, project=row.id)
+
+
+async def _embed_index(session: AsyncSession, *, project_id: str, status: IndexStatus) -> None:
+    """Embed any not-yet-embedded chunks if a backend is configured (FR28, NFR10)."""
+    backend = get_embedding_backend()
+    if backend is None:
+        status.semantic_model = None
+        status.embedded_chunk_count = 0
+        return
+    try:
+        _, total = await embed_pending_chunks(
+            session,
+            project_id=project_id,
+            backend=backend,
+            batch_size=get_settings().embedding_batch_size,
+        )
+    except Exception as exc:
+        # An embedding-backend failure must not fail the whole index build.
+        logger.warning(
+            "embedding_failed",
+            extra={"context": {"project": project_id, "error": str(exc)}},
+        )
+        return
+    status.semantic_model = backend.name
+    status.embedded_chunk_count = total
 
 
 async def get_index_status(session: AsyncSession, *, project: str) -> IndexStatusView:
@@ -412,27 +517,30 @@ async def get_index_status(session: AsyncSession, *, project: str) -> IndexStatu
         chunk_count=status.chunk_count,
         skipped_count=status.skipped_count,
         skipped=skipped,
+        symbol_modes=dict(status.symbol_modes or {}),
+        symbol_count=status.symbol_count,
+        semantic_model=status.semantic_model,
+        embedded_chunk_count=status.embedded_chunk_count,
     )
 
 
-def _hits_as_dicts(hits: list[SearchHit]) -> list[dict[str, object]]:
-    return [
-        {
-            "path": h.path,
-            "start_line": h.start_line,
-            "end_line": h.end_line,
-            "snippet": h.snippet,
-            "score": h.score,
-            "matched_mode": h.matched_mode,
-            "stale": h.stale,
-            "symbol": h.symbol,
-            "kind": h.kind,
-            "language": h.language,
-            "git_blob": h.git_blob,
-            "git_commit": h.git_commit,
-        }
-        for h in hits
-    ]
+def _ranked_hit_dict(ranked: RankedHit) -> dict[str, object]:
+    h = ranked.hit
+    return {
+        "path": h.path,
+        "start_line": h.start_line,
+        "end_line": h.end_line,
+        "snippet": h.snippet,
+        "score": round(ranked.fused_score, 6),
+        "matched_mode": ranked.mode_label,
+        "retrieval_modes": list(ranked.modes),
+        "stale": h.stale,
+        "symbol": h.symbol,
+        "kind": h.kind,
+        "language": h.language,
+        "git_blob": h.git_blob,
+        "git_commit": h.git_commit,
+    }
 
 
 async def search_code(
@@ -446,9 +554,13 @@ async def search_code(
     globs: list[str] | None = None,
     limit: int = 20,
 ) -> dict[str, object]:
-    """Keyword-only ``search_code`` (FR20 keyword, FR22 stub until T04 hybrid)."""
+    """Hybrid keyword + semantic ``search_code`` (FR20, FR21, FR22).
+
+    Falls back to keyword-only with an explicit note when no embedding backend is
+    configured or nothing is embedded yet (AC10, AC21).
+    """
     try:
-        result: SearchResult = await keyword_search(
+        result: HybridResult = await hybrid_search(
             session,
             project=project,
             query=query,
@@ -461,12 +573,10 @@ async def search_code(
     except PathTraversalError as exc:
         raise ValueError(str(exc)) from exc
     return {
-        "hits": _hits_as_dicts(result.hits),
-        "semantic_available": False,
-        "mode": "keyword",
-        "note": (
-            "Semantic search is unavailable until an embedding backend is configured (FR28, AC10)."
-        ),
+        "hits": [_ranked_hit_dict(r) for r in result.ranked],
+        "semantic_available": result.semantic_available,
+        "mode": "hybrid" if result.semantic_available else "keyword",
+        "note": result.semantic_note,
     }
 
 

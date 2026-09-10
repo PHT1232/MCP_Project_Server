@@ -13,11 +13,13 @@ from typing import Literal
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from pcs.bind import bind_host as resolve_bind_host
+
 BindMode = Literal["localhost", "tailscale"]
 
 
 class Settings(BaseSettings):
-    """Every configuration value the skeleton reads. See ``.env.example``."""
+    """Every configuration value the process reads. See ``.env.example``."""
 
     model_config = SettingsConfigDict(
         env_prefix="PCS_",
@@ -32,7 +34,7 @@ class Settings(BaseSettings):
     )
     host: str = Field(
         default="127.0.0.1",
-        description="Configured HTTP host. Only honoured verbatim once T08 adds tailscale binding.",
+        description="Unused for the actual bind; see bind_mode / bind_address / bind_host (NFR14).",
     )
     port: int = Field(
         default=8080,
@@ -40,7 +42,34 @@ class Settings(BaseSettings):
     )
     bind_mode: BindMode = Field(
         default="localhost",
-        description="'localhost' binds 127.0.0.1 (NFR14). 'tailscale' is a T08 seam.",
+        description=(
+            "'localhost' binds `bind_address` (default 127.0.0.1). "
+            "'tailscale' binds the tailnet IPv4 (FR41, NFR14)."
+        ),
+    )
+    bind_address: str = Field(
+        default="",
+        description=(
+            "Explicit HTTP listen address for bind_mode=localhost. Empty → 127.0.0.1. "
+            "Docker deployments set 0.0.0.0 here and rely on the loopback-only host "
+            "port publish in deploy/docker-compose.yml for NFR14 (B1)."
+        ),
+    )
+    tailscale_ip: str = Field(
+        default="",
+        description="Optional explicit tailnet IPv4 when bind_mode=tailscale (FR41).",
+    )
+    tailscale_iface: str = Field(
+        default="tailscale0",
+        description="Interface probed for a tailnet IPv4 when PCS_TAILSCALE_IP is unset.",
+    )
+    tailscale_serve: bool = Field(
+        default=False,
+        description="When true, the Tailscale sidecar should run tailscale serve for HTTPS (FR41).",
+    )
+    static_dir: str = Field(
+        default="",
+        description="Directory of the built web/ frontend to serve (NFR13). Empty disables.",
     )
     log_level: str = Field(
         default="INFO",
@@ -48,11 +77,11 @@ class Settings(BaseSettings):
     )
     index_ignore: str = Field(
         default="",
-        description="Comma-separated extra gitwildmatch patterns to skip when indexing (FR19).",
+        description="Comma-separated extra gitignore patterns to skip when indexing (FR19).",
     )
     index_allow: str = Field(
         default="",
-        description="If set, only paths matching these gitwildmatch patterns are indexed (FR19).",
+        description="If set, only paths matching these gitignore patterns are indexed (FR19).",
     )
     index_max_file_bytes: int = Field(
         default=1_000_000,
@@ -65,15 +94,18 @@ class Settings(BaseSettings):
 
     @property
     def bind_host(self) -> str:
-        """Address the HTTP server actually binds.
+        """Address the HTTP server actually binds (FR41, NFR14, AC26).
 
-        Defaults to ``127.0.0.1`` and never widens on its own (NFR14). Tailscale
-        binding is owned by T08 — the seam is this branch.
+        ``localhost`` → ``bind_address`` (default ``127.0.0.1``; ``0.0.0.0`` in a
+        container behind a loopback-only publish). ``tailscale`` → the tailnet
+        IPv4, validated to ``100.64.0.0/10``. stdio MCP does not call this (FR42).
+        Memoised in :mod:`pcs.bind`.
         """
-        if self.bind_mode == "localhost":
-            return "127.0.0.1"
-        raise NotImplementedError(
-            "bind_mode='tailscale' is implemented in T08; use 'localhost' until then."
+        return resolve_bind_host(
+            mode=self.bind_mode,
+            explicit=self.bind_address,
+            tailscale_ip=self.tailscale_ip,
+            tailscale_iface=self.tailscale_iface,
         )
 
 

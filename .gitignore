@@ -37,3 +37,12 @@ web/.vite/
 
 # --- build info ---
 web/node_modules/.tmp/
+
+# --- deploy bind-mount placeholder ---
+# A user's checked-out repo and the requirements file T02 writes here must not
+# land in this repo's tree — only the placeholder READMEs are tracked.
+/repos/*
+!/repos/README.md
+!/repos/.project-context/
+/repos/.project-context/*
+!/repos/.project-context/README.md

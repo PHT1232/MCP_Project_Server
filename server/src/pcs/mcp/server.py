@@ -21,9 +21,12 @@ from pcs.mcp.resources import register_resources
 from pcs.mcp.tools import register_tools
 from pcs.web_api import register_routes
 from pcs.web_api.index_routes import register_index_routes
+from pcs.web_static import register_frontend
 
 _settings = get_settings()
 
+# Host is 127.0.0.1 at import so stdio (and tests) never resolve a tailnet IP
+# (FR42). ``pcs http`` overwrites ``mcp.settings.host`` with bind_host first.
 mcp: FastMCP = FastMCP(
     "pcs",
     instructions=(
@@ -32,7 +35,7 @@ mcp: FastMCP = FastMCP(
         "verbatim detail with get_section / get_entry / context:// resources. "
         "Writes go through add_*/update_*/resolve_* (never inferred)."
     ),
-    host=_settings.bind_host,
+    host="127.0.0.1",
     port=_settings.port,
 )
 
@@ -58,4 +61,5 @@ def build_http_app() -> Starlette:
             await index_watch.stop_all()
 
     app.router.lifespan_context = lifespan
+    register_frontend(app)
     return app

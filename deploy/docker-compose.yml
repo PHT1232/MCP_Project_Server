@@ -1,6 +1,7 @@
-# PostgreSQL (with pgvector) for the Project Context MCP Server.
-# T00 ships only the database service — `just up` must start it so `just migrate`
-# can apply the baseline. The server + Tailscale sidecar are added by T08 (FR40, D16).
+# Project Context MCP Server — Docker Compose stack (FR40, D16, NFR3).
+# `docker compose -f deploy/docker-compose.yml up` from a clean checkout is enough
+# to register a project and fetch a briefing (AC25). Host publishes are loopback
+# only (NFR14, AC26). Tailscale overlay: docker-compose.tailscale.yml.
 
 name: pcs
 
@@ -8,9 +9,9 @@ services:
   postgres:
     image: pgvector/pgvector:pg16
     environment:
-      POSTGRES_USER: pcs
-      POSTGRES_PASSWORD: pcs
-      POSTGRES_DB: pcs
+      POSTGRES_USER: ${POSTGRES_USER:-pcs}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-pcs}
+      POSTGRES_DB: ${POSTGRES_DB:-pcs}
     ports:
       - "127.0.0.1:5432:5432"
     volumes:
@@ -20,6 +21,56 @@ services:
       interval: 3s
       timeout: 5s
       retries: 20
+    networks: [pcs]
+    restart: unless-stopped
+
+  server:
+    image: ${PCS_IMAGE:-pcs-server:local}
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.server
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      PCS_DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-pcs}:${POSTGRES_PASSWORD:-pcs}@postgres:5432/${POSTGRES_DB:-pcs}
+      PCS_BIND_MODE: ${PCS_BIND_MODE:-localhost}
+      # Listen on the container's routable interface so the published port below
+      # can reach it. NFR14 is enforced by that publish being 127.0.0.1-only, not
+      # by the in-container bind. Ignored when PCS_BIND_MODE=tailscale.
+      PCS_BIND_ADDRESS: ${PCS_BIND_ADDRESS:-0.0.0.0}
+      PCS_PORT: "8080"
+      PCS_LOG_LEVEL: ${PCS_LOG_LEVEL:-INFO}
+      PCS_STATIC_DIR: /app/web/dist
+      PCS_TAILSCALE_IP: ${PCS_TAILSCALE_IP:-}
+      PCS_TAILSCALE_IFACE: ${PCS_TAILSCALE_IFACE:-tailscale0}
+      PCS_TAILSCALE_SERVE: ${PCS_TAILSCALE_SERVE:-false}
+      PCS_INDEX_WATCH: ${PCS_INDEX_WATCH:-true}
+    ports:
+      - "127.0.0.1:${PCS_PORT:-8080}:8080"
+    volumes:
+      - type: bind
+        source: ${PCS_REPOS_DIR:-../repos}
+        target: /repos
+        read_only: true
+      - type: bind
+        source: ${PCS_REQUIREMENTS_DIR:-../repos/.project-context}
+        target: /repos/.project-context
+        read_only: false
+      - pcs_index:/var/lib/pcs/index
+    healthcheck:
+      test: ["CMD", "python", "-m", "pcs.healthcheck"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    networks: [pcs]
+    restart: unless-stopped
+
+networks:
+  pcs:
 
 volumes:
+  # Curated context + keyword/semantic index live in PostgreSQL (NFR12).
   pcs_pgdata:
+  # Extra volume for on-disk index artifacts (T04 embedding cache seam) (FR40).
+  pcs_index:

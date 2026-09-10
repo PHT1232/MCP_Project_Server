@@ -97,9 +97,11 @@ files get fleshed out against the real skeleton structure at that point.
 
 | Task | Branch | State |
 |------|--------|-------|
-| T00 | `task/T00-skeleton` | **merged** (`371d4c7`) — review in [reviews/T00.md](reviews/T00.md) |
-| T01 | `task/T01-context-store` | **in review** |
-| T02–T08 | — | ready to start (Phase 1) |
+| T00 | `task/T00-skeleton` | **merged** (`371d4c7`) — [reviews/T00.md](reviews/T00.md) |
+| T01 | `task/T01-context-store` | **merged** (`dc9921a`) — [reviews/T01.md](reviews/T01.md) |
+| T02, T04, T06 | — | unblocked (depend on T01) |
+| T03, T08 | — | ready to start (depend only on T00) |
+| T05, T07 | — | blocked (T04 / T05+T06) |
 | T09 | — | blocked on Phase 1 |
 
 Update this table as tasks move: `not started → in progress → in review → changes requested → merged`.

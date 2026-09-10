@@ -46,6 +46,22 @@ class Settings(BaseSettings):
         default="INFO",
         description="Root level for the structured `pcs` logger (NFR6).",
     )
+    index_ignore: str = Field(
+        default="",
+        description="Comma-separated extra gitwildmatch patterns to skip when indexing (FR19).",
+    )
+    index_allow: str = Field(
+        default="",
+        description="If set, only paths matching these gitwildmatch patterns are indexed (FR19).",
+    )
+    index_max_file_bytes: int = Field(
+        default=1_000_000,
+        description="Skip source files larger than this many bytes (FR19).",
+    )
+    index_watch: bool = Field(
+        default=True,
+        description="Watch registered project roots and trigger incremental reindex (FR24).",
+    )
 
     @property
     def bind_host(self) -> str:

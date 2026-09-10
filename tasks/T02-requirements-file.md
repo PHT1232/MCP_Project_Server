@@ -1,8 +1,19 @@
 # T02 — Requirements template file
 
-**Branch:** `task/T02-requirements-file`  ·  **Depends on:** T01  ·  **Blocks:** T06
+**Branch:** `task/T02-requirements-file`  ·  **Depends on:** T01 (merged)  ·  **Blocks:** T06
 
-> Stub — flesh out after T00/T01.
+**Read first:** `AGENTS.md`, `REQUIREMENTS.md` §7 FR16a + D12/D15, `reviews/T01.md`
+(esp. "Notes for dependents → T02"), and `tasks/T01-context-store.md` Handoff.
+Base branch off current `main`.
+
+**T01 gives you:** the `requirements` section in the store, `add_requirement` /
+`update_requirement` / `set_requirement_status` / `resolve_requirement` MCP tools,
+`context://{project}/requirements`, `linked_files` + `related_entry_id` columns
+on `context_entries`, and the audit log. Requirement **id is a UUID** — add a
+nullable `req_key` column (`R-NNN`) in your migration; do **not** overload the id
+or headline. Store status tokens: `not-started | in-progress | blocked | done`.
+The requirements file path default is `.project-context/requirements.md` relative
+to the project root (T08 mounts `/repos/.project-context` read-write).
 
 ## Goal
 Two-way sync between a human-editable Markdown requirements file in the repo and

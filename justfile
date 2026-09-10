@@ -36,8 +36,13 @@ test:
     cd {{server_dir}} && uv run pytest
     cd {{web_dir}} && npm run test
 
-# Full gate: format check, lint, types, tests, and the production web build.
-check: lint typecheck test
+# Validate compose files (compose CLI; does not start containers).
+compose-lint:
+    docker compose -f deploy/docker-compose.yml config -q
+    docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.tailscale.yml config -q
+
+# Full gate: format check, lint, types, tests, production web build, compose files.
+check: lint typecheck test compose-lint
     cd {{web_dir}} && npm run build
 
 # Apply database migrations from empty to head.
@@ -45,10 +50,11 @@ migrate:
     cd {{server_dir}} && uv run alembic upgrade head
 
 # Start the PostgreSQL container and wait for it to be healthy.
+# Full stack (server + PG): docker compose -f deploy/docker-compose.yml up --wait
 up:
-    {{compose}} up -d --wait
+    {{compose}} up -d --wait postgres
 
-# Stop the PostgreSQL container (keeps the data volume).
+# Stop compose services (keeps named volumes).
 down:
     {{compose}} down
 

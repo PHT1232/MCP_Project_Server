@@ -1,22 +1,19 @@
 # Project Context MCP Server (`pcs`)
 
-Shared, compact project briefing for AI agents, plus a code index and a small
-web UI. Spec: [REQUIREMENTS.md](REQUIREMENTS.md). How to work in this repo:
-[AGENTS.md](AGENTS.md).
+Shared, compact project briefing for AI agents, plus a searchable code index and a web UI with a level-of-detail code map. Spec: [REQUIREMENTS.md](REQUIREMENTS.md). Contributor workflow: [AGENTS.md](AGENTS.md).
 
-## Quick start (Docker)
+## Quick start with Docker
 
-From a clean checkout, with Docker Compose v2:
+From a clean checkout with Docker Compose v2:
 
 ```bash
-cp .env.example .env          # optional; defaults work for local
+cp .env.example .env
 docker compose -f deploy/docker-compose.yml up --build --wait
 ```
 
-The API and UI listen on **http://127.0.0.1:8080** only (not LAN/public).
+The API, streamable HTTP MCP transport, and UI are available on `http://127.0.0.1:8080` only. PostgreSQL is published on host loopback at port `5432`.
 
-Register a project and fetch a briefing (mount path is `/repos` inside the
-container — the `./repos` placeholder, or set `PCS_REPOS_DIR`):
+Register a project and fetch its briefing. The container sees `PCS_REPOS_DIR` at `/repos`; the default host directory is this repository's `repos/` placeholder.
 
 ```bash
 curl -s http://127.0.0.1:8080/api/health
@@ -26,21 +23,58 @@ curl -s -X POST http://127.0.0.1:8080/api/projects \
 curl -s http://127.0.0.1:8080/api/projects/demo/briefing
 ```
 
-stdio MCP (co-located agent, no network) still works on the host:
+Set `PCS_REPOS_DIR` to the host directory containing projects and register `/repos/<subdir>` when serving more than one repository. Semantic search is disabled by default; keyword and structural search remain available.
 
-```bash
-cd server && uv sync && uv run pcs stdio
+## MCP clients
+
+For a co-located client, configure stdio with the `server` directory as the working directory:
+
+```json
+{
+  "command": "uv",
+  "args": ["run", "pcs", "stdio"],
+  "cwd": "/absolute/path/to/mcp_server/server"
+}
 ```
 
-Full deploy notes, Tailscale, and bind modes: [docs/deploy.md](docs/deploy.md).
+For a streamable HTTP client, use:
 
-## Development (no full stack)
+```text
+http://127.0.0.1:8080/mcp
+```
+
+MCP calls identify projects by exact name or ID. The JSON frontend API is separate under `/api`.
+
+## Development
+
+Install dependencies and start PostgreSQL:
 
 ```bash
 just setup
-just up          # Postgres on 127.0.0.1:5432
+just up
 just migrate
-cd server && uv run pcs http    # 127.0.0.1:8080
-cd web && npm run dev           # Vite, proxies /api
+```
+
+Run the servers in separate terminals from the repository root:
+
+```bash
+# Terminal 1
+(cd server && uv run pcs http)
+
+# Terminal 2
+(cd web && npm run dev)
+```
+
+Vite proxies `/api` to `http://127.0.0.1:8080` by default. Run the full project gate with:
+
+```bash
 just check
 ```
+
+## Documentation
+
+- [Architecture](docs/architecture.md)
+- [Configuration reference](docs/configuration.md)
+- [MCP tools and resources](docs/mcp-reference.md)
+- [HTTP API](docs/http-api.md)
+- [Deployment, persistence, and Tailscale](docs/deploy.md)

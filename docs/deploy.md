@@ -1,58 +1,81 @@
 # Deploying `pcs`
 
-The system ships as a Docker Compose stack: PostgreSQL (with `pgvector`) plus
-the server, which also serves the built web UI (FR40, NFR3, NFR13). Access is
-loopback by default; an optional Tailscale sidecar joins your tailnet (FR41,
-NFR14, D16).
+The default Docker Compose stack contains PostgreSQL with pgvector and one Python server that also serves the built React UI (FR40, NFR3, NFR13). Access is host-loopback-only by default. An optional Tailscale sidecar exposes the service to the operator's tailnet without Funnel (FR41, NFR14).
 
-## What gets persisted
-
-Named volumes (FR40):
-
-| Volume | Purpose |
-|--------|---------|
-| `pcs_pgdata` | PostgreSQL data, including curated context **and** the code index (NFR12) |
-| `pcs_index` | On-disk index artifacts (`/var/lib/pcs/index`) — reserved for T04 embedding cache |
-| `pcs_ts_state` | Tailscale node state (overlay only) |
-
-Nothing secret is baked into the image. Passwords, Tailscale auth keys, and
-embedding URLs come from the environment or a mounted `.env` (FR40).
-
-## Project repo mounts (NFR5)
-
-Compose bind-mounts:
-
-- `PCS_REPOS_DIR` → `/repos` **read-only** (code the indexer may read)
-- `PCS_REQUIREMENTS_DIR` → `/repos/.project-context` **read-write** (requirements
-  template file only, FR16a)
-
-Relative paths are resolved from `deploy/docker-compose.yml`. Defaults point at
-the `repos/` placeholder in this repo. Register projects with
-`root_path=/repos` or `/repos/<subdir>`.
-
-The server never executes project code (NFR5).
-
-## Localhost stack (AC25, AC26 off)
+## Localhost stack
 
 ```bash
+cp .env.example .env
 docker compose -f deploy/docker-compose.yml up --build --wait
 ```
 
-- Host ports: `127.0.0.1:8080` (HTTP MCP + `/api` + UI) and `127.0.0.1:5432`
-  (Postgres, for `just migrate` from the host).
-- `PCS_BIND_MODE=localhost` → process bind `127.0.0.1` inside the container.
-- Not published on `0.0.0.0`, LAN, or the public internet.
+The entrypoint waits for PostgreSQL, runs `alembic upgrade head`, then starts `pcs http`.
 
-Health: `GET http://127.0.0.1:8080/api/health` reports `bind_mode` and
-`bind_host`.
+- Docker publishes HTTP at `127.0.0.1:${PCS_PORT:-8080}` and PostgreSQL at `127.0.0.1:5432`.
+- Inside the server container, Compose sets `PCS_BIND_ADDRESS=0.0.0.0` so Docker can route traffic to it.
+- The wildcard container bind does not expose the service to the LAN: the host publish remains explicitly bound to `127.0.0.1`.
+- `GET http://127.0.0.1:8080/api/health` reports `bind_mode` and the process `bind_host`.
+- HTTP MCP is at `/mcp`; JSON API routes are under `/api`; the UI is at `/`.
 
-stdio MCP is unchanged: `uv run pcs stdio` on the host, or a client attached to
-that process. HTTP bind mode does not affect stdio (FR42).
+stdio MCP is independent of HTTP binding and may be run on the host with `(cd server && uv run pcs stdio)` (FR42).
 
-## Tailscale overlay (AC26 on)
+## Project mounts
 
-Requires a [Tailscale auth key](https://tailscale.com/kb/1085/auth-keys) and
-`/dev/net/tun` on the host.
+Compose mounts:
+
+- `PCS_REPOS_DIR` at `/repos` read-only for source indexing.
+- `PCS_REQUIREMENTS_DIR` at `/repos/.project-context` read-write for requirements-file synchronization.
+
+Defaults are `../repos` and `../repos/.project-context`, resolved relative to `deploy/docker-compose.yml`. Register `/repos` or `/repos/<subdir>` as the project root.
+
+The narrow read-write mount overlays `.project-context` within the otherwise read-only `/repos` tree. Configure `PCS_REQUIREMENTS_FILE` so writable requirements files remain in that mounted directory. The server reads source but does not execute project code (NFR5).
+
+## Persistence and backup
+
+| Volume | Purpose |
+|---|---|
+| `pcs_pgdata` | PostgreSQL data: curated context and the complete `code_index` schema (NFR12). |
+| `pcs_index` | Reserved on-disk index-artifact path at `/var/lib/pcs/index`; current searchable index data lives in PostgreSQL. |
+| `pcs_ts_state` | Tailscale node state when the overlay is enabled. |
+
+Back up `pcs_pgdata` using normal PostgreSQL backup tooling. Back up the requirements Markdown files separately if they are part of the operator's source-of-truth workflow. The code index is rebuildable; curated context is not.
+
+`docker compose down` preserves named volumes. `docker compose down -v` irreversibly deletes them.
+
+## Configuration in Compose
+
+See [Configuration reference](configuration.md) for all supported values. The repository `.env.example` is a catalog and Compose-substitution file, but `deploy/docker-compose.yml` does **not** use `env_file:`. It currently forwards this server subset:
+
+- `PCS_DATABASE_URL`
+- `PCS_BIND_MODE`
+- `PCS_BIND_ADDRESS`
+- `PCS_PORT` as container port `8080` and host publish selection
+- `PCS_LOG_LEVEL`
+- `PCS_STATIC_DIR=/app/web/dist`
+- `PCS_TAILSCALE_IP`
+- `PCS_TAILSCALE_IFACE`
+- `PCS_TAILSCALE_SERVE`
+- `PCS_INDEX_WATCH`
+
+Settings such as `PCS_INDEX_IGNORE`, `PCS_INDEX_ALLOW`, `PCS_INDEX_MAX_FILE_BYTES`, `PCS_REQUIREMENTS_FILE`, `PCS_SCIP_INDEXERS`, and all embedding/summary settings are not automatically forwarded from `.env` to the server container. Add them explicitly with a local override, for example:
+
+```yaml
+services:
+  server:
+    environment:
+      PCS_INDEX_MAX_FILE_BYTES: ${PCS_INDEX_MAX_FILE_BYTES:-1000000}
+      PCS_EMBEDDING_BACKEND: ${PCS_EMBEDDING_BACKEND:-}
+      PCS_EMBEDDING_BASE_URL: ${PCS_EMBEDDING_BASE_URL:-https://api.openai.com/v1}
+      PCS_EMBEDDING_API_KEY: ${PCS_EMBEDDING_API_KEY:-}
+      PCS_EMBEDDING_MODEL: ${PCS_EMBEDDING_MODEL:-text-embedding-3-small}
+      PCS_EMBEDDING_DIMENSIONS: ${PCS_EMBEDDING_DIMENSIONS:-1536}
+```
+
+Pass the override after the base file with `-f path/to/override.yml`. Remote embedding or summary providers receive relevant project code or context. Keep their keys outside version control.
+
+## Tailscale overlay
+
+Requires a Tailscale auth key and `/dev/net/tun` on the host:
 
 ```bash
 export TS_AUTHKEY=tskey-auth-...
@@ -62,60 +85,67 @@ docker compose \
   up --build --wait
 ```
 
-This starts a **Tailscale sidecar**. The server shares that network namespace and
-sets `PCS_BIND_MODE=tailscale`, so it listens on the tailnet IPv4 (typically
-`100.x`, resolved from `tailscale0` or `PCS_TAILSCALE_IP`). Other devices on
-**your** tailnet reach it by MagicDNS name (`TS_HOSTNAME`, default `pcs`).
+The overlay:
 
-- Funnel is **not** enabled and must not be added to `TS_EXTRA_ARGS`.
-- Compose still does not publish `0.0.0.0`.
-- Postgres stays on the internal compose network (static `172.30.0.2`); the
-  sidecar has `extra_hosts: postgres:172.30.0.2` so the server can still reach
-  the database after `network_mode: service:tailscale`.
+- Starts `tailscale/tailscale:v1.80.3` with persistent state.
+- Places PostgreSQL at internal address `172.30.0.2`.
+- Shares the Tailscale network namespace with the server.
+- Forces `PCS_BIND_MODE=tailscale`, which resolves and validates a `100.64.0.0/10` address.
+- Removes the server's host port publish and bridge-network attachment.
+- Does not enable Funnel. Do not add Funnel to `TS_EXTRA_ARGS`.
 
-### Optional HTTPS (`tailscale serve`)
+Tailnet clients normally connect using the MagicDNS name from `TS_HOSTNAME` (default `pcs`) and port `8080`.
 
-`deploy/ts-serve.json` is a template that proxies to `http://127.0.0.1:8080`.
-That matches a process listening on loopback **inside the sidecar namespace**.
-If you want Serve/HTTPS instead of binding `100.x` directly:
+### HTTPS with Tailscale Serve
 
-1. Set `PCS_BIND_MODE=localhost` (loopback in the shared netns).
-2. Mount the serve config: `TS_SERVE_CONFIG=/config/serve.json` and a volume
-   onto `deploy/ts-serve.json` (replace `${TS_CERT_DOMAIN}` with your MagicDNS
-   name).
+The repository includes `deploy/ts-serve.json`, but the shipped overlay does not provide a runnable Serve setup: it does not mount that file, it forces `PCS_BIND_MODE=tailscale`, and `${TS_CERT_DOMAIN}` inside JSON is not rendered by Compose. `PCS_TAILSCALE_SERVE` also does not start Serve by itself.
 
-Do not pass `--funnel`.
+A deployment-specific override must:
 
-## Published image vs build-from-source (FR40)
+1. Render `${TS_CERT_DOMAIN}` in `deploy/ts-serve.json` to a concrete MagicDNS certificate domain.
+2. Mount the rendered file into the `tailscale` service.
+3. Set `TS_SERVE_CONFIG` to that in-container path.
+4. Override the server to `PCS_BIND_MODE=localhost` so the proxy target `http://127.0.0.1:8080` is listening inside the shared network namespace.
+5. Keep Funnel disabled.
 
-The compose `server` service both **builds** `deploy/Dockerfile.server` and
-accepts `PCS_IMAGE`:
+Do not follow the direct-tailnet-bind instructions and the Serve-loopback instructions simultaneously.
 
-```bash
-export PCS_IMAGE=ghcr.io/example/pcs-server:v1
-docker compose -f deploy/docker-compose.yml up --wait
+## Prebuilt images
+
+`deploy/docker-compose.yml` declares both:
+
+```yaml
+image: ${PCS_IMAGE:-pcs-server:local}
+build:
+  context: ..
+  dockerfile: deploy/Dockerfile.server
 ```
 
-To publish: build `deploy/Dockerfile.server` from the repo root (it copies
-`server/` + `web/` and bakes the Vite `dist/` into the image). No `.env` or
-auth keys are copied (see `.dockerignore`).
+Setting `PCS_IMAGE` changes the image tag/reference but does not remove the `build` declaration. Compose may use a local/pulled image or build depending on command flags and pull policy. For deterministic production deployment, use an override that removes or replaces `build`, then pull the pinned image before `up`.
 
-`deploy/Dockerfile.web` is an optional nginx image if you split static serving;
-the default stack does **not** use it — the server process serves `/` and
-`/assets` (NFR13).
-
-## Host-mode (no Docker for the app)
+To build directly from source:
 
 ```bash
-just setup && just up && just migrate
-cd server && uv run pcs http          # 127.0.0.1:8080
-# or
-PCS_BIND_MODE=tailscale uv run pcs http   # binds tailnet IPv4
-uv run pcs stdio                         # always available
+docker build -f deploy/Dockerfile.server -t pcs-server:local .
 ```
 
-## Configuration
+The multi-stage image builds the frontend, installs the Python application, includes `git` for indexing, runs as the non-root `pcs` user, and does not copy `.env`. `deploy/Dockerfile.web` is optional and unused by the default stack.
 
-Every variable the process reads is in [`.env.example`](../.env.example)
-(`PCS_` prefix, plus compose `POSTGRES_*` / `TS_*`). Mount a file or inject
-env; do not rebuild the image to change config (FR40).
+## Host mode
+
+Use Docker only for PostgreSQL, then run migrations and application processes on the host:
+
+```bash
+just setup
+just up
+just migrate
+(cd server && uv run pcs http)
+```
+
+Default HTTP binding is `127.0.0.1:8080`. For direct tailnet binding:
+
+```bash
+(cd server && PCS_BIND_MODE=tailscale uv run pcs http)
+```
+
+Set `PCS_TAILSCALE_IP` when automatic resolution through `tailscale ip -4` or `tailscale0` is unavailable. The address must be within `100.64.0.0/10`.

@@ -105,7 +105,7 @@ files get fleshed out against the real skeleton structure at that point.
 | T04 | `task/T04-index-semantic` | **merged** (`23a93e7`, renumbered 0005) — [reviews/T04.md](reviews/T04.md) |
 | T05 | `task/T05-codemap-api` | **merged** (`4ef3950`) — [reviews/T05.md](reviews/T05.md) |
 | T06 | `task/T06-frontend-shell` | **merged** — [reviews/T06.md](reviews/T06.md) |
-| T07 | `task/T07-frontend-codemap` | **ready** (T05 + T06 merged) |
+| T07 | `task/T07-frontend-codemap` | **in review** |
 | T09 | — | blocked on Phase 1 |
 
 Update this table as tasks move: `not started → in progress → in review → changes requested → merged`.

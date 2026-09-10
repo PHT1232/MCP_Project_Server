@@ -28,11 +28,11 @@ State: `—` not started · `wip` in progress · `claimed` agent says done ·
 | AC15 | Drop index schema + restart → clean rebuild, context intact | T03 | | verified | `test_ac15_drop_index_schema_rebuild_preserves_context` (`DROP SCHEMA … CASCADE`); see reviews/T03.md F1 |
 | AC16 | Missing/unknown project → error listing projects, no guess | T01 | T00 | verified | `test_ac16_unknown_and_missing_project_list_registered` + MCP/HTTP paths |
 | AC17 | Two edits → two revisions; deleted entry gone from reads, in history | T01 | | verified | `test_ac17_two_edits_two_revisions_deleted_gone_from_reads` |
-| AC18 | Add requirement in frontend → block in file; file edit + sync → store+view | T02 | T06 | — | |
+| AC18 | Add requirement in frontend → block in file; file edit + sync → store+view | T02 | T06 | verified (server) | `test_ac18_*` (store→file, file→store, MCP e2e); frontend half is T06 |
 | AC19 | `prepare_task` = briefing + code in one response, adaptive split | T04 | | — | |
 | AC20 | `get_code_map` default = top-level only; expand = lazy children | T05 | T07 | — | |
 | AC21 | No embedding backend → frontend + `get_index_status` show unavailable | T04 | T06 | — | |
-| AC22 | Status conflict → store wins, file token rewritten, reconciliation reported; deleted block archived | T02 | | — | |
+| AC22 | Status conflict → store wins, file token rewritten, reconciliation reported; deleted block archived | T02 | | verified | `test_ac22_status_changed_in_both_*`, `test_ac22_deleted_block_is_archived_and_never_resurrected` |
 | AC23 | Supported language, no SCIP indexer → tags fallback, status shows mode | T04 | | — | |
 | AC24 | `prepare_task` reports split; small context → code expands | T04 | | — | |
 | AC25 | `docker compose up` clean → register + briefing with only mount config | T08 | | verified | reviewer ran the live stack (health + register + briefing from host); `test_b1_*`, `test_ac25_*` |

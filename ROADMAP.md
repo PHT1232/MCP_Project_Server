@@ -101,9 +101,9 @@ files get fleshed out against the real skeleton structure at that point.
 | T01 | `task/T01-context-store` | **merged** (`dc9921a`) — [reviews/T01.md](reviews/T01.md) |
 | T03 | `task/T03-index-keyword` | **merged** (`2c1a99f`) — [reviews/T03.md](reviews/T03.md) |
 | T08 | `task/T08-deploy` | **merged** (fixes applied) — [reviews/T08.md](reviews/T08.md) |
-| T02 | `task/T02-requirements-file` | **in review** |
-| T06 | — | ready (depends on T01) |
-| T04 | — | ready (depends on T01 + T03, both merged) |
+| T02 | `task/T02-requirements-file` | **merged** (`320bf39`) — [reviews/T02.md](reviews/T02.md) |
+| T04 | `task/T04-index-semantic` | **in progress** (agent running; must re-parent migration to 0005) |
+| T06 | — | ready (T01 + T02 merged) |
 | T05, T07 | — | blocked (T04 / T05+T06) |
 | T09 | — | blocked on Phase 1 |
 

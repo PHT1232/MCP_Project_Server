@@ -97,8 +97,8 @@ files get fleshed out against the real skeleton structure at that point.
 
 | Task | Branch | State |
 |------|--------|-------|
-| T00 | `task/T00-skeleton` | in review |
-| T01–T08 | — | blocked on T00 |
+| T00 | `task/T00-skeleton` | **merged** (`371d4c7`) — review in [reviews/T00.md](reviews/T00.md) |
+| T01–T08 | — | ready to start (Phase 1) |
 | T09 | — | blocked on Phase 1 |
 
 Update this table as tasks move: `not started → in progress → in review → changes requested → merged`.

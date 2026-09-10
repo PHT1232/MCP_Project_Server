@@ -1,7 +1,6 @@
-"""Project context store -- walking-skeleton subset (sections 7.1-7.2).
+"""Project context store (REQUIREMENTS.md §7.1-§7.5, §7.2a).
 
-T00 implements only: register a project, set the current focus, assemble a
-plain-text briefing (overview + focus). T01 owns the full store.
+Service-layer logic lives in :mod:`pcs.context.service` — no MCP/HTTP imports.
 """
 
 from pcs.context import service

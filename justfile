@@ -58,6 +58,17 @@ up:
 down:
     {{compose}} down
 
-# Run a task's acceptance suite. No-op stub until T09 wires real acceptance.
+# Run measured performance acceptance checks (NFR1, NFR2, NFR9, NFR10).
+perf:
+    cd {{server_dir}} && uv run pytest tests/test_performance.py -v -s
+
+# Run adversarial security checks and scan tracked files for selected secret formats.
+security:
+    cd {{server_dir}} && uv run pytest tests/test_security.py -v
+    ./scripts/check-secrets.sh
+
+# Run a task's acceptance suite. `just check` already includes all pytest suites.
 accept task:
-    @echo "[accept] stub for {{task}} — real acceptance wiring lands with T09"
+    @test "{{task}}" = "T09" || (echo "No acceptance suite is registered for {{task}}" && exit 2)
+    just check
+    ./scripts/check-secrets.sh

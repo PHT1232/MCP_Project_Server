@@ -102,7 +102,7 @@ files get fleshed out against the real skeleton structure at that point.
 | T03 | `task/T03-index-keyword` | **merged** (`2c1a99f`) — [reviews/T03.md](reviews/T03.md) |
 | T02, T06 | — | ready (depend on T01) |
 | T04 | — | ready (depends on T01 + T03, both merged) |
-| T08 | — | ready (depends only on T00) |
+| T08 | `task/T08-deploy` | **changes requested** (`5be855a`) — [reviews/T08.md](reviews/T08.md): B1 container unreachable |
 | T05, T07 | — | blocked (T04 / T05+T06) |
 | T09 | — | blocked on Phase 1 |
 

@@ -36,7 +36,7 @@ module-root = "src"
 [tool.ruff]
 line-length = 100
 src = ["src", "tests"]
-extend-exclude = ["src/pcs/alembic/versions"]
+extend-exclude = ["src/pcs/alembic/env.py"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
@@ -51,7 +51,7 @@ strict = true
 plugins = ["pydantic.mypy"]
 mypy_path = "src"
 files = ["src", "tests"]
-exclude = ["^src/pcs/alembic/"]
+exclude = ["^src/pcs/alembic/env\\.py$"]
 
 [[tool.mypy.overrides]]
 module = ["testcontainers.*"]

@@ -97,7 +97,7 @@ files get fleshed out against the real skeleton structure at that point.
 
 | Task | Branch | State |
 |------|--------|-------|
-| T00 | `task/T00-skeleton` | not started |
+| T00 | `task/T00-skeleton` | in review |
 | T01–T08 | — | blocked on T00 |
 | T09 | — | blocked on Phase 1 |
 

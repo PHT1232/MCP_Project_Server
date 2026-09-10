@@ -1,4 +1,4 @@
-"""MCP tools for the keyword/structural code index (FR22 keyword, FR26, FR27)."""
+"""MCP tools for the code index: status, reindex, hybrid search, RAG (FR22, FR26, FR27)."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ from typing import Any, cast
 from mcp.server.fastmcp import Context, FastMCP
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from pcs.index import service
+from pcs.index import retrieval, service
 from pcs.index.search import SearchScopeName
 from pcs.mcp.support import run_tool
 
@@ -15,7 +15,8 @@ _SCOPES: frozenset[str] = frozenset({"project", "subtree", "files", "focus"})
 
 
 def register_index_tools(mcp: FastMCP) -> None:
-    """Attach ``get_index_status``, ``reindex``, and keyword ``search_code``."""
+    """Attach ``get_index_status``, ``reindex``, ``search_code``, ``retrieve_context``,
+    and ``prepare_task``."""
 
     @mcp.tool()
     async def get_index_status(
@@ -82,3 +83,58 @@ def register_index_tools(mcp: FastMCP) -> None:
             )
 
         return await run_tool("search_code", project, ctx, op)
+
+    @mcp.tool()
+    async def retrieve_context(
+        task: str,
+        project: str | None = None,
+        max_tokens: int = 1500,
+        scope: str = "project",
+        subtree: str | None = None,
+        files: list[str] | None = None,
+        ctx: Context[Any, Any] | None = None,
+    ) -> dict[str, object]:
+        """Token-bounded pack of the most relevant code/doc chunks for ``task`` (FR22).
+
+        Ready for prompt injection. Uses hybrid retrieval when an embedding backend
+        is configured, keyword-only otherwise (the response says which).
+        """
+
+        async def op(session: AsyncSession) -> dict[str, object]:
+            if scope not in _SCOPES:
+                raise ValueError(f"scope must be one of {sorted(_SCOPES)}; got {scope!r}")
+            return await retrieval.retrieve_context(
+                session,
+                project=project or "",
+                task=task,
+                max_tokens=max_tokens,
+                scope=cast(SearchScopeName, scope),
+                subtree=subtree,
+                files=files,
+            )
+
+        return await run_tool("retrieve_context", project, ctx, op)
+
+    @mcp.tool()
+    async def prepare_task(
+        task: str,
+        project: str | None = None,
+        max_tokens: int | None = None,
+        ctx: Context[Any, Any] | None = None,
+    ) -> dict[str, object]:
+        """Project briefing + relevant-code pack in one budgeted response (FR22, FR22a, D13).
+
+        Total defaults to the project's ``prepare_task_token_budget`` (4000).
+        Curated context is capped at 50%; code is floored at 30% when chunks exist;
+        unused context budget spills to code. The actual split is reported.
+        """
+
+        async def op(session: AsyncSession) -> dict[str, object]:
+            return await retrieval.prepare_task(
+                session,
+                project=project or "",
+                task=task,
+                max_tokens=max_tokens,
+            )
+
+        return await run_tool("prepare_task", project, ctx, op)

@@ -63,6 +63,8 @@ EXPECTED_TOOLS = frozenset(
         "get_index_status",
         "reindex",
         "search_code",
+        "retrieve_context",
+        "prepare_task",
     }
 )
 

@@ -1,38 +1,104 @@
-"""FR9d LLM-summarization seam.
+"""FR9d LLM-summarization seam — now backend-aware (T04).
 
-T01 implements the graceful fallback (FR9e): with no backend configured, a
-long ``detail`` is deterministically truncated and a drill-down pointer is
-appended. T04 wires the real backend behind :func:`summarize_detail`.
+With no backend configured (``PCS_SUMMARY_BACKEND`` empty) this behaves exactly
+as T01 shipped it: :meth:`Summarizer.is_available` is ``False`` and assembly
+falls back to deterministic truncation (FR9e). When a backend is configured,
+:meth:`Summarizer.summarize` calls an OpenAI-compatible ``/chat/completions``
+endpoint, caches the result keyed by the entry content hash (FR9d), and returns
+``None`` on any failure so the FR9e fallback still applies. Data leaves the host
+only to ``PCS_SUMMARY_BASE_URL`` (NFR11).
+
+The cache here is process-local; a persistent cache table is a follow-up.
 """
 
 from __future__ import annotations
 
+import logging
+
+from pcs.config import Settings, get_settings
 from pcs.context.types import CHARS_PER_TOKEN
+
+logger = logging.getLogger("pcs")
 
 
 class Summarizer:
-    """Opt-in last-resort summarizer (FR9d). Off by default until T04."""
+    """Opt-in last-resort summarizer (FR9d)."""
+
+    def __init__(self, settings: Settings | None = None) -> None:
+        self._settings = settings or get_settings()
+        self._cache: dict[tuple[str, int], str] = {}
 
     def is_available(self) -> bool:
-        """Whether an LLM backend is configured. T01 always returns False."""
-        return False
+        """Whether an LLM backend is configured (FR9d). Empty setting → False (FR9e)."""
+        return bool(self._settings.summary_backend.strip())
 
     def summarize(self, text: str, *, max_tokens: int, cache_key: str) -> str | None:
-        """Return a cached/computed summary, or ``None`` to trigger FR9e fallback.
+        """Return a cached/computed summary, or ``None`` to trigger FR9e fallback."""
+        if not self.is_available():
+            return None
+        key = (cache_key, max_tokens)
+        if key in self._cache:
+            return self._cache[key]
+        summary = self._call_backend(text, max_tokens=max_tokens)
+        if summary is None:
+            return None
+        cap_chars = max(0, max_tokens) * CHARS_PER_TOKEN
+        summary = summary.strip()[:cap_chars] or None
+        if summary is not None:
+            self._cache[key] = summary
+        return summary
 
-        ``cache_key`` is the entry content hash T04 will key the cache on. T01
-        ignores it.
-        """
-        del text, max_tokens, cache_key
-        return None
+    def _call_backend(self, text: str, *, max_tokens: int) -> str | None:
+        backend = self._settings.summary_backend.strip().lower()
+        if backend not in {"openai", "openai-compatible"}:
+            logger.warning("summary_backend_unknown", extra={"context": {"backend": backend}})
+            return None
+        try:
+            import httpx
+
+            headers = {"content-type": "application/json"}
+            if self._settings.summary_api_key:
+                headers["authorization"] = f"Bearer {self._settings.summary_api_key}"
+            prompt = (
+                "Summarise the following project-context note in at most "
+                f"{max_tokens} tokens. Keep concrete facts, IDs, and file paths. "
+                "Return prose only.\n\n" + text
+            )
+            payload = {
+                "model": self._settings.summary_model,
+                "messages": [{"role": "user", "content": prompt}],
+                "max_tokens": max_tokens,
+                "temperature": 0.0,
+            }
+            with httpx.Client(timeout=30.0) as client:
+                response = client.post(
+                    f"{self._settings.summary_base_url.rstrip('/')}/chat/completions",
+                    json=payload,
+                    headers=headers,
+                )
+                response.raise_for_status()
+                data = response.json()
+            return str(data["choices"][0]["message"]["content"])
+        except Exception as exc:
+            logger.warning("summary_call_failed", extra={"context": {"error": str(exc)}})
+            return None
 
 
-_DEFAULT = Summarizer()
+_INSTANCE: Summarizer | None = None
 
 
 def get_summarizer() -> Summarizer:
-    """Process-wide summarizer. T04 replaces this with a backend-aware instance."""
-    return _DEFAULT
+    """Process-wide backend-aware summarizer (FR9d seam, replaced by T04)."""
+    global _INSTANCE
+    if _INSTANCE is None:
+        _INSTANCE = Summarizer()
+    return _INSTANCE
+
+
+def reset_summarizer() -> None:
+    """Drop the cached instance (used by tests that change settings)."""
+    global _INSTANCE
+    _INSTANCE = None
 
 
 def fallback_truncate(text: str, *, max_tokens: int, entry_id: str, project: str) -> str:

@@ -1,0 +1,25 @@
+# PostgreSQL (with pgvector) for the Project Context MCP Server.
+# T00 ships only the database service — `just up` must start it so `just migrate`
+# can apply the baseline. The server + Tailscale sidecar are added by T08 (FR40, D16).
+
+name: pcs
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: pcs
+      POSTGRES_PASSWORD: pcs
+      POSTGRES_DB: pcs
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - pcs_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U pcs -d pcs"]
+      interval: 3s
+      timeout: 5s
+      retries: 20
+
+volumes:
+  pcs_pgdata:

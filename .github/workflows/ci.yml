@@ -1,0 +1,35 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          version: "0.12.11"
+
+      - name: Install just
+        uses: extractions/setup-just@v2
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install dependencies
+        run: just setup
+
+      # testcontainers uses the Docker daemon that ships with the GitHub runner
+      # to start Postgres (pgvector image) for the integration test.
+      - name: Run the full check gate
+        run: just check

@@ -16,10 +16,12 @@ from starlette.applications import Starlette
 
 from pcs.config import get_settings
 from pcs.index import watch as index_watch
+from pcs.mcp.codemap_tools import register_codemap_tools
 from pcs.mcp.index_tools import register_index_tools
 from pcs.mcp.resources import register_resources
 from pcs.mcp.tools import register_tools
 from pcs.web_api import register_routes
+from pcs.web_api.codemap_routes import register_codemap_routes
 from pcs.web_api.index_routes import register_index_routes
 from pcs.web_static import register_frontend
 
@@ -41,9 +43,11 @@ mcp: FastMCP = FastMCP(
 
 register_tools(mcp)
 register_index_tools(mcp)
+register_codemap_tools(mcp)
 register_resources(mcp)
 register_routes(mcp)
 register_index_routes(mcp)
+register_codemap_routes(mcp)
 
 
 def build_http_app() -> Starlette:

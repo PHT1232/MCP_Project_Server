@@ -6,22 +6,26 @@ import {
   type UseQueryResult,
 } from "@tanstack/react-query";
 
-import {
-  getBriefing,
-  listProjects,
-  registerProject,
-} from "../api/client";
+import { getBriefing, listProjects, registerProject } from "../api/client";
+import { queryKeys } from "../api/queryKeys";
 import type { Briefing, Project, RegisterProjectInput } from "../api/types";
 
-const PROJECTS_KEY = ["projects"] as const;
-
 export function useProjects(): UseQueryResult<Project[]> {
-  return useQuery({ queryKey: PROJECTS_KEY, queryFn: listProjects });
+  return useQuery({ queryKey: queryKeys.projects, queryFn: listProjects });
+}
+
+/** The single project matching `name` (by name), derived from the list query. */
+export function useProject(name: string | null): Project | undefined {
+  const projects = useProjects();
+  if (name === null) {
+    return undefined;
+  }
+  return projects.data?.find((p) => p.name === name);
 }
 
 export function useBriefing(project: string | null): UseQueryResult<Briefing> {
   return useQuery({
-    queryKey: ["briefing", project] as const,
+    queryKey: queryKeys.briefing(project ?? ""),
     queryFn: () => getBriefing(project ?? ""),
     enabled: project !== null && project !== "",
   });
@@ -36,8 +40,8 @@ export function useRegisterProject(): UseMutationResult<
   return useMutation({
     mutationFn: registerProject,
     onSuccess: (created: Project) => {
-      void queryClient.invalidateQueries({ queryKey: PROJECTS_KEY });
-      queryClient.setQueryData<Project[]>(PROJECTS_KEY, (current) =>
+      void queryClient.invalidateQueries({ queryKey: queryKeys.projects });
+      queryClient.setQueryData<Project[]>(queryKeys.projects, (current) =>
         current ? [...current, created] : [created],
       );
     },

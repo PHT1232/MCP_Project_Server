@@ -1,0 +1,477 @@
+"""T11 compact contract retrieval - one regression per acceptance item."""
+
+from __future__ import annotations
+
+from contextlib import suppress
+from pathlib import Path
+from typing import cast
+from unittest.mock import AsyncMock
+
+import pytest
+
+from pcs.context import service
+from pcs.context.assembly import estimate_tokens
+from pcs.context.types import CONTRACT_STATEMENT_MAX_CHARS, ValidationError
+from pcs.db.base import session_scope
+from pcs.index import retrieval
+from pcs.index import service as index_service
+from pcs.mcp import mcp
+from pcs.requirements import briefing, contracts
+from pcs.requirements.briefing import (
+    CONTRACT_TOKEN_CAP,
+    close_gate_from_payload,
+    get_requirement_contract,
+    get_task_contract,
+)
+
+pytestmark = pytest.mark.usefixtures("clean_db")
+
+PROJECT = "acme-contract"
+OVERVIEW = "Contract retrieval fixture repo."
+
+
+def _sample_repo(root: Path) -> None:
+    (root / "shop").mkdir()
+    (root / "shop" / "cart.py").write_text(
+        "from shop.pricing import unit_price\n\n"
+        "def cart_total(items):\n"
+        '    """Compute the total price of every item in the shopping cart."""\n'
+        "    return sum(unit_price(item) for item in items)\n",
+        encoding="utf-8",
+    )
+    (root / "shop" / "pricing.py").write_text(
+        "def unit_price(item):\n    return item.price * item.quantity\n",
+        encoding="utf-8",
+    )
+
+
+async def _register_project(root: Path | None = None, *, name: str = PROJECT) -> None:
+    path = str(root) if root is not None else f"/repos/{name}"
+    async with session_scope() as session:
+        with suppress(service.DuplicateProjectError):
+            await service.register_project(session, name=name, root_path=path, overview=OVERVIEW)
+
+
+async def _register_and_index(root: Path) -> None:
+    _sample_repo(root)
+    await _register_project(root)
+    async with session_scope() as session:
+        await index_service.reindex(session, project=PROJECT, incremental=False)
+
+
+async def _seed_requirement(
+    *,
+    title: str,
+    linked_files: list[str] | None = None,
+    status: str = "in-progress",
+) -> str:
+    await _register_project()
+    async with session_scope() as session:
+        req = await service.add_entry(
+            session,
+            project=PROJECT,
+            section="requirements",
+            headline=title,
+            linked_files=linked_files or [],
+        )
+        await service.set_requirement_status(
+            session, project=PROJECT, entry_id=req.id, status=status
+        )
+        return req.id
+
+
+def _mcp_payload(result: object) -> dict[str, object]:
+    if isinstance(result, tuple) and len(result) >= 2 and isinstance(result[1], dict):
+        return {str(k): v for k, v in cast(dict[object, object], result[1]).items()}
+    raise AssertionError(f"unexpected MCP result: {result!r}")
+
+
+def _split(result: dict[str, object]) -> dict[str, int]:
+    return cast(dict[str, int], result["split"])
+
+
+async def test_empty_unconfigured_contracts_preserve_prepare_task_behavior(
+    tmp_path: Path,
+) -> None:
+    await _register_and_index(tmp_path)
+    async with session_scope() as session:
+        result = await retrieval.prepare_task(
+            session, project=PROJECT, task="add discount handling to the cart total"
+        )
+    split = _split(result)
+    assert result["contract"] == ""
+    assert split["contract_tokens"] == 0
+    assert split["contract_cap"] == CONTRACT_TOKEN_CAP
+    assert split["context_tokens"] <= split["context_cap"]
+    assert split["context_tokens"] + split["code_tokens"] <= split["budget"]
+    assert result["code_chunks"]
+    assert split["code_budget"] >= split["code_floor"]
+
+
+async def test_contract_section_caps_at_500_tokens_under_adversarial_input() -> None:
+    req_id = await _seed_requirement(title="Cart discounts")
+    long_stmt = "KEEP-FLOOR " + ("x" * (CONTRACT_STATEMENT_MAX_CHARS - 20))
+    async with session_scope() as session:
+        await contracts.create_invariant(
+            session,
+            project=PROJECT,
+            requirement_id=req_id,
+            key="INV-LONG",
+            statement=long_stmt[:CONTRACT_STATEMENT_MAX_CHARS],
+            kind="behavior",
+            risk="high",
+        )
+        for i in range(8):
+            await contracts.create_invariant(
+                session,
+                project=PROJECT,
+                requirement_id=req_id,
+                key=f"INV-PAD-{i}",
+                statement=f"Padding statement {i} " + ("y" * 400),
+                kind="behavior",
+                risk="low",
+            )
+        pack = await get_task_contract(
+            session,
+            project=PROJECT,
+            task="cart discounts",
+            requirement_ids=[req_id],
+            max_tokens=500,
+            ranked_paths=(),
+        )
+    assert pack.token_estimate <= CONTRACT_TOKEN_CAP
+    assert estimate_tokens(pack.text) <= CONTRACT_TOKEN_CAP
+    assert long_stmt not in pack.text
+
+
+async def test_prepare_task_total_stays_within_requested_budget(tmp_path: Path) -> None:
+    await _register_and_index(tmp_path)
+    req_id = await _seed_requirement(title="Cart total discounts", linked_files=["shop/cart.py"])
+    async with session_scope() as session:
+        await contracts.create_invariant(
+            session,
+            project=PROJECT,
+            requirement_id=req_id,
+            key="INV-FLOOR",
+            statement="Keep the FR22a code floor when code chunks exist.",
+            kind="behavior",
+            risk="high",
+        )
+        result = await retrieval.prepare_task(
+            session,
+            project=PROJECT,
+            task="add discount handling to the cart total",
+            max_tokens=2000,
+        )
+    split = _split(result)
+    used = split["context_tokens"] + split["code_tokens"] + split["contract_tokens"]
+    assert used <= split["budget"]
+    assert split["contract_tokens"] <= split["contract_cap"]
+    assert split["context_tokens"] <= split["context_cap"]
+    assert result["contract"]
+
+
+async def test_fr22a_code_floor_holds_when_code_chunks_exist(tmp_path: Path) -> None:
+    await _register_and_index(tmp_path)
+    req_id = await _seed_requirement(title="Cart discounts", linked_files=["shop/cart.py"])
+    async with session_scope() as session:
+        await contracts.create_invariant(
+            session,
+            project=PROJECT,
+            requirement_id=req_id,
+            key="INV-FLOOR",
+            statement="Keep the FR22a code floor when code chunks exist.",
+            kind="architecture",
+            risk="high",
+        )
+        result = await retrieval.prepare_task(
+            session,
+            project=PROJECT,
+            task="explain how pricing and cart total work together",
+            max_tokens=2000,
+        )
+    split = _split(result)
+    assert result["code_chunks"]
+    assert split["code_floor"] == (2000 * 3) // 10
+    assert split["code_budget"] >= split["code_floor"]
+    # Unused contract cap spills to code rather than being reserved.
+    assert split["contract_tokens"] < split["contract_cap"]
+    assert split["code_budget"] == (
+        split["budget"] - split["context_tokens"] - split["contract_tokens"]
+    )
+
+
+async def test_forbidden_and_high_risk_outrank_low_risk_prose_deterministically() -> None:
+    req_id = await _seed_requirement(title="Index retrieval")
+    async with session_scope() as session:
+        await contracts.create_invariant(
+            session,
+            project=PROJECT,
+            requirement_id=req_id,
+            key="INV-LOW",
+            statement="Wallpaper documentation prose about naming that is low risk. " * 12,
+            kind="manual",
+            risk="low",
+            sort_order=0,
+        )
+        await contracts.create_invariant(
+            session,
+            project=PROJECT,
+            requirement_id=req_id,
+            key="INV-HIGH",
+            statement="Preserve the FR22a code floor when chunks exist.",
+            kind="behavior",
+            risk="high",
+            sort_order=1,
+        )
+        await contracts.create_invariant(
+            session,
+            project=PROJECT,
+            requirement_id=req_id,
+            key="INV-FORB",
+            statement="Do not edit T12 evidence modules from T11.",
+            kind="forbidden-path",
+            risk="medium",
+            sort_order=2,
+        )
+        pack = await get_task_contract(
+            session,
+            project=PROJECT,
+            task="index retrieval contracts",
+            requirement_ids=[req_id],
+            max_tokens=160,
+            ranked_paths=(),
+        )
+    text = pack.text
+    assert "Must not:" in text
+    assert "INV-FORB" in text
+    assert "INV-HIGH" in text
+    # Forbidden-path is packed before low-risk prose even when the Must line
+    # is rendered first in the compact template.
+    assert "Wallpaper documentation prose" not in text
+    assert pack.omitted_invariants >= 1
+
+
+async def test_overflow_reports_omitted_counts_and_drill_down_pointers() -> None:
+    req_id = await _seed_requirement(title="Many invariants")
+    async with session_scope() as session:
+        for i in range(12):
+            await contracts.create_invariant(
+                session,
+                project=PROJECT,
+                requirement_id=req_id,
+                key=f"INV-{i:02d}",
+                statement=f"Active invariant {i} must stay visible in overflow.",
+                kind="behavior",
+                risk="high",
+            )
+        pack = await get_task_contract(
+            session,
+            project=PROJECT,
+            task="many invariants overflow",
+            requirement_ids=[req_id],
+            max_tokens=80,
+            ranked_paths=(),
+        )
+    assert pack.truncated
+    assert pack.omitted_invariants >= 1
+    assert f"+{pack.omitted_invariants} more" in pack.text
+    assert "get_requirement_contract" in pack.text
+    assert "get_requirement_evidence" in pack.text
+    assert pack.as_dict()["drill_down"] == [
+        "get_requirement_contract",
+        "get_requirement_evidence",
+    ]
+
+
+async def test_full_detail_available_only_through_explicit_drill_down() -> None:
+    req_id = await _seed_requirement(title="Login contract")
+    full_inv = "Passwordless login stays the only supported sign-in path."
+    full_ac = "A pytest covers the passwordless callback without capturing passwords."
+    async with session_scope() as session:
+        inv = await contracts.create_invariant(
+            session,
+            project=PROJECT,
+            requirement_id=req_id,
+            key="INV-AUTH",
+            statement=full_inv,
+            kind="behavior",
+            risk="high",
+        )
+        await contracts.create_criterion(
+            session,
+            project=PROJECT,
+            invariant_id=inv.id,
+            key="AC-1",
+            statement=full_ac,
+            evidence_kind="test",
+        )
+        compact = await get_task_contract(
+            session,
+            project=PROJECT,
+            task="login contract",
+            requirement_ids=[req_id],
+            ranked_paths=(),
+        )
+        both = await get_requirement_contract(
+            session, project=PROJECT, requirement_id=req_id, include="both"
+        )
+        inv_only = await get_requirement_contract(
+            session, project=PROJECT, requirement_id=req_id, include="invariants"
+        )
+        ac_only = await get_requirement_contract(
+            session, project=PROJECT, requirement_id=req_id, include="criteria"
+        )
+    assert full_ac not in compact.text
+    assert "criteria" not in inv_only
+    assert "invariants" not in ac_only
+    invariants = cast(list[dict[str, object]], both["invariants"])
+    criteria = cast(list[dict[str, object]], both["criteria"])
+    assert invariants[0]["statement"] == full_inv
+    assert criteria[0]["statement"] == full_ac
+    with pytest.raises(ValidationError, match="include"):
+        async with session_scope() as session:
+            await get_requirement_contract(
+                session, project=PROJECT, requirement_id=req_id, include="evidence"
+            )
+
+
+async def test_responses_contain_no_raw_command_output_or_diff_bodies(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    payload = {
+        "ac_verified": 1,
+        "ac_total": 2,
+        "missing_keys": ["AC-2"],
+        "validation": "stale",
+        "review": "failed",
+        "stdout": "FULL COMMAND OUTPUT\n" * 20,
+        "diff": "diff --git a/x.py b/x.py\n+++ b/x.py\n@@ -1 +1 @@\n",
+        "blocking": [
+            {
+                "key": "INV-X",
+                "summary": "diff --git a/foo b/foo\n+++ b/foo\n@@ -1,3 +1,4 @@\n",
+            }
+        ],
+        "stale_count": 1,
+    }
+    gate = close_gate_from_payload(payload)
+    assert "stdout" not in (gate.blocking[0][1] if gate.blocking else "")
+    assert gate.blocking[0][1] == "(omitted)"
+
+    req_id = await _seed_requirement(title="No logs in compact")
+    async with session_scope() as session:
+        await contracts.create_invariant(
+            session,
+            project=PROJECT,
+            requirement_id=req_id,
+            key="INV-X",
+            statement="Do not leak evidence logs into compact retrieval.",
+            kind="forbidden-path",
+            risk="high",
+        )
+        monkeypatch.setattr(
+            briefing,
+            "_load_close_gate",
+            AsyncMock(return_value=close_gate_from_payload(payload)),
+        )
+        pack = await get_task_contract(
+            session,
+            project=PROJECT,
+            task="no logs in compact",
+            requirement_ids=[req_id],
+            ranked_paths=(),
+        )
+    assert "diff --git" not in pack.text
+    assert "FULL COMMAND OUTPUT" not in pack.text
+    assert "+++ b/" not in pack.text
+    assert pack.review == "failed"
+
+
+async def test_unrelated_requirements_are_not_selected_when_others_match() -> None:
+    cart = await _seed_requirement(title="Cart discounts", linked_files=["shop/cart.py"])
+    billing = await _seed_requirement(title="Billing VAT", linked_files=["billing/vat.py"])
+    async with session_scope() as session:
+        await contracts.create_invariant(
+            session,
+            project=PROJECT,
+            requirement_id=cart,
+            key="INV-CART",
+            statement="Discount math stays in cart_total.",
+            kind="behavior",
+            risk="high",
+        )
+        await contracts.create_invariant(
+            session,
+            project=PROJECT,
+            requirement_id=billing,
+            key="INV-VAT",
+            statement="Unrelated VAT rounding must not appear in cart tasks.",
+            kind="behavior",
+            risk="high",
+        )
+        pack = await get_task_contract(
+            session,
+            project=PROJECT,
+            task="change shop/cart.py discount handling",
+            ranked_paths=("shop/cart.py",),
+        )
+    assert "INV-CART" in pack.text
+    assert "INV-VAT" not in pack.text
+    assert "Unrelated VAT rounding" not in pack.text
+    assert cart in pack.requirement_ids
+    assert billing not in pack.requirement_ids
+
+
+async def test_missing_t12_data_is_review_not_configured() -> None:
+    req_id = await _seed_requirement(title="Close gate absent")
+    async with session_scope() as session:
+        await contracts.create_invariant(
+            session,
+            project=PROJECT,
+            requirement_id=req_id,
+            key="INV-1",
+            statement="T12 evidence is optional during T11.",
+            kind="behavior",
+            risk="high",
+        )
+        pack = await get_task_contract(
+            session,
+            project=PROJECT,
+            task="close gate absent",
+            requirement_ids=[req_id],
+            ranked_paths=(),
+        )
+    assert pack.review == "not-configured"
+    assert "Review: not-configured" in pack.text
+    assert "AC: not-configured" in pack.text
+
+
+async def test_mcp_contract_tools_are_registered() -> None:
+    await _register_project()
+    req_id = await _seed_requirement(title="MCP drill-down")
+    async with session_scope() as session:
+        await contracts.create_invariant(
+            session,
+            project=PROJECT,
+            requirement_id=req_id,
+            key="INV-MCP",
+            statement="MCP wrappers delegate to briefing.",
+            kind="behavior",
+            risk="medium",
+        )
+    names = {t.name for t in await mcp.list_tools()}
+    assert "get_requirement_contract" in names
+    assert "get_task_contract" in names
+    drilled = await mcp.call_tool(
+        "get_requirement_contract",
+        {"project": PROJECT, "requirement_id": req_id, "include": "invariants"},
+    )
+    compact = await mcp.call_tool(
+        "get_task_contract",
+        {"project": PROJECT, "task": "MCP drill-down", "requirement_ids": [req_id]},
+    )
+    drilled_payload = _mcp_payload(drilled)
+    compact_payload = _mcp_payload(compact)
+    assert "invariants" in drilled_payload
+    assert compact_payload["review"] == "not-configured"

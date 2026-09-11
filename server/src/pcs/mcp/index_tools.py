@@ -122,11 +122,13 @@ def register_index_tools(mcp: FastMCP) -> None:
         max_tokens: int | None = None,
         ctx: Context[Any, Any] | None = None,
     ) -> dict[str, object]:
-        """Project briefing + relevant-code pack in one budgeted response (FR22, FR22a, D13).
+        """Project briefing + relevant-code pack in one budgeted response (FR22, FR22a, D13, T11).
 
         Total defaults to the project's ``prepare_task_token_budget`` (4000).
         Curated context is capped at 50%; code is floored at 30% when chunks exist;
-        unused context budget spills to code. The actual split is reported.
+        unused context budget spills to code. A contract/close-gate section is
+        capped at 500 estimated tokens inside the same total; unused contract
+        budget spills to code. The actual split is reported.
         """
 
         async def op(session: AsyncSession) -> dict[str, object]:

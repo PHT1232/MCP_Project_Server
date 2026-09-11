@@ -51,6 +51,8 @@ For focus replacement semantics, prefer `set_current_focus` over `add_focus`.
 | `set_requirement_status` | `entry_id`, `status`, `project=null` | Sets `not-started`, `in-progress`, `blocked`, or `done`; writes through. |
 | `resolve_requirement` | `entry_id`, `project=null` | Resolves lifecycle state and writes through. This differs from setting requirement status to `done`. |
 | `sync_requirements` | `project=null` | Re-parses the file and returns created, updated, archived, written-back, reconciliation, error, and count details. |
+| `get_requirement_contract` | `requirement_id`, `project=null`, `include="both"` | Verbatim invariants and/or criteria for one requirement. `include` is `invariants`, `criteria`, or `both`. |
+| `get_task_contract` | `task`, `project=null`, `requirement_ids=null`, `max_tokens=500` | Compact relevant contract + close-gate summary, capped at 500 estimated tokens. T12 evidence absent → `review: not-configured`. |
 
 Requirement write responses may include `requirements_file` with `path`, `written`, `errors`, and `reconciliations`.
 
@@ -62,7 +64,7 @@ Requirement write responses may include `requirements_file` with `path`, `writte
 | `reindex` | `project=null`, `incremental=true` | Updated index status. `false` performs a full rebuild. |
 | `search_code` | `query`, `project=null`, `scope="project"`, `subtree=null`, `files=null`, `globs=null`, `limit=20` | Ranked hits plus semantic availability/mode. `limit` is `1`–`100`. |
 | `retrieve_context` | `task`, `project=null`, `max_tokens=1500`, `scope="project"`, `subtree=null`, `files=null` | Token-bounded relevant code/document pack. |
-| `prepare_task` | `task`, `project=null`, `max_tokens=null` | Briefing and code pack with reported budget split. Null uses project default; valid range is `1000`–`16000`. |
+| `prepare_task` | `task`, `project=null`, `max_tokens=null` | Briefing, ≤500-token contract/close-gate, and code pack with reported budget split. Null uses project default; valid range is `1000`–`16000`. Unused contract budget spills to code; the FR22a code floor is kept when chunks exist. |
 | `get_code_map` | `project=null`, `scope=null`, `depth=1`, `include_external=false` | One graph tier. `scope` may be a subtree or indexed file; `depth` is clamped to `1`–`3`. |
 
 Search/retrieval scopes are `project`, `subtree`, `files`, and `focus`. `subtree` is used with subtree scope; `files` is used with files scope. Semantic ranking is unavailable until an embedding backend is configured and the project is reindexed.

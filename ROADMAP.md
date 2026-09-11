@@ -120,7 +120,7 @@ T11 and T12 may run in parallel after T10 merges. T13 integrates both branches a
 | T06 | `task/T06-frontend-shell` | **merged** — [reviews/T06.md](reviews/T06.md) |
 | T07 | `task/T07-frontend-codemap` | **merged** (`6056ec8`) |
 | T09 | `task/T09-integration` | **in review** |
-| T10 | `task/T10-contract-model` | **not started** |
+| T10 | `task/T10-contract-model` | **merged** |
 | T11 | `task/T11-compact-contract-retrieval` | **not started** |
 | T12 | `task/T12-evidence-close-gate` | **not started** |
 | T13 | `task/T13-compliance-dashboard` | **not started** |

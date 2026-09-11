@@ -1058,6 +1058,90 @@ async def test_duplicate_ac_keys_across_requirements_use_criterion_ids(
         assert pack.text.index("INV-LEFT") < pack.text.index("INV-RIGHT")
 
 
+async def test_unknown_criterion_id_does_not_boost_colliding_selected_ac_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    selected = await _seed_requirement(title="Selected cart", req_key="R-030")
+    foreign = await _seed_requirement(title="Foreign billing", req_key="R-031")
+    async with session_scope() as session:
+        owned = await contracts.create_invariant(
+            session,
+            project=PROJECT,
+            requirement_id=selected,
+            key="INV-SELECTED",
+            statement="Selected parent of AC-1; must not inherit a foreign id.",
+            kind="behavior",
+            risk="medium",
+            sort_order=1,
+        )
+        await contracts.create_invariant(
+            session,
+            project=PROJECT,
+            requirement_id=selected,
+            key="INV-PEER",
+            statement="Peer ranks first unless the colliding AC-1 is wrongly boosted.",
+            kind="behavior",
+            risk="medium",
+            sort_order=0,
+        )
+        await contracts.create_criterion(
+            session,
+            project=PROJECT,
+            invariant_id=owned.id,
+            key="AC-1",
+            statement="Selected AC-1.",
+            evidence_kind="test",
+        )
+        foreign_inv = await contracts.create_invariant(
+            session,
+            project=PROJECT,
+            requirement_id=foreign,
+            key="INV-FOREIGN",
+            statement="Foreign parent of a colliding AC-1.",
+            kind="behavior",
+            risk="medium",
+        )
+        foreign_ac = await contracts.create_criterion(
+            session,
+            project=PROJECT,
+            invariant_id=foreign_inv.id,
+            key="AC-1",
+            statement="Foreign AC-1.",
+            evidence_kind="test",
+        )
+        payload = {
+            "ac_verified": 0,
+            "ac_total": 1,
+            "missing": [
+                {
+                    "id": foreign_ac.id,
+                    "key": "AC-1",
+                    "invariant_id": owned.id,
+                    "invariant_key": "INV-SELECTED",
+                }
+            ],
+            "validation": "ok",
+            "review": "failed",
+        }
+        monkeypatch.setattr(
+            briefing,
+            "_load_close_gate",
+            AsyncMock(return_value=close_gate_from_payload(payload)),
+        )
+        pack = await get_task_contract(
+            session,
+            project=PROJECT,
+            task="unknown criterion id",
+            requirement_ids=[selected],
+            max_tokens=160,
+            ranked_paths=(),
+        )
+    assert "INV-PEER" in pack.text
+    assert "INV-SELECTED" in pack.text
+    assert pack.text.index("INV-PEER") < pack.text.index("INV-SELECTED")
+    assert "INV-FOREIGN" not in pack.text
+
+
 async def test_conflicting_payload_parent_uses_authoritative_owner(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

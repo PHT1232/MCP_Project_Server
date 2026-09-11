@@ -557,14 +557,18 @@ def _build_criterion_catalog(
 def _resolve_parent(link: _PayloadLink, catalog: _CriterionCatalog) -> str | None:
     """Return the invariant id to boost.
 
-    Authoritative T10 ownership wins. A payload parent is used only when no
-    criterion row can be resolved, and only if it names a known invariant.
-    Conflicting payload parents are ignored.
+    Authoritative T10 ownership wins. If the payload names a ``criterion_id``,
+    that UUID must exist in the selected catalog; unknown/foreign/stale ids
+    fail closed with no key or parent fallback. Payload ``key`` /
+    ``invariant_id`` / ``invariant_key`` are used only when ``criterion_id``
+    is omitted entirely.
     """
-    owner: _CriterionOwner | None = None
     if link.criterion_id:
-        owner = catalog.by_id.get(link.criterion_id)
-    if owner is None and link.invariant_id and link.key:
+        resolved = catalog.by_id.get(link.criterion_id)
+        return resolved.invariant_id if resolved is not None else None
+
+    owner: _CriterionOwner | None = None
+    if link.invariant_id and link.key:
         owner = catalog.by_invariant_and_key.get((link.invariant_id, link.key))
     if owner is None and link.key:
         owner = catalog.by_unique_key.get(link.key)

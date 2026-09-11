@@ -58,6 +58,7 @@ For focus replacement semantics, prefer `set_current_focus` over `add_focus`.
 | `add_requirement_violation` | `invariant_id`, `summary` (1–200 chars), `project=null`, `severity="blocking"` (`blocking`/`warning`), `file_ref=null`, `line_no=null` (≥1) | Records a review finding. |
 | `resolve_requirement_violation` | `violation_id`, `project=null` | Marks the finding resolved; stores resolver identity; history is kept. |
 | `evaluate_close_gate` | `requirement_id`, `project=null` | Deterministic coverage/freshness/review evaluation. Does not change status. |
+| `review_requirement_compliance` | `requirement_ids`, `project=null` | Exception-only T13 pre-close review. Returns status separately from verification, AC verified/total, validation freshness, independent review, and actionable criterion/invariant/violation IDs with concise file refs. Input is deduplicated and sorted; output is capped at 25 requirements and 8 exceptions each with omission counts. |
 
 Requirement write responses may include `requirements_file` with `path`, `written`, `errors`, and `reconciliations`.
 
@@ -90,3 +91,14 @@ Search/retrieval scopes are `project`, `subtree`, `files`, and `focus`. `subtree
 | `context://{project}/code-map` | JSON text | Top-tier code map. Use `get_code_map` for scoped expansion. |
 
 Resources are read-only. Use tools for all writes.
+
+
+## Pre-close agent sequence
+
+1. `prepare_task` with the task and requirement IDs.
+2. `get_requirement_contract` for missing AC details.
+3. `record_requirement_evidence` for each completed criterion.
+4. `review_requirement_compliance` and resolve only the returned exceptions.
+5. `set_requirement_status(..., status="done")` after every configured verdict is `verified`. A `not-configured` verdict is explicit legacy state, not a failed or verified contract.
+
+Example: `review_requirement_compliance(project="demo", requirement_ids=["REQ_ENTRY_ID"])`. Successful rows contain no repeated contract prose and an empty `exceptions` list.

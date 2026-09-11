@@ -4,10 +4,11 @@ import type { RequirementStatus, SyncReport } from "../api/types";
 import { Card } from "../components/Card";
 import { Callout } from "../components/Callout";
 import { PillButton } from "../components/PillButton";
-import { RequirementStatusBadge } from "../components/StatusBadge";
+import { RequirementComplianceRow } from "../components/RequirementCompliance";
 import { RequirementsFileNotice } from "../components/RequirementsFileNotice";
 import { SectionTitle } from "../components/Typography";
 import { Field, Select, TextInput } from "../components/fields";
+import { useRequirementCompliance } from "../hooks/useRequirementCompliance";
 import { useRequirementMutations, useRequirements } from "../hooks/useRequirements";
 import { errorText } from "../lib/errors";
 import {
@@ -71,6 +72,11 @@ export function RequirementsView({ project }: { project: string }): ReactNode {
   const [newStatus, setNewStatus] = useState<RequirementStatus>("not-started");
 
   const data = query.data;
+  const requirementIds = data?.requirements.map((requirement) => requirement.entry_id) ?? [];
+  const compliance = useRequirementCompliance(project, requirementIds);
+  const verdictById = new Map(
+    compliance.data?.requirements.map((verdict) => [verdict.requirement_id, verdict]),
+  );
   const fraction = data ? doneFraction(data.done_count, data.total_count) : 0;
   const lastWrite = add.data?.requirements_file ?? setStatus.data?.requirements_file;
 
@@ -169,6 +175,16 @@ export function RequirementsView({ project }: { project: string }): ReactNode {
       <Card>
         <div className="flex flex-col gap-16">
           <SectionTitle>All requirements</SectionTitle>
+          {(compliance.data?.errors.length ?? 0) > 0 && (
+            <Callout tone="alert" title="Compliance unavailable">
+              {compliance.data?.errors.join(" ")}
+            </Callout>
+          )}
+          {(compliance.data?.omitted_requirements ?? 0) > 0 && (
+            <Callout tone="alert" title="Compliance rows omitted">
+              {String(compliance.data?.omitted_requirements)} requirements were omitted by the server.
+            </Callout>
+          )}
           {query.isPending ? (
             <p className="text-body text-fey-graphite">Loading…</p>
           ) : query.isError ? (
@@ -179,40 +195,52 @@ export function RequirementsView({ project }: { project: string }): ReactNode {
             </p>
           ) : (
             <ul className="flex flex-col gap-10">
-              {data?.requirements.map((req) => (
-                <li
-                  key={req.req_key}
-                  className="flex flex-col gap-8 rounded-small border border-fey-smoke bg-fey-obsidian p-16"
-                >
-                  <div className="flex items-start justify-between gap-16">
-                    <p className="text-body font-medium text-fey-white">
-                      <span className="text-fey-graphite">{req.req_key}</span>{" "}
-                      {req.title}
-                    </p>
-                    <RequirementStatusBadge status={req.status} />
-                  </div>
-                  {req.linked_files.length > 0 && (
-                    <p className="text-caption text-fey-graphite">
-                      {req.linked_files.join(" · ")}
-                    </p>
-                  )}
-                  <label className="flex items-center gap-8 text-caption uppercase text-fey-graphite">
-                    Set status
-                    <Select
-                      value={req.status}
-                      disabled={setStatus.isPending}
-                      onChange={(event) => {
-                        setStatus.mutate({
-                          entryId: req.entry_id,
-                          status: event.target.value as RequirementStatus,
-                        });
-                      }}
-                    >
-                      <StatusOptions />
-                    </Select>
-                  </label>
-                </li>
-              ))}
+              {data?.requirements.map((req) => {
+                const verdict = verdictById.get(req.entry_id);
+                if (verdict === undefined) {
+                  return (
+                    <li key={req.req_key} className="flex flex-col gap-10 rounded-small border border-fey-smoke bg-fey-obsidian p-16">
+                      <p className="text-body text-fey-white">{req.req_key} · {req.title}</p>
+                      <Callout tone={compliance.data?.errors.length ? "alert" : "muted"}>
+                        {compliance.data?.errors.length ? "Compliance unavailable for this requirement." : "Loading compliance…"}
+                      </Callout>
+                      <label className="flex items-center gap-8 text-caption uppercase text-fey-graphite">
+                        Set status
+                        <Select value={req.status} disabled={setStatus.isPending} onChange={(event) => {
+                          setStatus.mutate({ entryId: req.entry_id, status: event.target.value as RequirementStatus });
+                        }}>
+                          <StatusOptions />
+                        </Select>
+                      </label>
+                    </li>
+                  );
+                }
+                return (
+                  <RequirementComplianceRow
+                    key={req.req_key}
+                    project={project}
+                    requirement={req}
+                    row={verdict}
+                    statusControl={
+                      <label className="flex items-center gap-8 text-caption uppercase text-fey-graphite">
+                        Set status
+                        <Select
+                          value={req.status}
+                          disabled={setStatus.isPending}
+                          onChange={(event) => {
+                            setStatus.mutate({
+                              entryId: req.entry_id,
+                              status: event.target.value as RequirementStatus,
+                            });
+                          }}
+                        >
+                          <StatusOptions />
+                        </Select>
+                      </label>
+                    }
+                  />
+                );
+              })}
             </ul>
           )}
           {setStatus.isError && (

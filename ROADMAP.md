@@ -121,8 +121,8 @@ T11 and T12 may run in parallel after T10 merges. T13 integrates both branches a
 | T07 | `task/T07-frontend-codemap` | **merged** (`6056ec8`) |
 | T09 | `task/T09-integration` | **in review** |
 | T10 | `task/T10-contract-model` | **merged** |
-| T11 | `task/T11-compact-contract-retrieval` | **in progress** |
-| T12 | `task/T12-evidence-close-gate` | **in progress** |
-| T13 | `task/T13-compliance-dashboard` | **not started** |
+| T11 | `task/T11-compact-contract-retrieval` | **merged** |
+| T12 | `task/T12-evidence-close-gate` | **merged** |
+| T13 | `task/T13-compliance-dashboard` | **in review** |
 
 Update this table as tasks move: `not started → in progress → in review → changes requested → merged`.

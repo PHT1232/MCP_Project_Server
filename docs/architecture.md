@@ -32,7 +32,9 @@ Each registered project has `overview`, `focus`, `blockers`, `bugs`, `convention
 
 The `requirements` section can synchronize with a Markdown file. Registration creates the configured template when absent. Store writes are written through to the file; explicit sync performs a three-way reconciliation. Deleted file blocks are archived rather than resurrected, and store status wins a simultaneous status conflict.
 
-Sources: `server/src/pcs/context/`, `server/src/pcs/requirements/`.
+T13 compliance reads compose the T10 contract and T12 evidence services without executing tests, parsing logs, or applying LLM judgement. HTTP and MCP adapters return the same deterministic service payload. Requirement implementation `status` remains separate from the `verified`, `failed`, or `not-configured` compliance verdict. Multi-requirement responses are bounded and expose omission counts.
+
+Sources: `server/src/pcs/context/`, `server/src/pcs/requirements/`, `server/src/pcs/web_api/requirements_routes.py`, `server/src/pcs/mcp/compliance_tools.py`.
 
 ## Code intelligence
 

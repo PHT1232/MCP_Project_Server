@@ -14,6 +14,9 @@ import type {
   IndexStatus,
   Project,
   RegisterProjectInput,
+  RequirementComplianceResponse,
+  RequirementContract,
+  RequirementEvidenceResponse,
   RequirementsResponse,
   SearchResponse,
   SectionResponse,
@@ -155,6 +158,46 @@ export function listRequirements(
   project: string,
 ): Promise<RequirementsResponse> {
   return request<RequirementsResponse>(projectPath(project, "/requirements"));
+}
+
+/** T13 — verbatim contract drill-down; no evidence bodies are included. */
+export function getRequirementContract(
+  project: string,
+  requirementId: string,
+): Promise<RequirementContract> {
+  return request<RequirementContract>(
+    projectPath(
+      project,
+      `/requirements/${encodeURIComponent(requirementId)}/contract`,
+    ),
+  );
+}
+
+/** T13 — compact evidence references and violations; never raw logs or diffs. */
+export function getRequirementEvidence(
+  project: string,
+  requirementId: string,
+): Promise<RequirementEvidenceResponse> {
+  return request<RequirementEvidenceResponse>(
+    projectPath(
+      project,
+      `/requirements/${encodeURIComponent(requirementId)}/evidence`,
+    ),
+  );
+}
+
+/** T13 — deterministic exception-only compliance review. */
+export function reviewRequirementCompliance(
+  project: string,
+  requirementIds: string[],
+): Promise<RequirementComplianceResponse> {
+  const params = new URLSearchParams();
+  for (const requirementId of requirementIds) {
+    params.append("requirement_id", requirementId);
+  }
+  return request<RequirementComplianceResponse>(
+    projectPath(project, `/requirements/compliance?${params.toString()}`),
+  );
 }
 
 /** FR36a — re-parse the requirements file and reconcile with the store (AC18). */

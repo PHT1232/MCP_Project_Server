@@ -29,6 +29,7 @@ from pcs.context.types import (
     HIDDEN_STATUSES,
     PREPARE_TASK_TOKEN_MAX,
     PREPARE_TASK_TOKEN_MIN,
+    REQ_DONE,
     SECTION_FOCUS,
     SECTION_OVERVIEW,
     SECTION_REQUIREMENTS,
@@ -644,7 +645,16 @@ async def set_requirement_status(
     status: str,
     author: str = "agent",
 ) -> EntryView:
-    """Set a requirement's done/in-progress/blocked/not-started status (FR10, FR13)."""
+    """Set a requirement's done/in-progress/blocked/not-started status (FR10, FR13, T12).
+
+    Legacy ``done`` is allowed only when there are no criteria and no open
+    blocking violations. Otherwise the close gate must pass. Evidence recording
+    never calls this function (D4).
+    """
+    if status == REQ_DONE:
+        from pcs.requirements.evidence import assert_close_gate_allows_done
+
+        await assert_close_gate_allows_done(session, project=project, requirement_id=entry_id)
     return await update_entry(
         session,
         project=project,

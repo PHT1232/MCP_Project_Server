@@ -278,3 +278,142 @@ export interface IndexStatus {
   semantic_available: boolean;
   semantic_note?: string | null;
 }
+
+/* --------------------------------------------------------------------------
+ * Requirement compliance (T13) — canonical exception-only review payload.
+ * ------------------------------------------------------------------------ */
+
+export type ValidationState = "ok" | "stale" | "not-configured";
+export type IndependentReviewState = "passed" | "failed" | "not-configured";
+
+export interface RequirementInvariant {
+  id: string;
+  project_id: string;
+  requirement_id: string;
+  key: string;
+  statement: string;
+  kind: string;
+  risk: string;
+  sort_order: number;
+  status: string;
+  author: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface AcceptanceCriterion {
+  id: string;
+  project_id: string;
+  invariant_id: string;
+  key: string;
+  statement: string;
+  evidence_kind: string;
+  required: boolean;
+  independent_review: string;
+  sort_order: number;
+  status: string;
+  author: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface RequirementContract {
+  requirement_id: string;
+  req_key: string | null;
+  headline: string;
+  include: "invariants" | "criteria" | "both";
+  invariants: RequirementInvariant[];
+  criteria: AcceptanceCriterion[];
+}
+
+export interface RequirementComplianceException {
+  kind:
+    | "missing"
+    | "stale"
+    | "blocking"
+    | "review-missing"
+    | "review-failed"
+    | "review-stale";
+  criterion_id?: string;
+  criterion_key?: string;
+  violation_id?: string;
+  invariant_id: string;
+  invariant_key: string;
+  file_refs: string[];
+  summary?: string | null;
+}
+
+export interface RequirementComplianceRow {
+  requirement_id: string;
+  req_key: string | null;
+  status: RequirementStatus;
+  configured: boolean;
+  verdict: "verified" | "failed" | "not-configured";
+  ac_verified: number;
+  ac_total: number;
+  validation: ValidationState;
+  review: IndependentReviewState;
+  exceptions: RequirementComplianceException[];
+  omitted_exceptions: number;
+}
+
+export interface RequirementComplianceResponse {
+  project_id: string;
+  requirements: RequirementComplianceRow[];
+  reviewed_count: number;
+  omitted_requirements: number;
+  limits: {
+    requirements: number;
+    exceptions_per_requirement: number;
+  };
+}
+
+export interface RequirementEvidence {
+  id: string;
+  criterion_id: string;
+  contract_revision_id: string;
+  kind: string;
+  result: "passed" | "failed" | "manual-pending";
+  source_commit: string;
+  file_refs: string[];
+  seq: number;
+}
+
+export interface RequirementViolation {
+  id: string;
+  invariant_id: string;
+  severity: "blocking" | "warning";
+  status: "open" | "resolved";
+  summary: string;
+  file_refs: string[];
+}
+
+/** T12 detail shape returned only by the lazy evidence drill-down endpoint. */
+export interface RequirementCloseGate {
+  requirement_id: string;
+  configured: boolean;
+  passed: boolean;
+  unmet: string[];
+  ac_verified: number;
+  ac_total: number;
+  missing: Record<string, string>[];
+  stale: Record<string, string>[];
+  blocking: Record<string, string>[];
+  validation: string;
+  review: string;
+}
+
+export interface RequirementEvidenceResponse {
+  requirement_id: string;
+  evidence: RequirementEvidence[];
+  violations: RequirementViolation[];
+  close_gate: RequirementCloseGate;
+  evidence_total: number;
+  evidence_omitted: number;
+  violations_total: number;
+  violations_omitted: number;
+  limits: {
+    evidence: number;
+    violations: number;
+  };
+}

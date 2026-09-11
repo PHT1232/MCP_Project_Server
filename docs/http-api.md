@@ -37,6 +37,9 @@ An entry contains `id`, `project_id`, `section`, `headline`, `detail`, lifecycle
 |---|---|---|
 | `GET /api/projects/{project}/requirements` | none | `{requirements, done_count, total_count}`. |
 | `POST /api/projects/{project}/requirements/sync` | none | Full sync report: file metadata, created/updated/archived/written-back keys, reconciliations, errors, requirements, and counts. |
+| `GET /api/projects/{project}/requirements/{requirement_id}/contract` | Query: `include=invariants`, `criteria`, or `both` | Typed verbatim contract drill-down from T11. |
+| `GET /api/projects/{project}/requirements/{requirement_id}/evidence` | none | Typed compact evidence, violations, and close-gate summary from T12; no logs or diffs. |
+| `GET /api/projects/{project}/requirements/compliance` | Repeated `requirement_id` query parameters, or comma-separated `requirement_ids` | Deterministic compact T13 verdicts. At most 25 sorted unique requirements and 8 actionable exceptions per requirement are returned; omission counts expose truncation. |
 
 Requirement status values are `not-started`, `in-progress`, `blocked`, and `done`. Lifecycle resolution is distinct from status `done`.
 
@@ -70,4 +73,18 @@ curl -s -X POST http://127.0.0.1:8080/api/projects/demo/reindex \
   -H 'content-type: application/json' \
   -d '{"incremental":true}'
 curl -s 'http://127.0.0.1:8080/api/projects/demo/code-map?scope=server/src&depth=2'
+```
+
+
+### Pre-close compliance workflow
+
+1. Call `prepare_task` for the implementation task and requirement IDs.
+2. Read `get_requirement_contract` or the HTTP contract route to inspect missing AC IDs.
+3. Record compact evidence with `record_requirement_evidence`; never submit stdout, logs, or diffs.
+4. Call `review_requirement_compliance` or the HTTP compliance route. Drill into returned criterion, invariant, and violation IDs only when exceptions exist.
+5. Request requirement status `done` only after the verdict is `verified`. `not-configured` preserves legacy behavior but is not evidence of verification.
+
+```bash
+curl -sG http://127.0.0.1:8080/api/projects/demo/requirements/compliance \
+  --data-urlencode requirement_id=REQ_ENTRY_ID
 ```

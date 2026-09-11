@@ -33,6 +33,8 @@ Every acceptance criterion from `REQUIREMENTS.md` §10 is mapped to automated ev
 | AC25 | verified | T08 live clean Compose smoke (health, registration, briefing, frontend) plus `test_ac25_*` deployment assertions |
 | AC26 | manual pending | Bind/Compose policy automated by `test_ac26_*`, `test_s2_*`, and localhost tests; second-device reachability protocol remains in `tasks/T09-integration.md` |
 | AC27 | verified | T06/T07 token-only source audit, `tokens.ts` runtime CSS-token bridge, frontend lint/type/build, and design review records |
+| T13 backend compliance | verified | `test_verified_is_short_and_no_criteria_is_not_configured`, `test_actionable_missing_stale_review_and_blocking`, `test_isolation_determinism_and_bounds`, and `test_http_reads_equal_mcp_and_audit_errors` cover exception-only success/failure, explicit not-configured state, stale/review/blocking states, isolation, deterministic bounds, typed HTTP reads, MCP equivalence, and audit/errors. |
+| T13 dashboard presentation | verified | `RequirementCompliance.test.tsx` and `RequirementsCompliance.test.tsx` cover separate implementation/verification state, explicit not-configured, stale/blocking prominence, safe ID-only drill-down, omission notices, lazy reads, >25-row batching, and partial batch failure. API typing is covered by `client.test.ts`. |
 
 ## Non-functional release gates
 

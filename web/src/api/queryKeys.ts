@@ -10,6 +10,12 @@ export const queryKeys = {
   section: (project: string, section: string) =>
     ["section", project, section] as const,
   requirements: (project: string) => ["requirements", project] as const,
+  requirementCompliance: (project: string, requirementIds: readonly string[]) =>
+    ["requirement-compliance", project, ...requirementIds] as const,
+  requirementContract: (project: string, requirementId: string) =>
+    ["requirement-contract", project, requirementId] as const,
+  requirementEvidence: (project: string, requirementId: string) =>
+    ["requirement-evidence", project, requirementId] as const,
   indexStatus: (project: string) => ["index", project] as const,
   /**
    * FR32 — one tier of the code map. `scope === null` is the top tier; a subtree

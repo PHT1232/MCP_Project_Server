@@ -6,12 +6,15 @@ import {
   getBriefing,
   getCodeMap,
   getIndexStatus,
+  getRequirementContract,
+  getRequirementEvidence,
   getSection,
   getSource,
   listProjects,
   listRequirements,
   registerProject,
   reindex,
+  reviewRequirementCompliance,
   resolveEntry,
   searchCode,
   setFocus,
@@ -164,6 +167,34 @@ describe("api client", () => {
     expect(callOf(fetchMock).url).toBe("/api/projects/p/requirements");
     expect(result.done_count).toBe(3);
     expect(result.total_count).toBe(8);
+  });
+
+  it("reads contract and evidence drill-down endpoints with encoded ids", async () => {
+    const fetchMock = mockFetch({ criteria: [], invariants: [] });
+
+    await getRequirementContract("a b", "req/1");
+    expect(callOf(fetchMock).url).toBe(
+      "/api/projects/a%20b/requirements/req%2F1/contract",
+    );
+
+    fetchMock.mockClear();
+    await getRequirementEvidence("a b", "req/1");
+    expect(callOf(fetchMock).url).toBe(
+      "/api/projects/a%20b/requirements/req%2F1/evidence",
+    );
+  });
+
+  it("GETs compliance with repeated, encoded requirement_id params", async () => {
+    const fetchMock = mockFetch({ requirements: [] });
+
+    await reviewRequirementCompliance("a b", ["req/1", "req two"]);
+
+    const { url, init } = callOf(fetchMock);
+    expect(url).toBe(
+      "/api/projects/a%20b/requirements/compliance?requirement_id=req%2F1&requirement_id=req+two",
+    );
+    expect(init.method).toBeUndefined();
+    expect(init.body).toBeUndefined();
   });
 
   it("POSTs a requirements sync", async () => {

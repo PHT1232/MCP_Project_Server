@@ -486,6 +486,33 @@ class TestContractService:
         assert fetched_i.id == inv_id
         assert fetched_c.id == crit_id
 
+    async def test_archived_parent_hides_active_children_but_keeps_history(self) -> None:
+        req_id = await _seed_requirement(title="Archived parent")
+        async with session_scope() as session:
+            invariant = await contracts.create_invariant(
+                session,
+                project=PROJECT,
+                requirement_id=req_id,
+                key="INV-ARCH",
+                statement="Archived requirements keep contract history.",
+                kind="behavior",
+                risk="high",
+            )
+            await service.archive_entry(session, project=PROJECT, entry_id=req_id)
+        async with session_scope() as session:
+            assert (
+                await contracts.list_invariants(session, project=PROJECT, requirement_id=req_id)
+                == []
+            )
+            kept = await contracts.get_invariant(
+                session, project=PROJECT, invariant_id=invariant.id, include_deleted=True
+            )
+            history = await contracts.list_contract_revisions(
+                session, project=PROJECT, requirement_id=req_id
+            )
+        assert kept.id == invariant.id
+        assert any(row.entity_id == invariant.id for row in history)
+
     async def test_db_enforces_project_section_isolation_and_statement_bounds(self) -> None:
         req_id = await _seed_requirement(title="Isolation")
         async with session_scope() as session:
@@ -579,6 +606,31 @@ class TestContractService:
                 )
                 await session.flush()
         async with session_scope() as session:
+            with pytest.raises(DBAPIError, match="append-only"):
+                await session.execute(
+                    text("DELETE FROM requirement_contract_revisions WHERE id = :id"),
+                    {"id": rev_id},
+                )
+                await session.flush()
+        async with session_scope() as session:
+            with pytest.raises(DBAPIError):
+                await session.execute(
+                    text(
+                        "INSERT INTO requirement_contract_revisions "
+                        "(id, project_id, requirement_id, requirement_section, entity_kind, "
+                        "entity_id, action, snapshot, author) VALUES "
+                        "(:id, :project_id, :requirement_id, 'requirements', "
+                        "'invariant', :entity_id, 'create', '{}'::jsonb, 'test')"
+                    ),
+                    {
+                        "id": str(uuid4()),
+                        "project_id": acme_id,
+                        "requirement_id": blocker_id,
+                        "entity_id": str(uuid4()),
+                    },
+                )
+                await session.flush()
+        async with session_scope() as session:
             with pytest.raises(DBAPIError):
                 await session.execute(
                     text("DELETE FROM context_entries WHERE id = :id"),
@@ -609,8 +661,8 @@ class TestContractService:
                 kind="behavior",
                 risk="low",
             )
-        with pytest.raises(ValidationError, match="duplicate"):
-            async with session_scope() as session:
+        async with session_scope() as session:
+            with pytest.raises(ValidationError, match="duplicate"):
                 await contracts.create_invariant(
                     session,
                     project=PROJECT,
@@ -620,13 +672,12 @@ class TestContractService:
                     kind="behavior",
                     risk="low",
                 )
-        async with session_scope() as session:
             recovered = await contracts.create_invariant(
                 session,
                 project=PROJECT,
                 requirement_id=req_id,
                 key="INV-2",
-                statement="A new session remains usable after IntegrityError translation.",
+                statement="The same session remains usable after IntegrityError translation.",
                 kind="behavior",
                 risk="low",
             )

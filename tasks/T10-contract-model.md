@@ -105,7 +105,7 @@ Green: server ruff + mypy --strict, pytest (including 11 contract tests), web es
 
 - Hidden/deleted/archived parent: active child reads 404/empty; `include_deleted` and `list_contract_revisions` still work — `test_hidden_parent_hides_active_child_reads_but_history_remains`
 - DB isolation + statement CHECK + revision UPDATE trigger + requirement hard-delete RESTRICT — `test_db_enforces_project_section_isolation_and_statement_bounds`
-- Unique-index IntegrityError → ValidationError; a later session can write — `test_integrity_error_leaves_the_transaction_usable`
+- Unique-index IntegrityError is isolated by a savepoint; the same session can continue after ValidationError — `test_integrity_error_leaves_the_transaction_usable`
 - Criterion list order `(sort_order, key, invariant_id, id)` — `test_criteria_order_is_deterministic_with_id_tie_breakers`
 
 ### Deviations / decisions to confirm
@@ -115,7 +115,7 @@ Green: server ruff + mypy --strict, pytest (including 11 contract tests), web es
 3. **Live `just migrate` against compose Postgres was not run** (shared DB). Equivalent proof: empty→head via `migrated_db`, and 0005→head→0005 in `test_migration_upgrades_from_prior_head_and_downgrades_without_changing_requirement_rows`.
 4. **T11–T13 task files are not in this branch** (not started). ROADMAP Phase 3 lists them; only T10 is implemented.
 5. **T09 is still in review**; this branch is off current `main` (`2a941a4`). T09 had no schema dependency.
-6. **Same-session continue after unique-index flush** is not supported: SQLAlchemy 2 aborts the unit of work on `IntegrityError`. We translate it to `ValidationError`; the next `session_scope` is usable. MCP tool calls already use one session per call.
+6. **Constraint failure isolation:** contract create/update opens a nested transaction before mutation. A failed flush rolls back only that savepoint, is translated to `ValidationError`, and leaves the same `AsyncSession` usable.
 
 ### New dependencies
 

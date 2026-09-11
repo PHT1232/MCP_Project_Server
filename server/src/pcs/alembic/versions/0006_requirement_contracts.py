@@ -191,6 +191,12 @@ def upgrade() -> None:
         sa.Column("id", sa.String(length=36), primary_key=True),
         sa.Column("project_id", sa.String(length=36), nullable=False),
         sa.Column("requirement_id", sa.String(length=36), nullable=False),
+        sa.Column(
+            "requirement_section",
+            sa.String(length=32),
+            nullable=False,
+            server_default="requirements",
+        ),
         sa.Column("entity_kind", sa.String(length=16), nullable=False),
         sa.Column("entity_id", sa.String(length=36), nullable=False),
         sa.Column("action", sa.String(length=16), nullable=False),
@@ -213,6 +219,16 @@ def upgrade() -> None:
             ["context_entries.id", "context_entries.project_id"],
             ondelete="RESTRICT",
             name="fk_requirement_contract_revisions_requirement_project",
+        ),
+        sa.ForeignKeyConstraint(
+            ["requirement_id", "requirement_section"],
+            ["context_entries.id", "context_entries.section"],
+            ondelete="RESTRICT",
+            name="fk_requirement_contract_revisions_requirement_section",
+        ),
+        sa.CheckConstraint(
+            "requirement_section = 'requirements'",
+            name="ck_requirement_contract_revisions_section",
         ),
         sa.CheckConstraint(
             "entity_kind IN ('invariant', 'criterion')",
@@ -248,7 +264,7 @@ def upgrade() -> None:
             AS $$
             BEGIN
               RAISE EXCEPTION
-                'requirement_contract_revisions is append-only (T10); updates are rejected';
+                'contract revisions are append-only; mutation rejected';
             END;
             $$
             """
@@ -258,7 +274,7 @@ def upgrade() -> None:
         sa.text(
             """
             CREATE TRIGGER trg_requirement_contract_revisions_immutable
-            BEFORE UPDATE ON requirement_contract_revisions
+            BEFORE UPDATE OR DELETE ON requirement_contract_revisions
             FOR EACH ROW
             EXECUTE FUNCTION pcs_reject_contract_revision_update()
             """

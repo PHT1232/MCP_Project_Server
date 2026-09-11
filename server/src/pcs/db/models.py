@@ -305,7 +305,7 @@ class RequirementContractRevision(Base):
 
     Retention: rows outlive soft-delete of the parent requirement. Hard-delete of
     that requirement is RESTRICTed while history exists. Project teardown may
-    CASCADE via ``project_id``. PostgreSQL rejects UPDATE (append-only trigger).
+    CASCADE via ``project_id``. PostgreSQL rejects UPDATE and DELETE (append-only trigger).
     """
 
     __tablename__ = "requirement_contract_revisions"
@@ -324,6 +324,16 @@ class RequirementContractRevision(Base):
             ondelete="RESTRICT",
             name="fk_requirement_contract_revisions_requirement_project",
         ),
+        ForeignKeyConstraint(
+            ["requirement_id", "requirement_section"],
+            ["context_entries.id", "context_entries.section"],
+            ondelete="RESTRICT",
+            name="fk_requirement_contract_revisions_requirement_section",
+        ),
+        CheckConstraint(
+            "requirement_section = 'requirements'",
+            name="ck_requirement_contract_revisions_section",
+        ),
         Index(
             "ix_requirement_contract_revisions_requirement_created",
             "requirement_id",
@@ -338,6 +348,9 @@ class RequirementContractRevision(Base):
         ForeignKey("projects.id", ondelete="CASCADE"), nullable=False
     )
     requirement_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    requirement_section: Mapped[str] = mapped_column(
+        String(32), nullable=False, server_default="requirements"
+    )
     entity_kind: Mapped[str] = mapped_column(String(16), nullable=False)
     entity_id: Mapped[str] = mapped_column(String(36), nullable=False)
     action: Mapped[str] = mapped_column(String(16), nullable=False)

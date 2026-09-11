@@ -12,7 +12,7 @@ from typing import Any
 
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, AsyncSessionTransaction
 
 from pcs.context.service import resolve_project
 from pcs.context.types import (
@@ -229,13 +229,15 @@ async def _allocate_key(
         n += 1
 
 
-async def _flush_contract(session: AsyncSession, *, what: str) -> None:
+async def _flush_contract(
+    session: AsyncSession, *, what: str, savepoint: AsyncSessionTransaction
+) -> None:
     """Flush and translate unique-constraint failures into actionable ValidationError."""
     try:
         await session.flush()
+        await savepoint.commit()
     except IntegrityError as exc:
-        # The current unit of work is aborted; session_scope rolls it back.
-        # A new session remains usable (tested).
+        await savepoint.rollback()
         raise _integrity_error(what=what) from exc
 
 
@@ -425,6 +427,7 @@ async def create_invariant(
             parent_id=requirement.id,
         )
     )
+    savepoint = await session.begin_nested()
     row = RequirementInvariant(
         project_id=project_row.id,
         requirement_id=requirement.id,
@@ -440,7 +443,7 @@ async def create_invariant(
         updated_at=_now(),
     )
     session.add(row)
-    await _flush_contract(session, what="invariant")
+    await _flush_contract(session, what="invariant", savepoint=savepoint)
     _record_revision(
         session,
         project_id=project_row.id,
@@ -478,6 +481,7 @@ async def update_invariant(
     if await _parent_requirement_hidden(session, row.requirement_id):
         raise _hidden_parent_write_error(row.requirement_id)
     author_text = _validate_author(author)
+    savepoint = await session.begin_nested()
     changed = False
     if key is not None:
         key_text = _validate_key(key, label="invariant")
@@ -508,10 +512,11 @@ async def update_invariant(
             row.sort_order = order
             changed = True
     if not changed:
+        await savepoint.commit()
         return _as_invariant(row)
     row.author = author_text
     row.updated_at = _now()
-    await _flush_contract(session, what="invariant")
+    await _flush_contract(session, what="invariant", savepoint=savepoint)
     _record_revision(
         session,
         project_id=project_row.id,
@@ -682,6 +687,7 @@ async def create_criterion(
             parent_id=invariant.id,
         )
     )
+    savepoint = await session.begin_nested()
     row = AcceptanceCriterion(
         project_id=project_row.id,
         invariant_id=invariant.id,
@@ -697,7 +703,7 @@ async def create_criterion(
         updated_at=_now(),
     )
     session.add(row)
-    await _flush_contract(session, what="criterion")
+    await _flush_contract(session, what="criterion", savepoint=savepoint)
     _record_revision(
         session,
         project_id=project_row.id,
@@ -734,6 +740,7 @@ async def update_criterion(
         criterion_id=criterion_id,
     )
     author_text = _validate_author(author)
+    savepoint = await session.begin_nested()
     invariant = await _load_invariant_row(
         session,
         project_id=project_row.id,
@@ -778,10 +785,11 @@ async def update_criterion(
             row.sort_order = order
             changed = True
     if not changed:
+        await savepoint.commit()
         return _as_criterion(row)
     row.author = author_text
     row.updated_at = _now()
-    await _flush_contract(session, what="criterion")
+    await _flush_contract(session, what="criterion", savepoint=savepoint)
     _record_revision(
         session,
         project_id=project_row.id,

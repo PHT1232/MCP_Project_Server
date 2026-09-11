@@ -52,7 +52,7 @@ just check
 
 ## Handoff
 
-Status: **in progress** — implementation complete on `task/T11-compact-contract-retrieval`; leaving R-060 in-progress pending independent review. Not marking done.
+Status: **in progress** — re-review of `13c7d2f` is implemented on `task/T11-compact-contract-retrieval`. R-060 stays **blocked** pending independent review. Not marking done; findings are not resolved.
 
 ### Budget accounting (`prepare_task`, FR22a + T11)
 
@@ -79,8 +79,8 @@ Empty/unconfigured contracts return `text=""` and `contract_tokens=0`, so the sp
 ### Relevance and packing
 
 - **Requirements (1-3):** explicit `requirement_ids` first (deduplicated, first-seen order, including `done`). Otherwise open, non-`done` requirements that have active invariants. Match score is linked-files ∩ retrieval paths / focus paths / task text, plus `req_key`/title token overlap. No-match auto-select returns empty — never a fallback dump of unrelated contracts.
-- **Statements:** blocking-violation summaries (T12) → `forbidden-path` → high-risk → missing required criteria → stale evidence → remaining by risk/`sort_order`/`key`. Missing/stale criteria map to parents via T10 `invariant_id` plus optional `{key, invariant_key}` links (never string-prefix matching). Overflow evicts the globally lowest-ranked included line. Documents are never character-sliced; a budget below the skeleton returns a structured fallback that keeps `CONTRACT` / `CLOSE GATE` / `Details` intact.
-- **T12 absent:** `review: not-configured` (also AC/Validation). Optional seam: `pcs.requirements.evidence.summarize_close_gate(session, *, project, requirement_ids) -> Mapping`. Only compact keys are copied (`ac_verified`, `ac_total`, `missing_keys`, `missing`/`stale` links, `validation`, `review`, `blocking`, `stale_count`). A missing evidence *module* is not-configured; any other `ModuleNotFoundError` (broken T12 import) propagates. Stdout/diffs are dropped or replaced with `(omitted)`.
+- **Statements:** blocking-violation summaries (T12) → `forbidden-path` → high-risk → missing required criteria → stale evidence → remaining by risk/`sort_order`/`key`. Missing/stale criteria map to parents by **criterion UUID** or `(invariant_id, key)` — never a global `AC-1` map. A payload parent is used only when T10 cannot resolve the criterion, or when it exactly agrees with T10; conflicting `invariant_id` / `invariant_key` values are ignored. Overflow evicts the globally lowest-ranked included line. `get_task_contract` rejects `max_tokens` outside 80–500 so every accepted budget satisfies `token_estimate <= token_budget`. Documents are never character-sliced.
+- **T12 absent:** `review: not-configured` (also AC/Validation). Optional seam: `pcs.requirements.evidence.summarize_close_gate(session, *, project, requirement_ids) -> Mapping`. Only compact keys are copied (`ac_verified`, `ac_total`, `missing_keys` display-only, `missing`/`stale` links, `validation`, `review`, `blocking`, `stale_count`). **Stale payload:** `stale: [{"id": "<criterion uuid>"}]` (optional `key` / `invariant_id`); `stale_count` defaults to `len(stale)` and ranking boosts that criterion's T10 parent. A missing evidence *module* is not-configured; any other `ModuleNotFoundError` (broken T12 import) propagates. Stdout/diffs are dropped or replaced with `(omitted)`.
 - **Drill-down:** `get_requirement_contract(..., include=invariants|criteria|both)` returns verbatim T10 views. Compact output never embeds full criterion statements or evidence bodies.
 
 ### Files
@@ -113,6 +113,13 @@ T12: implement `summarize_close_gate` and `get_requirement_evidence`. T11 alread
 - Project isolation (`test_contract_tools_are_project_isolated`).
 - MCP schema/audit/errors (`test_mcp_contract_tools_audit_schema_and_errors`).
 
+### Review fixes (post-13c7d2f)
+
+- Safe minimum 80: reject `max_tokens < 80` in service, MCP schema (`minimum`/`maximum`), docs, and tests (`test_below_safe_minimum_is_rejected`, `test_accepted_budget_token_estimate_never_exceeds_budget`). `prepare_task` still uses `min(500, B)` (always ≥ 80).
+- Criterion ownership is id-scoped (`test_duplicate_ac_keys_across_requirements_use_criterion_ids`).
+- Conflicting payload parents lose to T10 (`test_conflicting_payload_parent_uses_authoritative_owner`).
+- T12 stale `{id}` boosts the parent invariant (`test_stale_criterion_raises_parent_invariant_in_ranking`).
+
 ### Focused tests
 
-`cd server && uv run pytest -k 'task_contract or prepare_task'` → 21 passed. `just check` green: 172 passed / 1 skipped (server), 56 vitest. Status stays **in progress** pending re-review; not marking done.
+`cd server && uv run pytest tests/test_task_contract.py` → 25 passed. `just check` green: 177 passed / 1 skipped (server), 56 vitest. Status stays **in progress** / R-060 **blocked** pending independent re-review; not marking done.

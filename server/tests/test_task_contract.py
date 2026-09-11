@@ -25,6 +25,7 @@ from pcs.mcp import mcp
 from pcs.requirements import briefing, contracts
 from pcs.requirements.briefing import (
     CONTRACT_TOKEN_CAP,
+    CONTRACT_TOKEN_MIN,
     _is_missing_evidence_module,
     close_gate_from_payload,
     get_requirement_contract,
@@ -613,7 +614,7 @@ async def test_missing_criterion_maps_to_parent_invariant_not_key_prefix(
             risk="medium",
             sort_order=0,
         )
-        await contracts.create_criterion(
+        ac_missing = await contracts.create_criterion(
             session,
             project=PROJECT,
             invariant_id=miss.id,
@@ -633,7 +634,7 @@ async def test_missing_criterion_maps_to_parent_invariant_not_key_prefix(
             "ac_verified": 1,
             "ac_total": 2,
             "missing_keys": ["AC-Z"],
-            "missing": [{"key": "AC-Z", "invariant_key": "INV-ALPHA"}],
+            "missing": [{"id": ac_missing.id, "key": "AC-Z", "invariant_id": miss.id}],
             "validation": "ok",
             "review": "failed",
         }
@@ -716,6 +717,58 @@ async def test_global_overflow_eviction_keeps_highest_rank_and_headers(
     assert pack.omitted_invariants >= 1
 
 
+async def test_below_safe_minimum_is_rejected() -> None:
+    req_id = await _seed_requirement(title="Safe minimum reject")
+    async with session_scope() as session:
+        await contracts.create_invariant(
+            session,
+            project=PROJECT,
+            requirement_id=req_id,
+            key="INV-1",
+            statement="A statement that cannot fit a 1-token budget.",
+            kind="behavior",
+            risk="high",
+        )
+        with pytest.raises(ValidationError, match="max_tokens must be in"):
+            await get_task_contract(
+                session,
+                project=PROJECT,
+                task="safe minimum",
+                requirement_ids=[req_id],
+                max_tokens=1,
+                ranked_paths=(),
+            )
+
+
+async def test_accepted_budget_token_estimate_never_exceeds_budget() -> None:
+    req_id = await _seed_requirement(title="Budget bound")
+    long_stmt = "KEEP-BOUND " + ("x" * 400)
+    async with session_scope() as session:
+        await contracts.create_invariant(
+            session,
+            project=PROJECT,
+            requirement_id=req_id,
+            key="INV-LONG",
+            statement=long_stmt,
+            kind="behavior",
+            risk="high",
+        )
+        for budget in (CONTRACT_TOKEN_MIN, 120, CONTRACT_TOKEN_CAP):
+            pack = await get_task_contract(
+                session,
+                project=PROJECT,
+                task="budget bound",
+                requirement_ids=[req_id],
+                max_tokens=budget,
+                ranked_paths=(),
+            )
+            assert pack.token_budget == budget
+            assert pack.token_estimate <= pack.token_budget
+            assert pack.text.startswith("CONTRACT")
+            assert "CLOSE GATE" in pack.text
+            assert "Details:" in pack.text
+
+
 async def test_tiny_budget_uses_structured_fallback_not_sliced_headers() -> None:
     req_id = await _seed_requirement(title="Safe minimum")
     async with session_scope() as session:
@@ -733,15 +786,15 @@ async def test_tiny_budget_uses_structured_fallback_not_sliced_headers() -> None
             project=PROJECT,
             task="safe minimum",
             requirement_ids=[req_id],
-            max_tokens=1,
+            max_tokens=CONTRACT_TOKEN_MIN,
             ranked_paths=(),
         )
+    assert pack.token_estimate <= pack.token_budget == CONTRACT_TOKEN_MIN
     assert pack.text.startswith("CONTRACT")
     assert "CLOSE GATE" in pack.text
     assert "Details:" in pack.text
     assert not pack.text.startswith("CONTRA\n")
     assert "CONTRA…" not in pack.text
-    assert pack.truncated
 
 
 async def test_broken_t12_import_is_not_hidden_as_not_configured(
@@ -882,7 +935,9 @@ async def test_mcp_contract_tools_audit_schema_and_errors() -> None:
     task_schema = tools["get_task_contract"].inputSchema
     assert "include" in req_schema["properties"]
     assert "requirement_ids" in task_schema["properties"]
-    assert "max_tokens" in task_schema["properties"]
+    max_tokens_schema = task_schema["properties"]["max_tokens"]
+    assert max_tokens_schema["minimum"] == CONTRACT_TOKEN_MIN
+    assert max_tokens_schema["maximum"] == CONTRACT_TOKEN_CAP
 
     seen: list[dict[str, str]] = []
 
@@ -918,6 +973,11 @@ async def test_mcp_contract_tools_audit_schema_and_errors() -> None:
                 "get_task_contract",
                 {"project": "does-not-exist", "task": "nope"},
             )
+        with pytest.raises(ToolError, match="max_tokens"):
+            await mcp.call_tool(
+                "get_task_contract",
+                {"project": PROJECT, "task": "too small", "max_tokens": 1},
+            )
     outcomes = {(row["tool"], row["outcome"]) for row in seen}
     assert ("get_task_contract", "ok") in outcomes
     assert any(
@@ -927,3 +987,206 @@ async def test_mcp_contract_tools_audit_schema_and_errors() -> None:
     assert any(
         row["tool"] == "get_task_contract" and row["outcome"].startswith("error:") for row in seen
     )
+
+
+async def test_duplicate_ac_keys_across_requirements_use_criterion_ids(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    left = await _seed_requirement(
+        title="Left cart", linked_files=["shop/cart.py"], req_key="R-020"
+    )
+    right = await _seed_requirement(
+        title="Right billing", linked_files=["shop/cart.py"], req_key="R-021"
+    )
+    async with session_scope() as session:
+        inv_left = await contracts.create_invariant(
+            session,
+            project=PROJECT,
+            requirement_id=left,
+            key="INV-LEFT",
+            statement="Left parent of the missing AC-1.",
+            kind="behavior",
+            risk="medium",
+        )
+        inv_right = await contracts.create_invariant(
+            session,
+            project=PROJECT,
+            requirement_id=right,
+            key="INV-RIGHT",
+            statement="Right parent must not inherit Left's AC-1.",
+            kind="behavior",
+            risk="medium",
+        )
+        ac_left = await contracts.create_criterion(
+            session,
+            project=PROJECT,
+            invariant_id=inv_left.id,
+            key="AC-1",
+            statement="Left AC-1.",
+            evidence_kind="test",
+        )
+        await contracts.create_criterion(
+            session,
+            project=PROJECT,
+            invariant_id=inv_right.id,
+            key="AC-1",
+            statement="Right AC-1.",
+            evidence_kind="test",
+        )
+        payload = {
+            "ac_verified": 1,
+            "ac_total": 2,
+            "missing": [{"id": ac_left.id, "key": "AC-1"}],
+            "validation": "ok",
+            "review": "failed",
+        }
+        monkeypatch.setattr(
+            briefing,
+            "_load_close_gate",
+            AsyncMock(return_value=close_gate_from_payload(payload)),
+        )
+        pack = await get_task_contract(
+            session,
+            project=PROJECT,
+            task="cart work",
+            requirement_ids=[left, right],
+            max_tokens=160,
+            ranked_paths=(),
+        )
+    assert "INV-LEFT" in pack.text
+    if "INV-RIGHT" in pack.text:
+        assert pack.text.index("INV-LEFT") < pack.text.index("INV-RIGHT")
+
+
+async def test_conflicting_payload_parent_uses_authoritative_owner(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    req_id = await _seed_requirement(title="Conflicting parent")
+    async with session_scope() as session:
+        owner = await contracts.create_invariant(
+            session,
+            project=PROJECT,
+            requirement_id=req_id,
+            key="INV-OWNER",
+            statement="Authoritative parent of the stale criterion.",
+            kind="behavior",
+            risk="medium",
+            sort_order=1,
+        )
+        decoy = await contracts.create_invariant(
+            session,
+            project=PROJECT,
+            requirement_id=req_id,
+            key="INV-DECOY",
+            statement="Payload wrongly claims this parent.",
+            kind="behavior",
+            risk="medium",
+            sort_order=0,
+        )
+        ac = await contracts.create_criterion(
+            session,
+            project=PROJECT,
+            invariant_id=owner.id,
+            key="AC-1",
+            statement="Owned by INV-OWNER.",
+            evidence_kind="test",
+        )
+        payload = {
+            "ac_verified": 0,
+            "ac_total": 1,
+            "missing": [
+                {
+                    "id": ac.id,
+                    "key": "AC-1",
+                    "invariant_id": decoy.id,
+                    "invariant_key": "INV-DECOY",
+                }
+            ],
+            "validation": "ok",
+            "review": "failed",
+        }
+        monkeypatch.setattr(
+            briefing,
+            "_load_close_gate",
+            AsyncMock(return_value=close_gate_from_payload(payload)),
+        )
+        pack = await get_task_contract(
+            session,
+            project=PROJECT,
+            task="conflicting parent",
+            requirement_ids=[req_id],
+            max_tokens=160,
+            ranked_paths=(),
+        )
+    assert "INV-OWNER" in pack.text
+    if "INV-DECOY" in pack.text:
+        assert pack.text.index("INV-OWNER") < pack.text.index("INV-DECOY")
+
+
+async def test_stale_criterion_raises_parent_invariant_in_ranking(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    req_id = await _seed_requirement(title="Stale ranking")
+    async with session_scope() as session:
+        stale_inv = await contracts.create_invariant(
+            session,
+            project=PROJECT,
+            requirement_id=req_id,
+            key="INV-STALE",
+            statement="Parent of the stale criterion.",
+            kind="behavior",
+            risk="medium",
+            sort_order=1,
+        )
+        fresh = await contracts.create_invariant(
+            session,
+            project=PROJECT,
+            requirement_id=req_id,
+            key="INV-FRESH",
+            statement="Fresh evidence, same risk, should rank later.",
+            kind="behavior",
+            risk="medium",
+            sort_order=0,
+        )
+        stale_ac = await contracts.create_criterion(
+            session,
+            project=PROJECT,
+            invariant_id=stale_inv.id,
+            key="AC-STALE",
+            statement="This criterion's evidence is stale.",
+            evidence_kind="test",
+        )
+        await contracts.create_criterion(
+            session,
+            project=PROJECT,
+            invariant_id=fresh.id,
+            key="AC-FRESH",
+            statement="Fresh criterion.",
+            evidence_kind="test",
+        )
+        payload = {
+            "ac_verified": 1,
+            "ac_total": 2,
+            "stale": [{"id": stale_ac.id, "key": "AC-STALE", "invariant_id": stale_inv.id}],
+            "stale_count": 1,
+            "validation": "stale",
+            "review": "failed",
+        }
+        monkeypatch.setattr(
+            briefing,
+            "_load_close_gate",
+            AsyncMock(return_value=close_gate_from_payload(payload)),
+        )
+        pack = await get_task_contract(
+            session,
+            project=PROJECT,
+            task="stale ranking",
+            requirement_ids=[req_id],
+            max_tokens=160,
+            ranked_paths=(),
+        )
+    assert pack.review == "failed"
+    assert "Validation: stale" in pack.text
+    assert "INV-STALE" in pack.text
+    if "INV-FRESH" in pack.text:
+        assert pack.text.index("INV-STALE") < pack.text.index("INV-FRESH")

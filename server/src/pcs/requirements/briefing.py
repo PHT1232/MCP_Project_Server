@@ -39,6 +39,7 @@ from pcs.requirements import contracts
 
 __all__ = [
     "CONTRACT_TOKEN_CAP",
+    "CONTRACT_TOKEN_MIN",
     "INCLUDE_BOTH",
     "INCLUDE_CRITERIA",
     "INCLUDE_INVARIANTS",
@@ -50,7 +51,11 @@ __all__ = [
 ]
 
 # Hard compact budget inside prepare_task's existing total (CONTRACT-COMPLIANCE-PLAN).
+# Accepted get_task_contract budgets are [CONTRACT_TOKEN_MIN, CONTRACT_TOKEN_CAP].
+# The floor is the well-formed CONTRACT/CLOSE GATE/Details skeleton (~56 tokens)
+# plus headroom so every accepted value can satisfy token_estimate <= token_budget.
 CONTRACT_TOKEN_CAP: Final = 500
+CONTRACT_TOKEN_MIN: Final = 80
 MAX_COMPACT_REQUIREMENTS: Final = 3
 DRILL_DOWN_TOOLS: Final[tuple[str, str]] = (
     "get_requirement_contract",
@@ -79,6 +84,16 @@ _LOG_MARKERS: Final[tuple[str, ...]] = ("stdout", "stderr", "traceback (most rec
 
 
 @dataclass(frozen=True)
+class _PayloadLink:
+    """One T12 missing/stale row. Identity is criterion id or (invariant id, key)."""
+
+    criterion_id: str = ""
+    key: str = ""
+    invariant_id: str = ""
+    invariant_key: str = ""
+
+
+@dataclass(frozen=True)
 class CloseGateSummary:
     """Compact close-gate facts. T12 may fill these; T11 never invents evidence."""
 
@@ -91,9 +106,8 @@ class CloseGateSummary:
     blocking_count: int = 0
     blocking: tuple[tuple[str, str], ...] = ()  # (key, sanitized summary)
     stale_count: int = 0
-    # Explicit criterion -> parent invariant keys (never inferred by string prefix).
-    missing_links: tuple[tuple[str, str], ...] = ()
-    stale_links: tuple[tuple[str, str], ...] = ()
+    missing_links: tuple[_PayloadLink, ...] = ()
+    stale_links: tuple[_PayloadLink, ...] = ()
 
     @classmethod
     def unconfigured(cls) -> CloseGateSummary:
@@ -134,6 +148,27 @@ class TaskContractView:
 
 
 @dataclass(frozen=True)
+class _CriterionOwner:
+    criterion_id: str
+    criterion_key: str
+    invariant_id: str
+    invariant_key: str
+    requirement_id: str
+
+
+@dataclass(frozen=True)
+class _CriterionCatalog:
+    """Authoritative T10 ownership for selected requirements (id-scoped)."""
+
+    by_id: dict[str, _CriterionOwner]
+    by_invariant_and_key: dict[tuple[str, str], _CriterionOwner]
+    by_unique_key: dict[str, _CriterionOwner]
+    invariant_ids: frozenset[str]
+    unique_invariant_keys: dict[str, str]  # key -> id only when unique in the selection
+    owners: tuple[_CriterionOwner, ...]
+
+
+@dataclass(frozen=True)
 class _RankedStatement:
     """One compact line candidate in deterministic selection order."""
 
@@ -166,7 +201,12 @@ def _ref_from_entry(entry: EntryView) -> _ReqRef:
 def _clamp_contract_budget(max_tokens: int | None) -> int:
     if max_tokens is None:
         return CONTRACT_TOKEN_CAP
-    return max(1, min(int(max_tokens), CONTRACT_TOKEN_CAP))
+    value = int(max_tokens)
+    if value < CONTRACT_TOKEN_MIN or value > CONTRACT_TOKEN_CAP:
+        raise ValidationError(
+            f"max_tokens must be in [{CONTRACT_TOKEN_MIN}, {CONTRACT_TOKEN_CAP}]; got {value}"
+        )
+    return value
 
 
 def _fit(text: str, max_tokens: int) -> str:
@@ -208,21 +248,23 @@ def _as_str(value: object) -> str | None:
     return None
 
 
-def _parse_links(value: object) -> tuple[tuple[str, str], ...]:
-    """Parse ``[{key, invariant_key}]`` rows; skip raw logs/diffs."""
+def _parse_links(value: object) -> tuple[_PayloadLink, ...]:
+    """Parse T12 ``missing`` / ``stale`` rows. Bare AC keys without an id are ignored."""
     if not isinstance(value, (list, tuple)):
         return ()
-    links: list[tuple[str, str]] = []
+    links: list[_PayloadLink] = []
     for item in value:
         if not isinstance(item, Mapping):
             continue
         row = cast(Mapping[str, object], item)
-        key = (_as_str(row.get("key")) or "").strip()
-        parent = (
-            _as_str(row.get("invariant_key")) or _as_str(row.get("invariant_id")) or ""
-        ).strip()
-        if key and parent:
-            links.append((key[:40], parent[:80]))
+        link = _PayloadLink(
+            criterion_id=(_as_str(row.get("id")) or "").strip(),
+            key=(_as_str(row.get("key")) or "").strip()[:40],
+            invariant_id=(_as_str(row.get("invariant_id")) or "").strip(),
+            invariant_key=(_as_str(row.get("invariant_key")) or "").strip()[:80],
+        )
+        if link.criterion_id or link.invariant_id or (link.key and link.invariant_id):
+            links.append(link)
         if len(links) >= 8:
             break
     return tuple(links)
@@ -231,10 +273,14 @@ def _parse_links(value: object) -> tuple[tuple[str, str], ...]:
 def close_gate_from_payload(payload: object) -> CloseGateSummary:
     """Map a T12 payload onto compact fields; unknown/raw keys are dropped.
 
-    Accepted keys: ``ac_verified``, ``ac_total``, ``missing_keys``,
-    ``missing`` / ``stale`` (lists of ``{key, invariant_key}``),
-    ``validation`` (ok|stale|not-configured), ``review`` (passed|failed|
-    not-configured), ``blocking`` (list of ``{key, summary}``), ``stale_count``.
+    Accepted keys: ``ac_verified``, ``ac_total``, ``missing_keys`` (display
+    only), ``missing`` / ``stale`` (lists of ``{id}`` or
+    ``{id, key, invariant_id}``), ``validation`` (ok|stale|not-configured),
+    ``review`` (passed|failed|not-configured), ``blocking`` (list of
+    ``{key, summary}``), ``stale_count``. T12 stale seam is
+    ``stale: [{"id": "<criterion uuid>"}]``; ``stale_count`` defaults to
+    ``len(stale)``. Criterion identity is the criterion UUID (or invariant
+    UUID + key). Bare keys such as ``AC-1`` are not used for ranking.
     Stdout, diffs, and other evidence bodies are never copied.
     """
     if not isinstance(payload, Mapping):
@@ -269,14 +315,16 @@ def close_gate_from_payload(payload: object) -> CloseGateSummary:
                 blocking.append((key, summary))
             if len(blocking) >= 8:
                 break
-    stale_count = _as_int(data.get("stale_count")) or 0
+    stale_count = _as_int(data.get("stale_count"))
     blocking_count = _as_int(data.get("blocking_count"))
     if blocking_count is None:
         blocking_count = len(blocking)
     missing_links = _parse_links(data.get("missing"))
     stale_links = _parse_links(data.get("stale"))
+    if stale_count is None:
+        stale_count = len(stale_links)
     if missing_links and not missing:
-        missing = [key for key, _ in missing_links]
+        missing = [link.key or link.criterion_id[:8] for link in missing_links if link.key]
     return CloseGateSummary(
         configured=True,
         ac_verified=ac_verified,
@@ -481,30 +529,92 @@ async def _select_requirements(
     return [row[3] for row in relevant[:MAX_COMPACT_REQUIREMENTS]], omitted
 
 
+def _build_criterion_catalog(
+    owners: Sequence[_CriterionOwner],
+    invariants: Sequence[InvariantView],
+) -> _CriterionCatalog:
+    by_id = {row.criterion_id: row for row in owners}
+    by_inv_key = {(row.invariant_id, row.criterion_key): row for row in owners}
+    key_groups: dict[str, list[_CriterionOwner]] = {}
+    for row in owners:
+        if row.criterion_key:
+            key_groups.setdefault(row.criterion_key, []).append(row)
+    by_unique_key = {key: rows[0] for key, rows in key_groups.items() if len(rows) == 1}
+    key_ids: dict[str, set[str]] = {}
+    for inv in invariants:
+        key_ids.setdefault(inv.key, set()).add(inv.id)
+    unique = {key: next(iter(ids)) for key, ids in key_ids.items() if len(ids) == 1}
+    return _CriterionCatalog(
+        by_id=by_id,
+        by_invariant_and_key=by_inv_key,
+        by_unique_key=by_unique_key,
+        invariant_ids=frozenset(inv.id for inv in invariants),
+        unique_invariant_keys=unique,
+        owners=tuple(owners),
+    )
+
+
+def _resolve_parent(link: _PayloadLink, catalog: _CriterionCatalog) -> str | None:
+    """Return the invariant id to boost.
+
+    Authoritative T10 ownership wins. A payload parent is used only when no
+    criterion row can be resolved, and only if it names a known invariant.
+    Conflicting payload parents are ignored.
+    """
+    owner: _CriterionOwner | None = None
+    if link.criterion_id:
+        owner = catalog.by_id.get(link.criterion_id)
+    if owner is None and link.invariant_id and link.key:
+        owner = catalog.by_invariant_and_key.get((link.invariant_id, link.key))
+    if owner is None and link.key:
+        owner = catalog.by_unique_key.get(link.key)
+        if owner is None:
+            agreed = [
+                row
+                for row in catalog.owners
+                if row.criterion_key == link.key
+                and (
+                    (bool(link.invariant_id) and row.invariant_id == link.invariant_id)
+                    or (bool(link.invariant_key) and row.invariant_key == link.invariant_key)
+                )
+            ]
+            if len(agreed) == 1:
+                owner = agreed[0]
+            elif len(agreed) > 1 and link.invariant_id:
+                matched = [row for row in agreed if row.invariant_id == link.invariant_id]
+                if len(matched) == 1:
+                    owner = matched[0]
+    if owner is not None:
+        return owner.invariant_id
+    if link.key and any(row.criterion_key == link.key for row in catalog.owners):
+        # Known T10 key without unique/exact parent agreement — ignore payload.
+        return None
+    if link.invariant_id and link.invariant_id in catalog.invariant_ids:
+        return link.invariant_id
+    if link.invariant_key:
+        unique = catalog.unique_invariant_keys.get(link.invariant_key)
+        if unique:
+            return unique
+    return None
+
+
+def _boosted_parents(links: Sequence[_PayloadLink], catalog: _CriterionCatalog) -> set[str]:
+    parents: set[str] = set()
+    for link in links:
+        parent = _resolve_parent(link, catalog)
+        if parent:
+            parents.add(parent)
+    return parents
+
+
 def _parent_flags(
     inv: InvariantView,
-    gate: CloseGateSummary,
-    ac_to_inv: Mapping[str, str],
+    *,
+    missing_parents: set[str],
+    stale_parents: set[str],
 ) -> tuple[bool, bool]:
-    """Map missing/stale criterion keys onto the parent invariant via T10 ids."""
-    missing_parents = {parent for _, parent in gate.missing_links}
-    stale_parents = {parent for _, parent in gate.stale_links}
-    for key, parent in gate.missing_links:
-        mapped = ac_to_inv.get(key)
-        if mapped:
-            missing_parents.add(mapped)
-        missing_parents.add(parent)
-    for key in gate.missing_keys:
-        mapped = ac_to_inv.get(key)
-        if mapped:
-            missing_parents.add(mapped)
-    for key, parent in gate.stale_links:
-        mapped = ac_to_inv.get(key)
-        if mapped:
-            stale_parents.add(mapped)
-        stale_parents.add(parent)
-    missing = inv.key in missing_parents or inv.id in missing_parents
-    stale = inv.key in stale_parents or inv.id in stale_parents
+    missing = inv.id in missing_parents
+    stale = inv.id in stale_parents
     return missing, stale
 
 
@@ -532,9 +642,11 @@ def _compact_line(inv: InvariantView) -> str:
 def _rank_statements(
     invariants: Sequence[InvariantView],
     gate: CloseGateSummary,
-    ac_to_inv: Mapping[str, str],
+    catalog: _CriterionCatalog,
 ) -> list[_RankedStatement]:
     blocking_keys = {key for key, _ in gate.blocking}
+    missing_parents = _boosted_parents(gate.missing_links, catalog)
+    stale_parents = _boosted_parents(gate.stale_links, catalog)
     ranked: list[_RankedStatement] = []
     for key, summary in gate.blocking:
         ranked.append(
@@ -545,7 +657,9 @@ def _rank_statements(
             )
         )
     for inv in invariants:
-        missing, stale = _parent_flags(inv, gate, ac_to_inv)
+        missing, stale = _parent_flags(
+            inv, missing_parents=missing_parents, stale_parents=stale_parents
+        )
         line = _compact_line(inv)
         kind = "must_not" if inv.kind == INVARIANT_KIND_FORBIDDEN_PATH else "must"
         ranked.append(
@@ -622,8 +736,7 @@ def _render_compact(
     close_block = _format_close_gate(gate)
     fallback = _structured_fallback(gate, len(ranked))
     if estimate_tokens(fallback) > max_tokens:
-        # Safe minimum: keep a well-formed document rather than slicing headers.
-        return fallback, len(ranked), True
+        fallback = _structured_fallback(CloseGateSummary.unconfigured(), len(ranked))
 
     included: list[_RankedStatement] = []
 
@@ -657,6 +770,8 @@ def _render_compact(
     if not included:
         return fallback, len(ranked), True
     text = _assemble_compact(included, omitted, close_block)
+    if estimate_tokens(text) > max_tokens:
+        return fallback, len(ranked), True
     return text, omitted, omitted > 0
 
 
@@ -712,7 +827,8 @@ async def get_task_contract(
     returns empty rather than unrelated contracts. Normal output is 1-3
     requirements. Unused budget is not padded. Empty/unconfigured contracts
     return an empty string (0 tokens) so ``prepare_task`` keeps its current
-    split.
+    split. ``max_tokens`` must be in
+    ``[CONTRACT_TOKEN_MIN, CONTRACT_TOKEN_CAP]`` (80-500).
     """
     if not task.strip():
         raise ValueError("task description must not be empty")
@@ -747,21 +863,29 @@ async def get_task_contract(
         )
 
     invariants: list[InvariantView] = []
-    ac_to_inv: dict[str, str] = {}
+    owners: list[_CriterionOwner] = []
     for req in selected:
         invs = await contracts.list_invariants(
             session, project=project, requirement_id=req.entry_id
         )
         invariants.extend(invs)
-        by_id = {row.id: row.key for row in invs}
+        by_id = {row.id: row for row in invs}
         criteria = await contracts.list_criteria(
             session, project=project, requirement_id=req.entry_id
         )
         for criterion in criteria:
-            parent = by_id.get(criterion.invariant_id, "")
-            if parent:
-                ac_to_inv[criterion.key] = parent
-                ac_to_inv[criterion.id] = parent
+            parent = by_id.get(criterion.invariant_id)
+            if parent is None:
+                continue
+            owners.append(
+                _CriterionOwner(
+                    criterion_id=criterion.id,
+                    criterion_key=criterion.key,
+                    invariant_id=parent.id,
+                    invariant_key=parent.key,
+                    requirement_id=req.entry_id,
+                )
+            )
     if not invariants:
         return TaskContractView(
             text="",
@@ -778,7 +902,8 @@ async def get_task_contract(
     gate = await _load_close_gate(
         session, project=project, requirement_ids=[r.entry_id for r in selected]
     )
-    ranked = _rank_statements(invariants, gate, ac_to_inv)
+    catalog = _build_criterion_catalog(owners, invariants)
+    ranked = _rank_statements(invariants, gate, catalog)
     text, omitted_invs, truncated = _render_compact(ranked, gate, max_tokens=budget)
     return TaskContractView(
         text=text,

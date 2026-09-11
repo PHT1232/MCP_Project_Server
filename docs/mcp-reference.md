@@ -52,7 +52,7 @@ For focus replacement semantics, prefer `set_current_focus` over `add_focus`.
 | `resolve_requirement` | `entry_id`, `project=null` | Resolves lifecycle state and writes through. This differs from setting requirement status to `done`. |
 | `sync_requirements` | `project=null` | Re-parses the file and returns created, updated, archived, written-back, reconciliation, error, and count details. |
 | `get_requirement_contract` | `requirement_id`, `project=null`, `include="both"` | Verbatim invariants and/or criteria for one requirement. `include` is `invariants`, `criteria`, or `both`. |
-| `get_task_contract` | `task`, `project=null`, `requirement_ids=null`, `max_tokens=500` | Compact relevant contract + close-gate summary, capped at 500 estimated tokens. T12 evidence absent → `review: not-configured`. |
+| `get_task_contract` | `task`, `project=null`, `requirement_ids=null`, `max_tokens=500` | Compact relevant contract + close-gate summary. `max_tokens` is `80`–`500`; below 80 is rejected so `token_estimate <= token_budget`. T12 evidence absent → `review: not-configured`. T12 `missing`/`stale` rows identify criteria by `id` (or `invariant_id` + `key`). |
 
 Requirement write responses may include `requirements_file` with `path`, `written`, `errors`, and `reconciliations`.
 

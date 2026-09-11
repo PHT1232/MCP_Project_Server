@@ -39,8 +39,8 @@ Do not edit DB models/migrations, requirement status transitions, evidence write
 - [x] Overflow reports omitted counts and drill-down pointers — `test_overflow_reports_omitted_counts_and_drill_down_pointers`
 - [x] Full invariant/criterion detail is available only through explicit drill-down — `test_full_detail_available_only_through_explicit_drill_down`
 - [x] Responses contain no raw command output or diff bodies — `test_responses_contain_no_raw_command_output_or_diff_bodies`
-- [x] Every acceptance item has a regression test (plus unrelated-requirement exclusion, T12-absent `review: not-configured`, MCP registration)
-- [x] Focused tests and `just check` pass — `uv run pytest -k 'task_contract or prepare_task'` 12 passed; `just check` green (163 passed, 1 skipped)
+- [x] Every acceptance item has a regression test (plus no-match emptiness, criterion-to-invariant mapping, global overflow eviction, structured fallback, actual code token floor, narrow ImportError, explicit-ID dedupe/done, project isolation, MCP audit/schema/errors)
+- [x] Focused tests and `just check` pass — `uv run pytest -k 'task_contract or prepare_task'` 21 passed; `just check` green (172 passed, 1 skipped)
 - [x] Handoff documents exact budget accounting and relevance rules
 
 ## Verification
@@ -78,9 +78,9 @@ Empty/unconfigured contracts return `text=""` and `contract_tokens=0`, so the sp
 
 ### Relevance and packing
 
-- **Requirements (1-3):** explicit `requirement_ids` first (entry ids). Otherwise open, non-`done` requirements that have active invariants. Match score is linked-files ∩ retrieval paths / focus paths / task text, plus `req_key`/title token overlap. If any match score is `> 0`, unmatched (unrelated) requirements are dropped. If nothing matches, fall back to contracted requirements, still capped at 3.
-- **Statements:** blocking-violation summaries (T12) → `forbidden-path` → high-risk → missing required criteria → stale evidence → remaining by risk/`sort_order`/`key`. Later statements are omitted whole rather than truncated; overflow is `+N more; call get_requirement_contract / get_requirement_evidence`.
-- **T12 absent:** `review: not-configured` (also AC/Validation). Optional seam: `pcs.requirements.evidence.summarize_close_gate(session, *, project, requirement_ids) -> Mapping`. Only compact keys are copied (`ac_verified`, `ac_total`, `missing_keys`, `validation`, `review`, `blocking`, `stale_count`). Stdout/diffs are dropped or replaced with `(omitted)`.
+- **Requirements (1-3):** explicit `requirement_ids` first (deduplicated, first-seen order, including `done`). Otherwise open, non-`done` requirements that have active invariants. Match score is linked-files ∩ retrieval paths / focus paths / task text, plus `req_key`/title token overlap. No-match auto-select returns empty — never a fallback dump of unrelated contracts.
+- **Statements:** blocking-violation summaries (T12) → `forbidden-path` → high-risk → missing required criteria → stale evidence → remaining by risk/`sort_order`/`key`. Missing/stale criteria map to parents via T10 `invariant_id` plus optional `{key, invariant_key}` links (never string-prefix matching). Overflow evicts the globally lowest-ranked included line. Documents are never character-sliced; a budget below the skeleton returns a structured fallback that keeps `CONTRACT` / `CLOSE GATE` / `Details` intact.
+- **T12 absent:** `review: not-configured` (also AC/Validation). Optional seam: `pcs.requirements.evidence.summarize_close_gate(session, *, project, requirement_ids) -> Mapping`. Only compact keys are copied (`ac_verified`, `ac_total`, `missing_keys`, `missing`/`stale` links, `validation`, `review`, `blocking`, `stale_count`). A missing evidence *module* is not-configured; any other `ModuleNotFoundError` (broken T12 import) propagates. Stdout/diffs are dropped or replaced with `(omitted)`.
 - **Drill-down:** `get_requirement_contract(..., include=invariants|criteria|both)` returns verbatim T10 views. Compact output never embeds full criterion statements or evidence bodies.
 
 ### Files
@@ -101,6 +101,18 @@ DB models/migrations, `set_requirement_status` gating, evidence writes, frontend
 
 T12: implement `summarize_close_gate` and `get_requirement_evidence`. T11 already points at those names and will consume the seam without a follow-up edit if the payload keys match. T13 must not start.
 
+### Review fixes (post-f3ca46c)
+
+- No-match relevance is empty (`test_no_match_relevance_returns_empty_contract`).
+- Criterion-to-invariant priority uses T10 ids (`test_missing_criterion_maps_to_parent_invariant_not_key_prefix`).
+- Global overflow eviction + intact headings (`test_global_overflow_eviction_keeps_highest_rank_and_headers`).
+- Structured fallback for tiny budgets (`test_tiny_budget_uses_structured_fallback_not_sliced_headers`).
+- Actual `code_tokens >= code_floor` with a bulky index (`test_fr22a_code_floor_holds_when_code_chunks_exist`).
+- Narrow `ModuleNotFoundError` on `pcs.requirements.evidence` only (`test_broken_t12_import_is_not_hidden_as_not_configured`).
+- Explicit-ID dedupe + `done` inclusion (`test_explicit_ids_are_deduped_and_done_ids_are_included`).
+- Project isolation (`test_contract_tools_are_project_isolated`).
+- MCP schema/audit/errors (`test_mcp_contract_tools_audit_schema_and_errors`).
+
 ### Focused tests
 
-`cd server && uv run pytest -k 'task_contract or prepare_task'` → 12 passed (11 new T11 tests + existing AC19). `just check` green: 163 passed / 1 skipped (server), 56 vitest, ruff/mypy/eslint/tsc/vite build/compose-lint.
+`cd server && uv run pytest -k 'task_contract or prepare_task'` → 21 passed. `just check` green: 172 passed / 1 skipped (server), 56 vitest. Status stays **in progress** pending re-review; not marking done.

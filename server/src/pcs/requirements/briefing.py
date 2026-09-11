@@ -91,6 +91,9 @@ class CloseGateSummary:
     blocking_count: int = 0
     blocking: tuple[tuple[str, str], ...] = ()  # (key, sanitized summary)
     stale_count: int = 0
+    # Explicit criterion -> parent invariant keys (never inferred by string prefix).
+    missing_links: tuple[tuple[str, str], ...] = ()
+    stale_links: tuple[tuple[str, str], ...] = ()
 
     @classmethod
     def unconfigured(cls) -> CloseGateSummary:
@@ -205,10 +208,31 @@ def _as_str(value: object) -> str | None:
     return None
 
 
+def _parse_links(value: object) -> tuple[tuple[str, str], ...]:
+    """Parse ``[{key, invariant_key}]`` rows; skip raw logs/diffs."""
+    if not isinstance(value, (list, tuple)):
+        return ()
+    links: list[tuple[str, str]] = []
+    for item in value:
+        if not isinstance(item, Mapping):
+            continue
+        row = cast(Mapping[str, object], item)
+        key = (_as_str(row.get("key")) or "").strip()
+        parent = (
+            _as_str(row.get("invariant_key")) or _as_str(row.get("invariant_id")) or ""
+        ).strip()
+        if key and parent:
+            links.append((key[:40], parent[:80]))
+        if len(links) >= 8:
+            break
+    return tuple(links)
+
+
 def close_gate_from_payload(payload: object) -> CloseGateSummary:
     """Map a T12 payload onto compact fields; unknown/raw keys are dropped.
 
     Accepted keys: ``ac_verified``, ``ac_total``, ``missing_keys``,
+    ``missing`` / ``stale`` (lists of ``{key, invariant_key}``),
     ``validation`` (ok|stale|not-configured), ``review`` (passed|failed|
     not-configured), ``blocking`` (list of ``{key, summary}``), ``stale_count``.
     Stdout, diffs, and other evidence bodies are never copied.
@@ -249,6 +273,10 @@ def close_gate_from_payload(payload: object) -> CloseGateSummary:
     blocking_count = _as_int(data.get("blocking_count"))
     if blocking_count is None:
         blocking_count = len(blocking)
+    missing_links = _parse_links(data.get("missing"))
+    stale_links = _parse_links(data.get("stale"))
+    if missing_links and not missing:
+        missing = [key for key, _ in missing_links]
     return CloseGateSummary(
         configured=True,
         ac_verified=ac_verified,
@@ -259,7 +287,14 @@ def close_gate_from_payload(payload: object) -> CloseGateSummary:
         blocking_count=blocking_count,
         blocking=tuple(blocking),
         stale_count=stale_count,
+        missing_links=missing_links,
+        stale_links=stale_links,
     )
+
+
+def _is_missing_evidence_module(exc: ModuleNotFoundError) -> bool:
+    """True only when ``pcs.requirements.evidence`` itself is absent (T11)."""
+    return exc.name == "pcs.requirements.evidence"
 
 
 async def _load_close_gate(
@@ -267,8 +302,10 @@ async def _load_close_gate(
 ) -> CloseGateSummary:
     try:
         evidence_mod = importlib.import_module("pcs.requirements.evidence")
-    except ImportError:
-        return CloseGateSummary.unconfigured()
+    except ModuleNotFoundError as exc:
+        if _is_missing_evidence_module(exc):
+            return CloseGateSummary.unconfigured()
+        raise
     loader = getattr(evidence_mod, "summarize_close_gate", None)
     if not callable(loader):
         return CloseGateSummary.unconfigured()
@@ -386,13 +423,16 @@ async def _select_requirements(
 ) -> tuple[list[_ReqRef], int]:
     if requirement_ids:
         selected: list[_ReqRef] = []
+        seen: set[str] = set()
         for raw in requirement_ids:
             rid = raw.strip()
-            if not rid:
+            if not rid or rid in seen:
                 continue
+            seen.add(rid)
             entry = await get_entry(session, project=project, entry_id=rid)
             if entry.section != SECTION_REQUIREMENTS:
                 raise ContractNotFoundError("requirement", rid, project)
+            # Explicit IDs include done requirements; auto-select does not.
             selected.append(_ref_from_entry(entry))
         omitted = max(0, len(selected) - MAX_COMPACT_REQUIREMENTS)
         return selected[:MAX_COMPACT_REQUIREMENTS], omitted
@@ -432,11 +472,40 @@ async def _select_requirements(
     if not with_contracts:
         return [], 0
 
-    with_contracts.sort(key=lambda row: (-row[0], -row[1], row[2], row[3].entry_id))
+    with_contracts.sort(key=lambda row: (-row[0], -row[1], row[2], row[3].title, row[3].entry_id))
     relevant = [row for row in with_contracts if row[0] > 0]
-    pool = relevant or with_contracts
-    omitted = max(0, len(pool) - MAX_COMPACT_REQUIREMENTS)
-    return [row[3] for row in pool[:MAX_COMPACT_REQUIREMENTS]], omitted
+    if not relevant:
+        # No relevance signal: never dump unrelated contracted requirements.
+        return [], 0
+    omitted = max(0, len(relevant) - MAX_COMPACT_REQUIREMENTS)
+    return [row[3] for row in relevant[:MAX_COMPACT_REQUIREMENTS]], omitted
+
+
+def _parent_flags(
+    inv: InvariantView,
+    gate: CloseGateSummary,
+    ac_to_inv: Mapping[str, str],
+) -> tuple[bool, bool]:
+    """Map missing/stale criterion keys onto the parent invariant via T10 ids."""
+    missing_parents = {parent for _, parent in gate.missing_links}
+    stale_parents = {parent for _, parent in gate.stale_links}
+    for key, parent in gate.missing_links:
+        mapped = ac_to_inv.get(key)
+        if mapped:
+            missing_parents.add(mapped)
+        missing_parents.add(parent)
+    for key in gate.missing_keys:
+        mapped = ac_to_inv.get(key)
+        if mapped:
+            missing_parents.add(mapped)
+    for key, parent in gate.stale_links:
+        mapped = ac_to_inv.get(key)
+        if mapped:
+            stale_parents.add(mapped)
+        stale_parents.add(parent)
+    missing = inv.key in missing_parents or inv.id in missing_parents
+    stale = inv.key in stale_parents or inv.id in stale_parents
+    return missing, stale
 
 
 def _statement_rank(
@@ -463,10 +532,9 @@ def _compact_line(inv: InvariantView) -> str:
 def _rank_statements(
     invariants: Sequence[InvariantView],
     gate: CloseGateSummary,
+    ac_to_inv: Mapping[str, str],
 ) -> list[_RankedStatement]:
     blocking_keys = {key for key, _ in gate.blocking}
-    missing_keys = set(gate.missing_keys)
-    stale = bool(gate.stale_count) or gate.validation == "stale"
     ranked: list[_RankedStatement] = []
     for key, summary in gate.blocking:
         ranked.append(
@@ -477,6 +545,7 @@ def _rank_statements(
             )
         )
     for inv in invariants:
+        missing, stale = _parent_flags(inv, gate, ac_to_inv)
         line = _compact_line(inv)
         kind = "must_not" if inv.kind == INVARIANT_KIND_FORBIDDEN_PATH else "must"
         ranked.append(
@@ -484,9 +553,7 @@ def _rank_statements(
                 rank=_statement_rank(
                     inv,
                     blocking_keys=blocking_keys,
-                    missing_for_invariant=any(
-                        mk.startswith(inv.key) or mk == inv.key for mk in missing_keys
-                    ),
+                    missing_for_invariant=missing,
                     stale=stale,
                 ),
                 kind=kind,
@@ -503,72 +570,25 @@ def _join_clause(label: str, parts: Sequence[str]) -> str | None:
     return f"{label}: " + "; ".join(parts)
 
 
-def _render_compact(
-    ranked: Sequence[_RankedStatement],
-    gate: CloseGateSummary,
-    *,
-    max_tokens: int,
-) -> tuple[str, int, bool]:
-    close_block = _format_close_gate(gate)
-    # Always keep the close-gate; shrink contract body first.
-    close_tokens = estimate_tokens(close_block)
-    body_budget = max(0, max_tokens - close_tokens - estimate_tokens("CONTRACT\n\n"))
+def _overflow_line(omitted: int) -> str:
+    return f"+{omitted} more; call get_requirement_contract / get_requirement_evidence"
 
+
+def _assemble_compact(
+    included: Sequence[_RankedStatement],
+    omitted: int,
+    close_block: str,
+) -> str:
     must: list[str] = []
     must_not: list[str] = []
     violations: list[str] = []
-    omitted = 0
-    used = 0
-
-    def _try_add(target: list[str], line: str) -> bool:
-        nonlocal used, omitted
-        first_item = not (must or must_not or violations)
-        clause_kind = (
-            "Violations" if target is violations else "Must not" if target is must_not else "Must"
-        )
-        probe_full = [*target, line]
-        extra_full = estimate_tokens(_join_clause(clause_kind, probe_full) or "") - estimate_tokens(
-            _join_clause(clause_kind, target) or ""
-        )
-        if used + extra_full <= body_budget:
-            target.append(line)
-            used += extra_full
-            return True
-        if not first_item:
-            omitted += 1
-            return False
-        fitted = _fit(line, max(1, body_budget))
-        extra = estimate_tokens(_join_clause(clause_kind, [fitted]) or "")
-        if not fitted or extra > body_budget:
-            omitted += 1
-            return False
-        target.append(fitted)
-        used += extra
-        return True
-
-    for item in ranked:
+    for item in included:
         if item.kind == "must_not":
-            bucket = must_not
+            must_not.append(item.line)
         elif item.kind == "violation":
-            bucket = violations
+            violations.append(item.line)
         else:
-            bucket = must
-        _try_add(bucket, item.line)
-
-    overflow = ""
-    if omitted:
-        overflow = f"+{omitted} more; call get_requirement_contract / get_requirement_evidence"
-        if used + estimate_tokens(overflow) > body_budget and (must or must_not or violations):
-            # Drop the last added line to make room for the overflow pointer.
-            for bucket in (must, must_not, violations):
-                if bucket:
-                    bucket.pop()
-                    omitted += 1
-                    overflow = (
-                        f"+{omitted} more; call get_requirement_contract / get_requirement_evidence"
-                    )
-                    break
-
+            must.append(item.line)
     contract_lines = ["CONTRACT"]
     for clause in (
         _join_clause("Violations", violations),
@@ -577,12 +597,67 @@ def _render_compact(
     ):
         if clause:
             contract_lines.append(clause)
-    if overflow:
-        contract_lines.append(overflow)
-    text = "\n".join(contract_lines) + "\n\n" + close_block
-    if estimate_tokens(text) > max_tokens:
-        text = _fit(text, max_tokens)
-    return text, omitted, omitted > 0 or estimate_tokens(text) >= max_tokens
+    if omitted:
+        contract_lines.append(_overflow_line(omitted))
+    elif not (must or must_not or violations):
+        contract_lines.append("(omitted; call get_requirement_contract / get_requirement_evidence)")
+    return "\n".join(contract_lines) + "\n\n" + close_block
+
+
+def _structured_fallback(gate: CloseGateSummary, omitted: int) -> str:
+    """Complete compact document when the budget cannot hold ranked lines.
+
+    Never character-slices headings or drill-down pointers.
+    """
+    count = max(1, omitted)
+    return _assemble_compact((), count, _format_close_gate(gate))
+
+
+def _render_compact(
+    ranked: Sequence[_RankedStatement],
+    gate: CloseGateSummary,
+    *,
+    max_tokens: int,
+) -> tuple[str, int, bool]:
+    close_block = _format_close_gate(gate)
+    fallback = _structured_fallback(gate, len(ranked))
+    if estimate_tokens(fallback) > max_tokens:
+        # Safe minimum: keep a well-formed document rather than slicing headers.
+        return fallback, len(ranked), True
+
+    included: list[_RankedStatement] = []
+
+    def _fits(candidate: Sequence[_RankedStatement], omitted: int) -> bool:
+        return estimate_tokens(_assemble_compact(candidate, omitted, close_block)) <= max_tokens
+
+    for item in ranked:
+        probe = [*included, item]
+        omitted_if = len(ranked) - len(probe)
+        if _fits(probe, omitted_if):
+            included.append(item)
+            continue
+        if included:
+            break
+        fitted_item: _RankedStatement | None = None
+        for tokens in range(max_tokens, 0, -1):
+            fitted = _fit(item.line, tokens)
+            candidate = _RankedStatement(rank=item.rank, kind=item.kind, line=fitted)
+            if fitted and _fits([candidate], len(ranked) - 1):
+                fitted_item = candidate
+                break
+        if fitted_item is not None:
+            included.append(fitted_item)
+        break
+
+    omitted = len(ranked) - len(included)
+    # Evict the globally lowest-ranked included line until overflow fits.
+    while included and not _fits(included, omitted):
+        included.pop()
+        omitted += 1
+    if not included:
+        return fallback, len(ranked), True
+    text = _assemble_compact(included, omitted, close_block)
+    return text, omitted, omitted > 0
 
 
 async def get_requirement_contract(
@@ -632,10 +707,12 @@ async def get_task_contract(
 ) -> TaskContractView:
     """Relevant active contract statements + compact close-gate (T11).
 
-    Selection: explicit IDs first, then linked files / current focus / retrieval
-    paths. Normal output is 1-3 requirements. Unused budget is not padded.
-    Empty/unconfigured contracts return an empty string (0 tokens) so
-    ``prepare_task`` keeps its current split.
+    Selection: explicit IDs first (deduplicated, including ``done``), then
+    linked files / current focus / retrieval paths. No-match auto-select
+    returns empty rather than unrelated contracts. Normal output is 1-3
+    requirements. Unused budget is not padded. Empty/unconfigured contracts
+    return an empty string (0 tokens) so ``prepare_task`` keeps its current
+    split.
     """
     if not task.strip():
         raise ValueError("task description must not be empty")
@@ -670,10 +747,21 @@ async def get_task_contract(
         )
 
     invariants: list[InvariantView] = []
+    ac_to_inv: dict[str, str] = {}
     for req in selected:
-        invariants.extend(
-            await contracts.list_invariants(session, project=project, requirement_id=req.entry_id)
+        invs = await contracts.list_invariants(
+            session, project=project, requirement_id=req.entry_id
         )
+        invariants.extend(invs)
+        by_id = {row.id: row.key for row in invs}
+        criteria = await contracts.list_criteria(
+            session, project=project, requirement_id=req.entry_id
+        )
+        for criterion in criteria:
+            parent = by_id.get(criterion.invariant_id, "")
+            if parent:
+                ac_to_inv[criterion.key] = parent
+                ac_to_inv[criterion.id] = parent
     if not invariants:
         return TaskContractView(
             text="",
@@ -690,7 +778,7 @@ async def get_task_contract(
     gate = await _load_close_gate(
         session, project=project, requirement_ids=[r.entry_id for r in selected]
     )
-    ranked = _rank_statements(invariants, gate)
+    ranked = _rank_statements(invariants, gate, ac_to_inv)
     text, omitted_invs, truncated = _render_compact(ranked, gate, max_tokens=budget)
     return TaskContractView(
         text=text,

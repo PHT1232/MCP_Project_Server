@@ -3,14 +3,20 @@
 ``projects`` holds per-project budgets and expiry policy. ``context_entries`` is
 the verbatim store (never replaced by a summary). ``context_entry_revisions`` is
 the immutable audit log — nothing is hard-deleted.
+
+T10 adds ``requirement_invariants``, ``acceptance_criteria``, and append-only
+``requirement_contract_revisions``. Contract rows are store-owned and are not
+written to ``.project-context/requirements.md``.
 """
 
 from __future__ import annotations
 
 import uuid
 from datetime import datetime
+from typing import Any
 
 from sqlalchemy import (
+    Boolean,
     CheckConstraint,
     DateTime,
     ForeignKey,
@@ -26,7 +32,15 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from pcs.db.base import Base
 
-__all__ = ["Base", "ContextEntry", "ContextEntryRevision", "Project"]
+__all__ = [
+    "AcceptanceCriterion",
+    "Base",
+    "ContextEntry",
+    "ContextEntryRevision",
+    "Project",
+    "RequirementContractRevision",
+    "RequirementInvariant",
+]
 
 
 def _new_id() -> str:
@@ -148,3 +162,146 @@ class ContextEntryRevision(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     entry: Mapped[ContextEntry] = relationship(back_populates="revisions")
+
+
+class RequirementInvariant(Base):
+    """One non-negotiable invariant on a requirement (T10). Soft-deleted, never hard-deleted."""
+
+    __tablename__ = "requirement_invariants"
+    __table_args__ = (
+        CheckConstraint(
+            "kind IN ('behavior', 'architecture', 'data-boundary', "
+            "'forbidden-path', 'integration', 'manual')",
+            name="ck_requirement_invariants_kind",
+        ),
+        CheckConstraint(
+            "risk IN ('low', 'medium', 'high')",
+            name="ck_requirement_invariants_risk",
+        ),
+        CheckConstraint(
+            "status IN ('open', 'deleted')",
+            name="ck_requirement_invariants_status",
+        ),
+        Index(
+            "uq_requirement_invariants_requirement_key",
+            "requirement_id",
+            "key",
+            unique=True,
+        ),
+        Index("ix_requirement_invariants_project_id", "project_id"),
+        Index("ix_requirement_invariants_requirement_id", "requirement_id"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_new_id)
+    project_id: Mapped[str] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), nullable=False
+    )
+    requirement_id: Mapped[str] = mapped_column(
+        ForeignKey("context_entries.id", ondelete="CASCADE"), nullable=False
+    )
+    key: Mapped[str] = mapped_column(String(64), nullable=False)
+    statement: Mapped[str] = mapped_column(Text, nullable=False)
+    kind: Mapped[str] = mapped_column(String(32), nullable=False)
+    risk: Mapped[str] = mapped_column(String(16), nullable=False)
+    sort_order: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    status: Mapped[str] = mapped_column(String(16), nullable=False, server_default="open")
+    author: Mapped[str] = mapped_column(String(120), nullable=False, server_default="agent")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class AcceptanceCriterion(Base):
+    """One acceptance criterion linked to an invariant (T10). Soft-deleted, never hard-deleted."""
+
+    __tablename__ = "acceptance_criteria"
+    __table_args__ = (
+        CheckConstraint(
+            "evidence_kind IN ('test', 'command', 'review', 'manual', 'file')",
+            name="ck_acceptance_criteria_evidence_kind",
+        ),
+        CheckConstraint(
+            "independent_review IN ('not-required', 'required')",
+            name="ck_acceptance_criteria_independent_review",
+        ),
+        CheckConstraint(
+            "status IN ('open', 'deleted')",
+            name="ck_acceptance_criteria_status",
+        ),
+        Index(
+            "uq_acceptance_criteria_invariant_key",
+            "invariant_id",
+            "key",
+            unique=True,
+        ),
+        Index("ix_acceptance_criteria_project_id", "project_id"),
+        Index("ix_acceptance_criteria_invariant_id", "invariant_id"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_new_id)
+    project_id: Mapped[str] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), nullable=False
+    )
+    invariant_id: Mapped[str] = mapped_column(
+        ForeignKey("requirement_invariants.id", ondelete="CASCADE"), nullable=False
+    )
+    key: Mapped[str] = mapped_column(String(64), nullable=False)
+    statement: Mapped[str] = mapped_column(Text, nullable=False)
+    evidence_kind: Mapped[str] = mapped_column(String(32), nullable=False)
+    required: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("true"))
+    independent_review: Mapped[str] = mapped_column(
+        String(16), nullable=False, server_default="not-required"
+    )
+    sort_order: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    status: Mapped[str] = mapped_column(String(16), nullable=False, server_default="open")
+    author: Mapped[str] = mapped_column(String(120), nullable=False, server_default="agent")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class RequirementContractRevision(Base):
+    """Append-only audit row for one contract create/update/delete (T10)."""
+
+    __tablename__ = "requirement_contract_revisions"
+    __table_args__ = (
+        CheckConstraint(
+            "entity_kind IN ('invariant', 'criterion')",
+            name="ck_requirement_contract_revisions_entity_kind",
+        ),
+        CheckConstraint(
+            "action IN ('create', 'update', 'delete')",
+            name="ck_requirement_contract_revisions_action",
+        ),
+        Index(
+            "ix_requirement_contract_revisions_requirement_created",
+            "requirement_id",
+            "created_at",
+        ),
+        Index("ix_requirement_contract_revisions_project_id", "project_id"),
+        Index("ix_requirement_contract_revisions_entity_id", "entity_id"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_new_id)
+    project_id: Mapped[str] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), nullable=False
+    )
+    requirement_id: Mapped[str] = mapped_column(
+        ForeignKey("context_entries.id", ondelete="CASCADE"), nullable=False
+    )
+    entity_kind: Mapped[str] = mapped_column(String(16), nullable=False)
+    entity_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    action: Mapped[str] = mapped_column(String(16), nullable=False)
+    snapshot: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, nullable=False, server_default=text("'{}'::jsonb")
+    )
+    author: Mapped[str] = mapped_column(String(120), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )

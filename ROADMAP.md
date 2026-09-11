@@ -91,6 +91,19 @@ files get fleshed out against the real skeleton structure at that point.
 |------|-------|
 | [T09](tasks/T09-integration.md) | End-to-end tests mapping every `AC1`–`AC27`, perf checks (NFR1/2/9/10), security pass (bind surface, SQL/path-traversal on mounted repos), `docs/` + README polish |
 
+### Phase 3 — Contract-driven completion
+
+Implementation contract: [tasks/CONTRACT-COMPLIANCE-PLAN.md](tasks/CONTRACT-COMPLIANCE-PLAN.md).
+
+| Task | Scope | Depends on |
+|------|-------|------------|
+| [T10](tasks/T10-contract-model.md) | Normalized requirement invariants and acceptance criteria, immutable history, migration, compatibility | T09 |
+| [T11](tasks/T11-compact-contract-retrieval.md) | Progressive-disclosure contract tools and a ≤500-token contract allocation inside `prepare_task` | T10 |
+| [T12](tasks/T12-evidence-close-gate.md) | Compact evidence ledger, freshness, violations, independent-review policy, deterministic `done` gate | T10 |
+| [T13](tasks/T13-compliance-dashboard.md) | Compliance review MCP/HTTP APIs, verification dashboard, and documented pre-close workflow | T11, T12 |
+
+T11 and T12 may run in parallel after T10 merges. T13 integrates both branches after they merge.
+
 ---
 
 ## Status
@@ -107,5 +120,9 @@ files get fleshed out against the real skeleton structure at that point.
 | T06 | `task/T06-frontend-shell` | **merged** — [reviews/T06.md](reviews/T06.md) |
 | T07 | `task/T07-frontend-codemap` | **merged** (`6056ec8`) |
 | T09 | `task/T09-integration` | **in review** |
+| T10 | `task/T10-contract-model` | **in review** |
+| T11 | `task/T11-compact-contract-retrieval` | **not started** |
+| T12 | `task/T12-evidence-close-gate` | **not started** |
+| T13 | `task/T13-compliance-dashboard` | **not started** |
 
 Update this table as tasks move: `not started → in progress → in review → changes requested → merged`.

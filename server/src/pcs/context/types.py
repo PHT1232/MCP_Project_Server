@@ -63,6 +63,60 @@ REQUIREMENT_STATUSES: Final[frozenset[str]] = frozenset(
     {REQ_NOT_STARTED, REQ_IN_PROGRESS, REQ_BLOCKED, REQ_DONE}
 )
 
+# T10 — requirement contract model (invariants + acceptance criteria).
+INVARIANT_KIND_BEHAVIOR: Final = "behavior"
+INVARIANT_KIND_ARCHITECTURE: Final = "architecture"
+INVARIANT_KIND_DATA_BOUNDARY: Final = "data-boundary"
+INVARIANT_KIND_FORBIDDEN_PATH: Final = "forbidden-path"
+INVARIANT_KIND_INTEGRATION: Final = "integration"
+INVARIANT_KIND_MANUAL: Final = "manual"
+INVARIANT_KINDS: Final[frozenset[str]] = frozenset(
+    {
+        INVARIANT_KIND_BEHAVIOR,
+        INVARIANT_KIND_ARCHITECTURE,
+        INVARIANT_KIND_DATA_BOUNDARY,
+        INVARIANT_KIND_FORBIDDEN_PATH,
+        INVARIANT_KIND_INTEGRATION,
+        INVARIANT_KIND_MANUAL,
+    }
+)
+
+RISK_LOW: Final = "low"
+RISK_MEDIUM: Final = "medium"
+RISK_HIGH: Final = "high"
+RISK_LEVELS: Final[frozenset[str]] = frozenset({RISK_LOW, RISK_MEDIUM, RISK_HIGH})
+
+EVIDENCE_KIND_TEST: Final = "test"
+EVIDENCE_KIND_COMMAND: Final = "command"
+EVIDENCE_KIND_REVIEW: Final = "review"
+EVIDENCE_KIND_MANUAL: Final = "manual"
+EVIDENCE_KIND_FILE: Final = "file"
+EVIDENCE_KINDS: Final[frozenset[str]] = frozenset(
+    {
+        EVIDENCE_KIND_TEST,
+        EVIDENCE_KIND_COMMAND,
+        EVIDENCE_KIND_REVIEW,
+        EVIDENCE_KIND_MANUAL,
+        EVIDENCE_KIND_FILE,
+    }
+)
+
+INDEPENDENT_REVIEW_NOT_REQUIRED: Final = "not-required"
+INDEPENDENT_REVIEW_REQUIRED: Final = "required"
+INDEPENDENT_REVIEW_POLICIES: Final[frozenset[str]] = frozenset(
+    {INDEPENDENT_REVIEW_NOT_REQUIRED, INDEPENDENT_REVIEW_REQUIRED}
+)
+
+CONTRACT_ENTITY_INVARIANT: Final = "invariant"
+CONTRACT_ENTITY_CRITERION: Final = "criterion"
+CONTRACT_ENTITY_KINDS: Final[frozenset[str]] = frozenset(
+    {CONTRACT_ENTITY_INVARIANT, CONTRACT_ENTITY_CRITERION}
+)
+
+CONTRACT_KEY_MAX_CHARS: Final = 64
+CONTRACT_STATEMENT_MAX_CHARS: Final = 2000
+CONTRACT_AUTHOR_MAX_CHARS: Final = 120
+
 ACTION_CREATE: Final = "create"
 ACTION_UPDATE: Final = "update"
 ACTION_RESOLVE: Final = "resolve"
@@ -120,6 +174,19 @@ class EntryNotFoundError(Exception):
 
 class ValidationError(Exception):
     """Malformed write — rejected with an actionable message (FR13)."""
+
+
+class ContractNotFoundError(Exception):
+    """An invariant or criterion is missing (or hidden) in this project."""
+
+    def __init__(self, entity: str, entity_id: str, project: str) -> None:
+        self.entity = entity
+        self.entity_id = entity_id
+        self.project = project
+        super().__init__(
+            f"No {entity} {entity_id!r} in project {project!r}. "
+            "Use list_invariants / list_criteria, or include_deleted for soft-deleted rows."
+        )
 
 
 @dataclass(frozen=True)
@@ -224,3 +291,104 @@ class AssemblyEntry:
     updated_at: datetime
     related_entry_id: str | None = None
     requirement_status: str | None = None
+
+
+@dataclass(frozen=True)
+class InvariantView:
+    """Public snapshot of one requirement invariant (T10)."""
+
+    id: str
+    project_id: str
+    requirement_id: str
+    key: str
+    statement: str
+    kind: str
+    risk: str
+    sort_order: int
+    status: str
+    author: str
+    created_at: datetime
+    updated_at: datetime
+
+    def as_dict(self) -> dict[str, object]:
+        """JSON-ready dict (ISO timestamps)."""
+        return {
+            "id": self.id,
+            "project_id": self.project_id,
+            "requirement_id": self.requirement_id,
+            "key": self.key,
+            "statement": self.statement,
+            "kind": self.kind,
+            "risk": self.risk,
+            "sort_order": self.sort_order,
+            "status": self.status,
+            "author": self.author,
+            "created_at": self.created_at.isoformat(),
+            "updated_at": self.updated_at.isoformat(),
+        }
+
+
+@dataclass(frozen=True)
+class CriterionView:
+    """Public snapshot of one acceptance criterion (T10)."""
+
+    id: str
+    project_id: str
+    invariant_id: str
+    key: str
+    statement: str
+    evidence_kind: str
+    required: bool
+    independent_review: str
+    sort_order: int
+    status: str
+    author: str
+    created_at: datetime
+    updated_at: datetime
+
+    def as_dict(self) -> dict[str, object]:
+        """JSON-ready dict (ISO timestamps)."""
+        return {
+            "id": self.id,
+            "project_id": self.project_id,
+            "invariant_id": self.invariant_id,
+            "key": self.key,
+            "statement": self.statement,
+            "evidence_kind": self.evidence_kind,
+            "required": self.required,
+            "independent_review": self.independent_review,
+            "sort_order": self.sort_order,
+            "status": self.status,
+            "author": self.author,
+            "created_at": self.created_at.isoformat(),
+            "updated_at": self.updated_at.isoformat(),
+        }
+
+
+@dataclass(frozen=True)
+class ContractRevisionView:
+    """One immutable contract-mutation audit row (T10)."""
+
+    id: str
+    project_id: str
+    requirement_id: str
+    entity_kind: str
+    entity_id: str
+    action: str
+    snapshot: dict[str, object]
+    author: str
+    created_at: datetime
+
+    def as_dict(self) -> dict[str, object]:
+        """JSON-ready dict (ISO timestamps)."""
+        return {
+            "id": self.id,
+            "project_id": self.project_id,
+            "requirement_id": self.requirement_id,
+            "entity_kind": self.entity_kind,
+            "entity_id": self.entity_id,
+            "action": self.action,
+            "snapshot": dict(self.snapshot),
+            "author": self.author,
+            "created_at": self.created_at.isoformat(),
+        }

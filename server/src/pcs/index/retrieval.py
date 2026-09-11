@@ -18,6 +18,7 @@ from pcs.context.types import (
 )
 from pcs.index.hybrid import HybridResult, gather_relevant
 from pcs.index.search import SearchScopeName
+from pcs.requirements.briefing import CONTRACT_TOKEN_CAP, get_task_contract
 
 
 @dataclass(frozen=True)
@@ -171,11 +172,13 @@ async def prepare_task(
     task: str,
     max_tokens: int | None = None,
 ) -> dict[str, object]:
-    """Briefing + relevant-code pack in one budgeted response (FR22, FR22a, D13).
+    """Briefing + relevant-code pack in one budgeted response (FR22, FR22a, D13, T11).
 
     Curated context is capped at 50% of the budget; when any code chunks exist the
-    code pack gets a 30% floor and any unused context budget spills to code. The
-    actual split is reported (AC19, AC24).
+    code pack gets a 30% floor and any unused context budget spills to code. A
+    contract/close-gate allocation is capped at 500 estimated tokens inside the
+    same total; unused contract budget spills to code (FR22a). The actual split
+    is reported (AC19, AC24).
     """
     if not task.strip():
         raise ValueError("task description must not be empty")
@@ -186,10 +189,21 @@ async def prepare_task(
 
     context_cap = budget // 2  # 50% cap (FR22a)
     code_floor = (budget * 3) // 10  # 30% floor when chunks exist (FR22a)
+    contract_cap = min(CONTRACT_TOKEN_CAP, budget)
 
     # Fetch a relevance result once so we know whether any code chunks exist.
     hybrid = await gather_relevant(session, project=project, task=task, scope="project", limit=40)
     have_code = bool(hybrid.ranked)
+
+    contract = await get_task_contract(
+        session,
+        project=project,
+        task=task,
+        max_tokens=contract_cap,
+        ranked_paths=tuple(hit.hit.path for hit in hybrid.ranked),
+    )
+    contract_tokens = contract.token_estimate
+    remaining = budget - contract_tokens
 
     briefing_budget = max(200, min(context_cap, 4000))
     briefing = await get_project_briefing(session, project=project, max_tokens=briefing_budget)
@@ -201,23 +215,27 @@ async def prepare_task(
         )
         context_tokens = estimate_tokens(briefing)
 
-    if have_code and context_tokens > budget - code_floor:
-        tighter = max(200, budget - code_floor)
+    if have_code and context_tokens > remaining - code_floor:
+        tighter = max(200, remaining - code_floor)
         briefing = await get_project_briefing(session, project=project, max_tokens=tighter)
         context_tokens = estimate_tokens(briefing)
 
-    code_budget = max(0, budget - context_tokens) if have_code else 0
+    # Unused contract budget spills to code (T11 / FR22a).
+    code_budget = max(0, remaining - context_tokens) if have_code else 0
     pack = pack_code_chunks(hybrid, max_tokens=code_budget) if code_budget else _empty_pack(hybrid)
 
     return {
         "project": row.name,
         "task": task,
         "briefing": briefing,
+        "contract": contract.text,
         "code_chunks": [c.as_dict() for c in pack.chunks],
         "split": {
             "budget": budget,
             "context_tokens": context_tokens,
             "code_tokens": pack.token_estimate,
+            "contract_tokens": contract_tokens,
+            "contract_cap": contract_cap,
             "context_cap": context_cap,
             "code_floor": code_floor if have_code else 0,
             "code_budget": code_budget,

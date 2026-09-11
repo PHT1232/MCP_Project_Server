@@ -60,6 +60,8 @@ EXPECTED_TOOLS = frozenset(
         "set_requirement_status",
         "resolve_requirement",
         "sync_requirements",
+        "get_requirement_contract",
+        "get_task_contract",
         "get_index_status",
         "reindex",
         "search_code",

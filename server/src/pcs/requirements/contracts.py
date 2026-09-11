@@ -229,6 +229,16 @@ async def _allocate_key(
         n += 1
 
 
+async def _flush_contract(session: AsyncSession, *, what: str) -> None:
+    """Flush and translate unique-constraint failures into actionable ValidationError."""
+    try:
+        await session.flush()
+    except IntegrityError as exc:
+        # The current unit of work is aborted; session_scope rolls it back.
+        # A new session remains usable (tested).
+        raise _integrity_error(what=what) from exc
+
+
 async def _load_requirement(
     session: AsyncSession, *, project_id: str, project_label: str, requirement_id: str
 ) -> ContextEntry:
@@ -246,11 +256,35 @@ async def _load_requirement(
         raise ValidationError(
             f"entry {requirement_id!r} is not a requirement (section={entry.section!r})"
         )
-    if entry.status in HIDDEN_STATUSES:
+    return entry
+
+
+def _is_hidden_requirement(entry: ContextEntry) -> bool:
+    return entry.status in HIDDEN_STATUSES
+
+
+async def _require_writable_requirement(
+    session: AsyncSession, *, project_id: str, project_label: str, requirement_id: str
+) -> ContextEntry:
+    entry = await _load_requirement(
+        session, project_id=project_id, project_label=project_label, requirement_id=requirement_id
+    )
+    if _is_hidden_requirement(entry):
         raise ValidationError(
             f"requirement {requirement_id!r} is {entry.status} and cannot receive contract records"
         )
     return entry
+
+
+async def _parent_requirement_hidden(session: AsyncSession, requirement_id: str) -> bool:
+    entry = await session.get(ContextEntry, requirement_id)
+    return entry is None or _is_hidden_requirement(entry)
+
+
+def _hidden_parent_write_error(requirement_id: str) -> ValidationError:
+    return ValidationError(
+        f"requirement {requirement_id!r} is hidden and cannot receive contract records"
+    )
 
 
 async def _load_invariant_row(
@@ -360,7 +394,7 @@ async def create_invariant(
 ) -> InvariantView:
     """Create one invariant with a stable per-requirement key (T10)."""
     project_row = await resolve_project(session, project, for_update=True)
-    requirement = await _load_requirement(
+    requirement = await _require_writable_requirement(
         session,
         project_id=project_row.id,
         project_label=project_row.name,
@@ -394,6 +428,7 @@ async def create_invariant(
     row = RequirementInvariant(
         project_id=project_row.id,
         requirement_id=requirement.id,
+        requirement_section=SECTION_REQUIREMENTS,
         key=key_text,
         statement=statement_text,
         kind=kind_key,
@@ -405,10 +440,7 @@ async def create_invariant(
         updated_at=_now(),
     )
     session.add(row)
-    try:
-        await session.flush()
-    except IntegrityError as exc:
-        raise _integrity_error(what="invariant") from exc
+    await _flush_contract(session, what="invariant")
     _record_revision(
         session,
         project_id=project_row.id,
@@ -443,6 +475,8 @@ async def update_invariant(
         project_label=project_row.name,
         invariant_id=invariant_id,
     )
+    if await _parent_requirement_hidden(session, row.requirement_id):
+        raise _hidden_parent_write_error(row.requirement_id)
     author_text = _validate_author(author)
     changed = False
     if key is not None:
@@ -477,10 +511,7 @@ async def update_invariant(
         return _as_invariant(row)
     row.author = author_text
     row.updated_at = _now()
-    try:
-        await session.flush()
-    except IntegrityError as exc:
-        raise _integrity_error(what="invariant") from exc
+    await _flush_contract(session, what="invariant")
     _record_revision(
         session,
         project_id=project_row.id,
@@ -506,6 +537,8 @@ async def delete_invariant(
         project_label=project_row.name,
         invariant_id=invariant_id,
     )
+    if await _parent_requirement_hidden(session, row.requirement_id):
+        raise _hidden_parent_write_error(row.requirement_id)
     author_text = _validate_author(author)
     now = _now()
     children = await session.execute(
@@ -554,19 +587,25 @@ async def list_invariants(
 ) -> list[InvariantView]:
     """Active (or all) invariants for one requirement, deterministic order (T10)."""
     project_row = await resolve_project(session, project)
-    await _load_requirement(
+    requirement = await _load_requirement(
         session,
         project_id=project_row.id,
         project_label=project_row.name,
         requirement_id=requirement_id,
     )
+    if _is_hidden_requirement(requirement) and not include_deleted:
+        return []
     stmt = select(RequirementInvariant).where(
         RequirementInvariant.project_id == project_row.id,
         RequirementInvariant.requirement_id == requirement_id,
     )
     if not include_deleted:
         stmt = stmt.where(RequirementInvariant.status == STATUS_OPEN)
-    stmt = stmt.order_by(RequirementInvariant.sort_order.asc(), RequirementInvariant.key.asc())
+    stmt = stmt.order_by(
+        RequirementInvariant.sort_order.asc(),
+        RequirementInvariant.key.asc(),
+        RequirementInvariant.id.asc(),
+    )
     result = await session.execute(stmt)
     return [_as_invariant(row) for row in result.scalars().all()]
 
@@ -587,6 +626,8 @@ async def get_invariant(
         invariant_id=invariant_id,
         include_deleted=include_deleted,
     )
+    if not include_deleted and await _parent_requirement_hidden(session, row.requirement_id):
+        raise ContractNotFoundError("invariant", invariant_id, project_row.name)
     return _as_invariant(row)
 
 
@@ -612,6 +653,8 @@ async def create_criterion(
         invariant_id=invariant_id,
         for_link=True,
     )
+    if await _parent_requirement_hidden(session, invariant.requirement_id):
+        raise _hidden_parent_write_error(invariant.requirement_id)
     evidence = _validate_choice(evidence_kind, EVIDENCE_KINDS, field="evidence kind")
     policy = _validate_choice(
         independent_review, INDEPENDENT_REVIEW_POLICIES, field="independent_review"
@@ -654,10 +697,7 @@ async def create_criterion(
         updated_at=_now(),
     )
     session.add(row)
-    try:
-        await session.flush()
-    except IntegrityError as exc:
-        raise _integrity_error(what="criterion") from exc
+    await _flush_contract(session, what="criterion")
     _record_revision(
         session,
         project_id=project_row.id,
@@ -701,6 +741,8 @@ async def update_criterion(
         invariant_id=row.invariant_id,
         include_deleted=True,
     )
+    if await _parent_requirement_hidden(session, invariant.requirement_id):
+        raise _hidden_parent_write_error(invariant.requirement_id)
     changed = False
     if key is not None:
         key_text = _validate_key(key, label="criterion")
@@ -739,10 +781,7 @@ async def update_criterion(
         return _as_criterion(row)
     row.author = author_text
     row.updated_at = _now()
-    try:
-        await session.flush()
-    except IntegrityError as exc:
-        raise _integrity_error(what="criterion") from exc
+    await _flush_contract(session, what="criterion")
     _record_revision(
         session,
         project_id=project_row.id,
@@ -776,6 +815,8 @@ async def delete_criterion(
         invariant_id=row.invariant_id,
         include_deleted=True,
     )
+    if await _parent_requirement_hidden(session, invariant.requirement_id):
+        raise _hidden_parent_write_error(invariant.requirement_id)
     row.status = STATUS_DELETED
     row.author = author_text
     row.updated_at = _now()
@@ -807,28 +848,40 @@ async def list_criteria(
     project_row = await resolve_project(session, project)
     stmt = select(AcceptanceCriterion).where(AcceptanceCriterion.project_id == project_row.id)
     if invariant_id is not None:
-        await _load_invariant_row(
+        invariant = await _load_invariant_row(
             session,
             project_id=project_row.id,
             project_label=project_row.name,
             invariant_id=invariant_id,
             include_deleted=True,
         )
+        if not include_deleted and (
+            invariant.status == STATUS_DELETED
+            or await _parent_requirement_hidden(session, invariant.requirement_id)
+        ):
+            return []
         stmt = stmt.where(AcceptanceCriterion.invariant_id == invariant_id)
     else:
         assert requirement_id is not None
-        await _load_requirement(
+        requirement = await _load_requirement(
             session,
             project_id=project_row.id,
             project_label=project_row.name,
             requirement_id=requirement_id,
         )
+        if _is_hidden_requirement(requirement) and not include_deleted:
+            return []
         stmt = stmt.join(
             RequirementInvariant, RequirementInvariant.id == AcceptanceCriterion.invariant_id
         ).where(RequirementInvariant.requirement_id == requirement_id)
     if not include_deleted:
         stmt = stmt.where(AcceptanceCriterion.status == STATUS_OPEN)
-    stmt = stmt.order_by(AcceptanceCriterion.sort_order.asc(), AcceptanceCriterion.key.asc())
+    stmt = stmt.order_by(
+        AcceptanceCriterion.sort_order.asc(),
+        AcceptanceCriterion.key.asc(),
+        AcceptanceCriterion.invariant_id.asc(),
+        AcceptanceCriterion.id.asc(),
+    )
     result = await session.execute(stmt)
     return [_as_criterion(row) for row in result.scalars().all()]
 
@@ -849,6 +902,11 @@ async def get_criterion(
         criterion_id=criterion_id,
         include_deleted=include_deleted,
     )
+    if not include_deleted:
+        invariant = await session.get(RequirementInvariant, row.invariant_id)
+        parent_id = invariant.requirement_id if invariant is not None else ""
+        if await _parent_requirement_hidden(session, parent_id):
+            raise ContractNotFoundError("criterion", criterion_id, project_row.name)
     return _as_criterion(row)
 
 

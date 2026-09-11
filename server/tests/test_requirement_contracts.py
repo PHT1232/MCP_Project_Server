@@ -6,11 +6,13 @@ import os
 from collections.abc import Iterator
 from contextlib import contextmanager, suppress
 from pathlib import Path
+from uuid import uuid4
 
 import pytest
 from alembic import command
 from alembic.config import Config
 from sqlalchemy import create_engine, text
+from sqlalchemy.exc import DBAPIError
 from testcontainers.community.postgres import PostgresContainer
 
 from pcs.config import get_settings
@@ -415,6 +417,266 @@ class TestContractService:
                 risk="medium",
             )
         assert req_file.read_text(encoding="utf-8") == original
+
+    async def test_hidden_parent_hides_active_child_reads_but_history_remains(self) -> None:
+        req_id = await _seed_requirement(title="Hidden parent")
+        async with session_scope() as session:
+            invariant = await contracts.create_invariant(
+                session,
+                project=PROJECT,
+                requirement_id=req_id,
+                key="INV-HIDE",
+                statement="Must remain retrievable after the parent is hidden.",
+                kind="behavior",
+                risk="high",
+            )
+            criterion = await contracts.create_criterion(
+                session,
+                project=PROJECT,
+                invariant_id=invariant.id,
+                key="AC-HIDE",
+                statement="History stays available via include_deleted.",
+                evidence_kind="test",
+            )
+            inv_id, crit_id = invariant.id, criterion.id
+        async with session_scope() as session:
+            await service.delete_entry(session, project=PROJECT, entry_id=req_id)
+        async with session_scope() as session:
+            assert (
+                await contracts.list_invariants(session, project=PROJECT, requirement_id=req_id)
+                == []
+            )
+            assert (
+                await contracts.list_criteria(session, project=PROJECT, requirement_id=req_id) == []
+            )
+            assert (
+                await contracts.list_criteria(session, project=PROJECT, invariant_id=inv_id) == []
+            )
+            with pytest.raises(ContractNotFoundError, match=r"invariant"):
+                await contracts.get_invariant(session, project=PROJECT, invariant_id=inv_id)
+            with pytest.raises(ContractNotFoundError, match=r"criterion"):
+                await contracts.get_criterion(session, project=PROJECT, criterion_id=crit_id)
+            with pytest.raises(ValidationError, match="cannot receive"):
+                await contracts.create_invariant(
+                    session,
+                    project=PROJECT,
+                    requirement_id=req_id,
+                    statement="new write",
+                    kind="behavior",
+                    risk="low",
+                )
+            kept_i = await contracts.list_invariants(
+                session, project=PROJECT, requirement_id=req_id, include_deleted=True
+            )
+            kept_c = await contracts.list_criteria(
+                session, project=PROJECT, requirement_id=req_id, include_deleted=True
+            )
+            history = await contracts.list_contract_revisions(
+                session, project=PROJECT, requirement_id=req_id
+            )
+            fetched_i = await contracts.get_invariant(
+                session, project=PROJECT, invariant_id=inv_id, include_deleted=True
+            )
+            fetched_c = await contracts.get_criterion(
+                session, project=PROJECT, criterion_id=crit_id, include_deleted=True
+            )
+        assert [row.id for row in kept_i] == [inv_id]
+        assert [row.id for row in kept_c] == [crit_id]
+        assert any(row.action == "create" and row.entity_id == inv_id for row in history)
+        assert fetched_i.id == inv_id
+        assert fetched_c.id == crit_id
+
+    async def test_db_enforces_project_section_isolation_and_statement_bounds(self) -> None:
+        req_id = await _seed_requirement(title="Isolation")
+        async with session_scope() as session:
+            await service.register_project(
+                session, name=OTHER, root_path="/repos/other", overview="other overview"
+            )
+            other_req = await service.add_entry(
+                session, project=OTHER, section="requirements", headline="Other req"
+            )
+            blocker = await service.add_entry(
+                session, project=PROJECT, section="blockers", headline="A blocker"
+            )
+            acme = await service.resolve_project(session, PROJECT)
+            other = await service.resolve_project(session, OTHER)
+            acme_id, other_id = acme.id, other.id
+            blocker_id = blocker.id
+            assert other_req.project_id == other_id
+            await contracts.create_invariant(
+                session,
+                project=PROJECT,
+                requirement_id=req_id,
+                key="INV-SQL",
+                statement="Seed for revision immutability.",
+                kind="behavior",
+                risk="low",
+            )
+        async with session_scope() as session:
+            with pytest.raises(DBAPIError):
+                await session.execute(
+                    text(
+                        "INSERT INTO requirement_invariants "
+                        "(id, project_id, requirement_id, requirement_section, "
+                        "key, statement, kind, risk) "
+                        "VALUES (:id, :project_id, :requirement_id, 'requirements', "
+                        "'INV-XP', 'cross-project', 'behavior', 'low')"
+                    ),
+                    {
+                        "id": str(uuid4()),
+                        "project_id": other_id,
+                        "requirement_id": req_id,
+                    },
+                )
+                await session.flush()
+        async with session_scope() as session:
+            with pytest.raises(DBAPIError):
+                await session.execute(
+                    text(
+                        "INSERT INTO requirement_invariants "
+                        "(id, project_id, requirement_id, requirement_section, "
+                        "key, statement, kind, risk) "
+                        "VALUES (:id, :project_id, :requirement_id, 'requirements', "
+                        "'INV-SEC', 'non-requirement parent', 'behavior', 'low')"
+                    ),
+                    {
+                        "id": str(uuid4()),
+                        "project_id": acme_id,
+                        "requirement_id": blocker_id,
+                    },
+                )
+                await session.flush()
+        async with session_scope() as session:
+            with pytest.raises(DBAPIError):
+                await session.execute(
+                    text(
+                        "INSERT INTO requirement_invariants "
+                        "(id, project_id, requirement_id, requirement_section, "
+                        "key, statement, kind, risk) "
+                        "VALUES (:id, :project_id, :requirement_id, 'requirements', "
+                        "'INV-LONG', :statement, 'behavior', 'low')"
+                    ),
+                    {
+                        "id": str(uuid4()),
+                        "project_id": acme_id,
+                        "requirement_id": req_id,
+                        "statement": "x" * (CONTRACT_STATEMENT_MAX_CHARS + 1),
+                    },
+                )
+                await session.flush()
+        async with session_scope() as session:
+            history = await contracts.list_contract_revisions(
+                session, project=PROJECT, requirement_id=req_id
+            )
+            rev_id = history[0].id
+            with pytest.raises(DBAPIError, match="append-only"):
+                await session.execute(
+                    text(
+                        "UPDATE requirement_contract_revisions "
+                        "SET author = 'mutated' WHERE id = :id"
+                    ),
+                    {"id": rev_id},
+                )
+                await session.flush()
+        async with session_scope() as session:
+            with pytest.raises(DBAPIError):
+                await session.execute(
+                    text("DELETE FROM context_entries WHERE id = :id"),
+                    {"id": req_id},
+                )
+                await session.flush()
+        async with session_scope() as session:
+            kept = await contracts.list_contract_revisions(
+                session, project=PROJECT, requirement_id=req_id
+            )
+        assert kept
+
+    async def test_integrity_error_leaves_the_transaction_usable(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        async def skip_unique(*_args: object, **_kwargs: object) -> None:
+            return None
+
+        monkeypatch.setattr(contracts, "_assert_unique_invariant_key", skip_unique)
+        req_id = await _seed_requirement(title="Savepoint")
+        async with session_scope() as session:
+            await contracts.create_invariant(
+                session,
+                project=PROJECT,
+                requirement_id=req_id,
+                key="INV-1",
+                statement="First invariant.",
+                kind="behavior",
+                risk="low",
+            )
+        with pytest.raises(ValidationError, match="duplicate"):
+            async with session_scope() as session:
+                await contracts.create_invariant(
+                    session,
+                    project=PROJECT,
+                    requirement_id=req_id,
+                    key="INV-1",
+                    statement="Duplicate via unique index.",
+                    kind="behavior",
+                    risk="low",
+                )
+        async with session_scope() as session:
+            recovered = await contracts.create_invariant(
+                session,
+                project=PROJECT,
+                requirement_id=req_id,
+                key="INV-2",
+                statement="A new session remains usable after IntegrityError translation.",
+                kind="behavior",
+                risk="low",
+            )
+        assert recovered.key == "INV-2"
+
+    async def test_criteria_order_is_deterministic_with_id_tie_breakers(self) -> None:
+        req_id = await _seed_requirement(title="Ordering")
+        async with session_scope() as session:
+            first = await contracts.create_invariant(
+                session,
+                project=PROJECT,
+                requirement_id=req_id,
+                key="INV-B",
+                statement="Second invariant key, created first.",
+                kind="behavior",
+                risk="low",
+                sort_order=0,
+            )
+            second = await contracts.create_invariant(
+                session,
+                project=PROJECT,
+                requirement_id=req_id,
+                key="INV-A",
+                statement="First invariant key, created second.",
+                kind="behavior",
+                risk="low",
+                sort_order=0,
+            )
+            late = await contracts.create_criterion(
+                session,
+                project=PROJECT,
+                invariant_id=second.id,
+                key="AC-1",
+                statement="Same AC key on INV-A.",
+                evidence_kind="test",
+                sort_order=0,
+            )
+            early = await contracts.create_criterion(
+                session,
+                project=PROJECT,
+                invariant_id=first.id,
+                key="AC-1",
+                statement="Same AC key on INV-B.",
+                evidence_kind="test",
+                sort_order=0,
+            )
+            listed = await contracts.list_criteria(session, project=PROJECT, requirement_id=req_id)
+            tuples = [(row.sort_order, row.key, row.invariant_id, row.id) for row in listed]
+        assert tuples == sorted(tuples)
+        assert {row.id for row in listed} == {early.id, late.id}
 
 
 @contextmanager

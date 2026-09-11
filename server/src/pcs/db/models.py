@@ -20,10 +20,12 @@ from sqlalchemy import (
     CheckConstraint,
     DateTime,
     ForeignKey,
+    ForeignKeyConstraint,
     Index,
     Integer,
     String,
     Text,
+    UniqueConstraint,
     func,
     text,
 )
@@ -109,6 +111,10 @@ class ContextEntry(Base):
             unique=True,
             postgresql_where=text("req_key IS NOT NULL"),
         ),
+        # T10 composite FKs: contract rows must share the parent entry's project
+        # and (for invariants) the requirements section.
+        UniqueConstraint("id", "project_id", name="uq_context_entries_id_project"),
+        UniqueConstraint("id", "section", name="uq_context_entries_id_section"),
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_new_id)
@@ -182,11 +188,31 @@ class RequirementInvariant(Base):
             "status IN ('open', 'deleted')",
             name="ck_requirement_invariants_status",
         ),
-        Index(
-            "uq_requirement_invariants_requirement_key",
-            "requirement_id",
-            "key",
-            unique=True,
+        CheckConstraint(
+            "requirement_section = 'requirements'",
+            name="ck_requirement_invariants_section",
+        ),
+        CheckConstraint(
+            "char_length(statement) BETWEEN 1 AND 2000",
+            name="ck_requirement_invariants_statement_len",
+        ),
+        CheckConstraint(
+            "char_length(key) BETWEEN 1 AND 64",
+            name="ck_requirement_invariants_key_len",
+        ),
+        UniqueConstraint("id", "project_id", name="uq_requirement_invariants_id_project"),
+        UniqueConstraint("requirement_id", "key", name="uq_requirement_invariants_requirement_key"),
+        ForeignKeyConstraint(
+            ["requirement_id", "project_id"],
+            ["context_entries.id", "context_entries.project_id"],
+            ondelete="CASCADE",
+            name="fk_requirement_invariants_requirement_project",
+        ),
+        ForeignKeyConstraint(
+            ["requirement_id", "requirement_section"],
+            ["context_entries.id", "context_entries.section"],
+            ondelete="CASCADE",
+            name="fk_requirement_invariants_requirement_section",
         ),
         Index("ix_requirement_invariants_project_id", "project_id"),
         Index("ix_requirement_invariants_requirement_id", "requirement_id"),
@@ -196,8 +222,9 @@ class RequirementInvariant(Base):
     project_id: Mapped[str] = mapped_column(
         ForeignKey("projects.id", ondelete="CASCADE"), nullable=False
     )
-    requirement_id: Mapped[str] = mapped_column(
-        ForeignKey("context_entries.id", ondelete="CASCADE"), nullable=False
+    requirement_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    requirement_section: Mapped[str] = mapped_column(
+        String(32), nullable=False, server_default="requirements"
     )
     key: Mapped[str] = mapped_column(String(64), nullable=False)
     statement: Mapped[str] = mapped_column(Text, nullable=False)
@@ -231,11 +258,20 @@ class AcceptanceCriterion(Base):
             "status IN ('open', 'deleted')",
             name="ck_acceptance_criteria_status",
         ),
-        Index(
-            "uq_acceptance_criteria_invariant_key",
-            "invariant_id",
-            "key",
-            unique=True,
+        CheckConstraint(
+            "char_length(statement) BETWEEN 1 AND 2000",
+            name="ck_acceptance_criteria_statement_len",
+        ),
+        CheckConstraint(
+            "char_length(key) BETWEEN 1 AND 64",
+            name="ck_acceptance_criteria_key_len",
+        ),
+        UniqueConstraint("invariant_id", "key", name="uq_acceptance_criteria_invariant_key"),
+        ForeignKeyConstraint(
+            ["invariant_id", "project_id"],
+            ["requirement_invariants.id", "requirement_invariants.project_id"],
+            ondelete="CASCADE",
+            name="fk_acceptance_criteria_invariant_project",
         ),
         Index("ix_acceptance_criteria_project_id", "project_id"),
         Index("ix_acceptance_criteria_invariant_id", "invariant_id"),
@@ -245,9 +281,7 @@ class AcceptanceCriterion(Base):
     project_id: Mapped[str] = mapped_column(
         ForeignKey("projects.id", ondelete="CASCADE"), nullable=False
     )
-    invariant_id: Mapped[str] = mapped_column(
-        ForeignKey("requirement_invariants.id", ondelete="CASCADE"), nullable=False
-    )
+    invariant_id: Mapped[str] = mapped_column(String(36), nullable=False)
     key: Mapped[str] = mapped_column(String(64), nullable=False)
     statement: Mapped[str] = mapped_column(Text, nullable=False)
     evidence_kind: Mapped[str] = mapped_column(String(32), nullable=False)
@@ -267,7 +301,12 @@ class AcceptanceCriterion(Base):
 
 
 class RequirementContractRevision(Base):
-    """Append-only audit row for one contract create/update/delete (T10)."""
+    """Append-only audit row for one contract create/update/delete (T10).
+
+    Retention: rows outlive soft-delete of the parent requirement. Hard-delete of
+    that requirement is RESTRICTed while history exists. Project teardown may
+    CASCADE via ``project_id``. PostgreSQL rejects UPDATE (append-only trigger).
+    """
 
     __tablename__ = "requirement_contract_revisions"
     __table_args__ = (
@@ -278,6 +317,12 @@ class RequirementContractRevision(Base):
         CheckConstraint(
             "action IN ('create', 'update', 'delete')",
             name="ck_requirement_contract_revisions_action",
+        ),
+        ForeignKeyConstraint(
+            ["requirement_id", "project_id"],
+            ["context_entries.id", "context_entries.project_id"],
+            ondelete="RESTRICT",
+            name="fk_requirement_contract_revisions_requirement_project",
         ),
         Index(
             "ix_requirement_contract_revisions_requirement_created",
@@ -292,9 +337,7 @@ class RequirementContractRevision(Base):
     project_id: Mapped[str] = mapped_column(
         ForeignKey("projects.id", ondelete="CASCADE"), nullable=False
     )
-    requirement_id: Mapped[str] = mapped_column(
-        ForeignKey("context_entries.id", ondelete="CASCADE"), nullable=False
-    )
+    requirement_id: Mapped[str] = mapped_column(String(36), nullable=False)
     entity_kind: Mapped[str] = mapped_column(String(16), nullable=False)
     entity_id: Mapped[str] = mapped_column(String(36), nullable=False)
     action: Mapped[str] = mapped_column(String(16), nullable=False)

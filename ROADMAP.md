@@ -123,6 +123,6 @@ T11 and T12 may run in parallel after T10 merges. T13 integrates both branches a
 | T10 | `task/T10-contract-model` | **merged** |
 | T11 | `task/T11-compact-contract-retrieval` | **merged** |
 | T12 | `task/T12-evidence-close-gate` | **merged** |
-| T13 | `task/T13-compliance-dashboard` | **in review** |
+| T13 | `task/T13-compliance-dashboard` | **merged** |
 
 Update this table as tasks move: `not started → in progress → in review → changes requested → merged`.

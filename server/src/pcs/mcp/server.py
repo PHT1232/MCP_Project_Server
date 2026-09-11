@@ -19,6 +19,7 @@ from pcs.config import get_settings
 from pcs.index import watch as index_watch
 from pcs.mcp.codemap_tools import register_codemap_tools
 from pcs.mcp.contract_tools import register_contract_tools
+from pcs.mcp.evidence_tools import register_evidence_tools
 from pcs.mcp.index_tools import register_index_tools
 from pcs.mcp.resources import register_resources
 from pcs.mcp.tools import register_tools
@@ -131,6 +132,7 @@ register_tools(mcp)
 register_contract_tools(mcp)
 register_index_tools(mcp)
 register_codemap_tools(mcp)
+register_evidence_tools(mcp)
 register_resources(mcp)
 register_routes(mcp)
 register_index_routes(mcp)

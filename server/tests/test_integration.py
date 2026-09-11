@@ -68,6 +68,11 @@ EXPECTED_TOOLS = frozenset(
         "retrieve_context",
         "prepare_task",
         "get_code_map",
+        "record_requirement_evidence",
+        "get_requirement_evidence",
+        "add_requirement_violation",
+        "resolve_requirement_violation",
+        "evaluate_close_gate",
     }
 )
 

@@ -5,8 +5,9 @@ the verbatim store (never replaced by a summary). ``context_entry_revisions`` is
 the immutable audit log — nothing is hard-deleted.
 
 T10 adds ``requirement_invariants``, ``acceptance_criteria``, and append-only
-``requirement_contract_revisions``. Contract rows are store-owned and are not
-written to ``.project-context/requirements.md``.
+``requirement_contract_revisions``. T12 adds append-only ``requirement_evidence``
+and ``requirement_violations``. Contract and evidence rows are store-owned and
+are not written to ``.project-context/requirements.md``.
 """
 
 from __future__ import annotations
@@ -16,11 +17,13 @@ from datetime import datetime
 from typing import Any
 
 from sqlalchemy import (
+    BigInteger,
     Boolean,
     CheckConstraint,
     DateTime,
     ForeignKey,
     ForeignKeyConstraint,
+    Identity,
     Index,
     Integer,
     String,
@@ -41,7 +44,9 @@ __all__ = [
     "ContextEntryRevision",
     "Project",
     "RequirementContractRevision",
+    "RequirementEvidence",
     "RequirementInvariant",
+    "RequirementViolation",
 ]
 
 
@@ -201,6 +206,7 @@ class RequirementInvariant(Base):
             name="ck_requirement_invariants_key_len",
         ),
         UniqueConstraint("id", "project_id", name="uq_requirement_invariants_id_project"),
+        UniqueConstraint("id", "requirement_id", name="uq_requirement_invariants_id_requirement"),
         UniqueConstraint("requirement_id", "key", name="uq_requirement_invariants_requirement_key"),
         ForeignKeyConstraint(
             ["requirement_id", "project_id"],
@@ -267,6 +273,7 @@ class AcceptanceCriterion(Base):
             name="ck_acceptance_criteria_key_len",
         ),
         UniqueConstraint("invariant_id", "key", name="uq_acceptance_criteria_invariant_key"),
+        UniqueConstraint("id", "project_id", name="uq_acceptance_criteria_id_project"),
         ForeignKeyConstraint(
             ["invariant_id", "project_id"],
             ["requirement_invariants.id", "requirement_invariants.project_id"],
@@ -334,6 +341,10 @@ class RequirementContractRevision(Base):
             "requirement_section = 'requirements'",
             name="ck_requirement_contract_revisions_section",
         ),
+        UniqueConstraint(
+            "id", "requirement_id", name="uq_requirement_contract_revisions_id_requirement"
+        ),
+        UniqueConstraint("id", "entity_id", name="uq_requirement_contract_revisions_id_entity"),
         Index(
             "ix_requirement_contract_revisions_requirement_created",
             "requirement_id",
@@ -361,3 +372,170 @@ class RequirementContractRevision(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
+
+
+class RequirementEvidence(Base):
+    """Append-only compact evidence row bound to one contract revision (T12, D4)."""
+
+    __tablename__ = "requirement_evidence"
+    __table_args__ = (
+        CheckConstraint(
+            "evidence_kind IN ('test', 'command', 'review', 'manual', 'file')",
+            name="ck_requirement_evidence_kind",
+        ),
+        CheckConstraint(
+            "result IN ('passed', 'failed', 'manual-pending')",
+            name="ck_requirement_evidence_result",
+        ),
+        CheckConstraint(
+            "requirement_section = 'requirements'",
+            name="ck_requirement_evidence_section",
+        ),
+        CheckConstraint(
+            "char_length(source_commit) = 40",
+            name="ck_requirement_evidence_commit_len",
+        ),
+        UniqueConstraint("id", "project_id", name="uq_requirement_evidence_id_project"),
+        ForeignKeyConstraint(
+            ["requirement_id", "project_id"],
+            ["context_entries.id", "context_entries.project_id"],
+            ondelete="RESTRICT",
+            name="fk_requirement_evidence_requirement_project",
+        ),
+        ForeignKeyConstraint(
+            ["requirement_id", "requirement_section"],
+            ["context_entries.id", "context_entries.section"],
+            ondelete="RESTRICT",
+            name="fk_requirement_evidence_requirement_section",
+        ),
+        ForeignKeyConstraint(
+            ["criterion_id", "project_id"],
+            ["acceptance_criteria.id", "acceptance_criteria.project_id"],
+            ondelete="RESTRICT",
+            name="fk_requirement_evidence_criterion_project",
+        ),
+        ForeignKeyConstraint(
+            ["contract_revision_id", "requirement_id"],
+            [
+                "requirement_contract_revisions.id",
+                "requirement_contract_revisions.requirement_id",
+            ],
+            ondelete="RESTRICT",
+            name="fk_requirement_evidence_revision_requirement",
+        ),
+        ForeignKeyConstraint(
+            ["contract_revision_id", "criterion_id"],
+            ["requirement_contract_revisions.id", "requirement_contract_revisions.entity_id"],
+            ondelete="RESTRICT",
+            name="fk_requirement_evidence_revision_criterion",
+        ),
+        Index("ix_requirement_evidence_project_id", "project_id"),
+        Index("ix_requirement_evidence_criterion_created", "criterion_id", "seq"),
+        Index("ix_requirement_evidence_requirement_id", "requirement_id"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_new_id)
+    project_id: Mapped[str] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), nullable=False
+    )
+    requirement_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    requirement_section: Mapped[str] = mapped_column(
+        String(32), nullable=False, server_default="requirements"
+    )
+    criterion_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    contract_revision_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    evidence_kind: Mapped[str] = mapped_column(String(32), nullable=False)
+    result: Mapped[str] = mapped_column(String(32), nullable=False)
+    command_ref: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    test_ref: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    file_ref: Mapped[str | None] = mapped_column(String(240), nullable=True)
+    source_commit: Mapped[str] = mapped_column(String(64), nullable=False)
+    worktree_fingerprint: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    artifact_ref: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    author: Mapped[str] = mapped_column(String(120), nullable=False)
+    seq: Mapped[int] = mapped_column(BigInteger, Identity(always=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=text("clock_timestamp()"),
+        nullable=False,
+    )
+
+
+class RequirementViolation(Base):
+    """Review finding linked to one invariant. Resolve updates status; rows are kept (T12)."""
+
+    __tablename__ = "requirement_violations"
+    __table_args__ = (
+        CheckConstraint(
+            "severity IN ('blocking', 'warning')",
+            name="ck_requirement_violations_severity",
+        ),
+        CheckConstraint(
+            "status IN ('open', 'resolved')",
+            name="ck_requirement_violations_status",
+        ),
+        CheckConstraint(
+            "requirement_section = 'requirements'",
+            name="ck_requirement_violations_section",
+        ),
+        CheckConstraint(
+            "char_length(summary) BETWEEN 1 AND 200",
+            name="ck_requirement_violations_summary_len",
+        ),
+        CheckConstraint(
+            "line_no IS NULL OR line_no >= 1",
+            name="ck_requirement_violations_line_no",
+        ),
+        UniqueConstraint("id", "project_id", name="uq_requirement_violations_id_project"),
+        ForeignKeyConstraint(
+            ["requirement_id", "project_id"],
+            ["context_entries.id", "context_entries.project_id"],
+            ondelete="RESTRICT",
+            name="fk_requirement_violations_requirement_project",
+        ),
+        ForeignKeyConstraint(
+            ["requirement_id", "requirement_section"],
+            ["context_entries.id", "context_entries.section"],
+            ondelete="RESTRICT",
+            name="fk_requirement_violations_requirement_section",
+        ),
+        ForeignKeyConstraint(
+            ["invariant_id", "project_id"],
+            ["requirement_invariants.id", "requirement_invariants.project_id"],
+            ondelete="RESTRICT",
+            name="fk_requirement_violations_invariant_project",
+        ),
+        ForeignKeyConstraint(
+            ["invariant_id", "requirement_id"],
+            ["requirement_invariants.id", "requirement_invariants.requirement_id"],
+            ondelete="RESTRICT",
+            name="fk_requirement_violations_invariant_requirement",
+        ),
+        Index("ix_requirement_violations_project_id", "project_id"),
+        Index("ix_requirement_violations_invariant_id", "invariant_id"),
+        Index("ix_requirement_violations_requirement_id", "requirement_id"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_new_id)
+    project_id: Mapped[str] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), nullable=False
+    )
+    requirement_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    requirement_section: Mapped[str] = mapped_column(
+        String(32), nullable=False, server_default="requirements"
+    )
+    invariant_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    severity: Mapped[str] = mapped_column(String(16), nullable=False)
+    summary: Mapped[str] = mapped_column(String(200), nullable=False)
+    file_ref: Mapped[str | None] = mapped_column(String(240), nullable=True)
+    line_no: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, server_default="open")
+    author: Mapped[str] = mapped_column(String(120), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    resolved_by: Mapped[str | None] = mapped_column(String(120), nullable=True)

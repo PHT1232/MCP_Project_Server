@@ -48,11 +48,16 @@ For focus replacement semantics, prefer `set_current_focus` over `add_focus`.
 |---|---|---|
 | `add_requirement` | `project=null`, `headline=null`, `detail=null`, `status="not-started"`, `linked_files=null`, `related_entry_id=null`, `priority=0` | Creates a requirement and writes through to the configured file. |
 | `update_requirement` | `entry_id`, `project=null`, `headline=null`, `detail=null`, `linked_files=null`, `related_entry_id=null`, `priority=null` | Merge-updates and writes through. |
-| `set_requirement_status` | `entry_id`, `status`, `project=null` | Sets `not-started`, `in-progress`, `blocked`, or `done`; writes through. |
+| `set_requirement_status` | `entry_id`, `status`, `project=null` | Sets `not-started`, `in-progress`, `blocked`, or `done`; writes through. `done` is rejected when configured criteria fail the close gate. |
 | `resolve_requirement` | `entry_id`, `project=null` | Resolves lifecycle state and writes through. This differs from setting requirement status to `done`. |
 | `sync_requirements` | `project=null` | Re-parses the file and returns created, updated, archived, written-back, reconciliation, error, and count details. |
 | `get_requirement_contract` | `requirement_id`, `project=null`, `include="both"` | Verbatim invariants and/or criteria for one requirement. `include` is `invariants`, `criteria`, or `both`. |
 | `get_task_contract` | `task`, `project=null`, `requirement_ids=null`, `max_tokens=500` | Compact relevant contract + close-gate summary. `max_tokens` is `80`–`500`; below 80 is rejected so `token_estimate <= token_budget`. T12 evidence absent → `review: not-configured`. T12 `missing`/`stale` rows identify criteria by `id` (or `invariant_id` + `key`). |
+| `record_requirement_evidence` | `criterion_id`, `kind` (`test`/`command`/`review`/`manual`/`file`), `result` (`passed`/`failed`/`manual-pending`), `source_commit` (7–40 hex; stored as full 40-char SHA), `project=null`, `command_ref=null`, `test_ref=null`, `file_ref=null`, `worktree_fingerprint=null`, `artifact_ref=null` | Append-only compact evidence. Does not change requirement status (D4). Rejects logs, diffs, secrets, and oversized fields. |
+| `get_requirement_evidence` | `requirement_id`, `project=null` | Compact evidence, violations, and close-gate state. No stdout or diffs. |
+| `add_requirement_violation` | `invariant_id`, `summary` (1–200 chars), `project=null`, `severity="blocking"` (`blocking`/`warning`), `file_ref=null`, `line_no=null` (≥1) | Records a review finding. |
+| `resolve_requirement_violation` | `violation_id`, `project=null` | Marks the finding resolved; stores resolver identity; history is kept. |
+| `evaluate_close_gate` | `requirement_id`, `project=null` | Deterministic coverage/freshness/review evaluation. Does not change status. |
 
 Requirement write responses may include `requirements_file` with `path`, `written`, `errors`, and `reconciliations`.
 

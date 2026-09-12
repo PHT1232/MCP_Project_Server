@@ -5,6 +5,7 @@
  * exactly one typed function here.
  */
 import type {
+  AcceptanceCriterion,
   Briefing,
   CodeMap,
   Entry,
@@ -14,14 +15,19 @@ import type {
   IndexStatus,
   Project,
   RegisterProjectInput,
+  CreateCriterionInput,
+  CreateInvariantInput,
   RequirementComplianceResponse,
   RequirementContract,
   RequirementEvidenceResponse,
+  RequirementInvariant,
   RequirementsResponse,
   SearchResponse,
   SectionResponse,
   SourceFile,
   SyncReport,
+  UpdateCriterionInput,
+  UpdateInvariantInput,
 } from "./types";
 
 const BASE_URL: string = import.meta.env.VITE_API_BASE ?? "";
@@ -170,6 +176,94 @@ export function getRequirementContract(
       project,
       `/requirements/${encodeURIComponent(requirementId)}/contract`,
     ),
+  );
+}
+
+/** T14 — create an invariant; omitted optional fields are allocated by the service. */
+export function createRequirementInvariant(
+  project: string,
+  requirementId: string,
+  input: CreateInvariantInput,
+): Promise<RequirementInvariant> {
+  return request<RequirementInvariant>(
+    projectPath(
+      project,
+      `/requirements/${encodeURIComponent(requirementId)}/invariants`,
+    ),
+    { method: "POST", ...jsonBody(input) },
+  );
+}
+
+/** T14 — merge-update an invariant; omitted fields keep stored values. */
+export function updateRequirementInvariant(
+  project: string,
+  invariantId: string,
+  input: UpdateInvariantInput,
+): Promise<RequirementInvariant> {
+  return request<RequirementInvariant>(
+    projectPath(
+      project,
+      `/requirements/invariants/${encodeURIComponent(invariantId)}`,
+    ),
+    { method: "PATCH", ...jsonBody(input) },
+  );
+}
+
+/** T14 — soft-delete an invariant (cascades open criteria). */
+export function deleteRequirementInvariant(
+  project: string,
+  invariantId: string,
+): Promise<RequirementInvariant> {
+  return request<RequirementInvariant>(
+    projectPath(
+      project,
+      `/requirements/invariants/${encodeURIComponent(invariantId)}`,
+    ),
+    { method: "DELETE" },
+  );
+}
+
+/** T14 — create an acceptance criterion under one invariant. */
+export function createAcceptanceCriterion(
+  project: string,
+  invariantId: string,
+  input: CreateCriterionInput,
+): Promise<AcceptanceCriterion> {
+  return request<AcceptanceCriterion>(
+    projectPath(
+      project,
+      `/requirements/invariants/${encodeURIComponent(invariantId)}/criteria`,
+    ),
+    { method: "POST", ...jsonBody(input) },
+  );
+}
+
+/** T14 — merge-update a criterion; omitted fields keep stored values. */
+export function updateAcceptanceCriterion(
+  project: string,
+  criterionId: string,
+  input: UpdateCriterionInput,
+): Promise<AcceptanceCriterion> {
+  return request<AcceptanceCriterion>(
+    projectPath(
+      project,
+      `/requirements/criteria/${encodeURIComponent(criterionId)}`,
+    ),
+    { method: "PATCH", ...jsonBody(input) },
+  );
+}
+
+/** T14 — soft-delete a criterion; revision history is kept. */
+export function deleteAcceptanceCriterion(
+  project: string,
+  criterionId: string,
+): Promise<AcceptanceCriterion> {
+  return request<AcceptanceCriterion>(
+    projectPath(
+      project,
+      `/requirements/criteria/${encodeURIComponent(criterionId)}`,
+    ),
+    { method: "DELETE" },
   );
 }
 

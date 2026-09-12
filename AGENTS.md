@@ -68,6 +68,19 @@ Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
 - Log via structured logging (`pcs` logger). Every tool call logs project id,
   caller, outcome (NFR6).
 
+## Requirement contract authoring
+
+Before implementing a configured requirement, author invariants and acceptance
+criteria through `create_requirement_invariant` / `create_acceptance_criterion`
+(or the matching HTTP routes). Do not write contract rows in SQL or duplicate
+`pcs.requirements.contracts` validation. Merge-updates omit unchanged fields;
+empty payloads are rejected. Soft-delete keeps history.
+
+Then record compact evidence, call `review_requirement_compliance`, and only
+set status `done` after `evaluate_close_gate` passes. A `not-configured`
+requirement is legacy state, not verified compliance. See
+[docs/mcp-reference.md](docs/mcp-reference.md) and [docs/http-api.md](docs/http-api.md).
+
 ## Frontend conventions (TypeScript)
 
 - React + Vite + TS, **strict** tsconfig, no `any` (use `unknown` + narrowing).

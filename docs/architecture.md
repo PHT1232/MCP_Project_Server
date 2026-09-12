@@ -34,7 +34,9 @@ The `requirements` section can synchronize with a Markdown file. Registration cr
 
 T13 compliance reads compose the T10 contract and T12 evidence services without executing tests, parsing logs, or applying LLM judgement. HTTP and MCP adapters return the same deterministic service payload. Requirement implementation `status` remains separate from the `verified`, `failed`, or `not-configured` compliance verdict. Multi-requirement responses are bounded and expose omission counts.
 
-Sources: `server/src/pcs/context/`, `server/src/pcs/requirements/`, `server/src/pcs/web_api/requirements_routes.py`, `server/src/pcs/mcp/compliance_tools.py`.
+T14 authoring adapters expose MCP tools and equivalent HTTP `POST`/`PATCH`/`DELETE` routes that call `pcs.requirements.contracts` create/update/soft-delete functions. Adapters record the MCP or `X-PCS-Caller` identity, reject empty merge-updates, reject HTTP unknown fields and coerced JSON types, and treat explicit JSON `null` on a patch field as a whole-payload error (omitted keys stay). Contract HTTP GET and MCP contract reads/mutations in this module log outcome categories only (`ok`, `error: validation`, `error: not-found`, `error: project-not-found`, `error: failed`) and never include contract prose, keys, enum values, or caller payload. Soft-delete keeps immutable revisions; deleting an invariant cascades open criteria.
+
+Sources: `server/src/pcs/context/`, `server/src/pcs/requirements/`, `server/src/pcs/web_api/requirements_routes.py`, `server/src/pcs/mcp/compliance_tools.py`, `server/src/pcs/mcp/contract_tools.py`.
 
 ## Code intelligence
 

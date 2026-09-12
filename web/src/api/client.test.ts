@@ -3,6 +3,10 @@ import { describe, expect, it, vi } from "vitest";
 import {
   addEntry,
   ApiError,
+  createAcceptanceCriterion,
+  createRequirementInvariant,
+  deleteAcceptanceCriterion,
+  deleteRequirementInvariant,
   getBriefing,
   getCodeMap,
   getIndexStatus,
@@ -19,7 +23,9 @@ import {
   searchCode,
   setFocus,
   syncRequirements,
+  updateAcceptanceCriterion,
   updateEntry,
+  updateRequirementInvariant,
 } from "./client";
 
 function mockFetch(body: unknown, ok = true, status = 200): ReturnType<typeof vi.fn> {
@@ -182,6 +188,61 @@ describe("api client", () => {
     expect(callOf(fetchMock).url).toBe(
       "/api/projects/a%20b/requirements/req%2F1/evidence",
     );
+  });
+
+  it("POSTs and PATCHes contract authoring routes with encoded ids", async () => {
+    const fetchMock = mockFetch({ id: "inv-1" }, true, 201);
+
+    await createRequirementInvariant("a b", "req/1", {
+      statement: "Keep adapters thin.",
+      kind: "architecture",
+      risk: "high",
+    });
+    expect(callOf(fetchMock).url).toBe(
+      "/api/projects/a%20b/requirements/req%2F1/invariants",
+    );
+    expect(callOf(fetchMock).init.method).toBe("POST");
+
+    fetchMock.mockClear();
+    await createAcceptanceCriterion("a b", "inv/1", {
+      statement: "Cover MCP and HTTP.",
+      evidence_kind: "test",
+    });
+    expect(callOf(fetchMock).url).toBe(
+      "/api/projects/a%20b/requirements/invariants/inv%2F1/criteria",
+    );
+
+    fetchMock.mockClear();
+    await updateRequirementInvariant("a b", "inv/1", { risk: "low" });
+    expect(callOf(fetchMock).url).toBe(
+      "/api/projects/a%20b/requirements/invariants/inv%2F1",
+    );
+    expect(callOf(fetchMock).init.method).toBe("PATCH");
+    expect(callOf(fetchMock).init.body).toBe(JSON.stringify({ risk: "low" }));
+
+    fetchMock.mockClear();
+    await updateAcceptanceCriterion("a b", "ac/1", { required: false });
+    expect(callOf(fetchMock).init.method).toBe("PATCH");
+    expect(callOf(fetchMock).url).toBe(
+      "/api/projects/a%20b/requirements/criteria/ac%2F1",
+    );
+  });
+
+  it("DELETEs invariants and criteria", async () => {
+    const fetchMock = mockFetch({ id: "inv-1", status: "deleted" });
+
+    await deleteRequirementInvariant("a b", "inv/1");
+    expect(callOf(fetchMock).url).toBe(
+      "/api/projects/a%20b/requirements/invariants/inv%2F1",
+    );
+    expect(callOf(fetchMock).init.method).toBe("DELETE");
+
+    fetchMock.mockClear();
+    await deleteAcceptanceCriterion("a b", "ac/1");
+    expect(callOf(fetchMock).url).toBe(
+      "/api/projects/a%20b/requirements/criteria/ac%2F1",
+    );
+    expect(callOf(fetchMock).init.method).toBe("DELETE");
   });
 
   it("GETs compliance with repeated, encoded requirement_id params", async () => {

@@ -74,6 +74,12 @@ EXPECTED_TOOLS = frozenset(
         "resolve_requirement_violation",
         "evaluate_close_gate",
         "review_requirement_compliance",
+        "create_requirement_invariant",
+        "update_requirement_invariant",
+        "delete_requirement_invariant",
+        "create_acceptance_criterion",
+        "update_acceptance_criterion",
+        "delete_acceptance_criterion",
     }
 )
 

@@ -101,6 +101,7 @@ Implementation contract: [tasks/CONTRACT-COMPLIANCE-PLAN.md](tasks/CONTRACT-COMP
 | [T11](tasks/T11-compact-contract-retrieval.md) | Progressive-disclosure contract tools and a ≤500-token contract allocation inside `prepare_task` | T10 |
 | [T12](tasks/T12-evidence-close-gate.md) | Compact evidence ledger, freshness, violations, independent-review policy, deterministic `done` gate | T10 |
 | [T13](tasks/T13-compliance-dashboard.md) | Compliance review MCP/HTTP APIs, verification dashboard, and documented pre-close workflow | T11, T12 |
+| [T14](tasks/T14-contract-authoring-api.md) | Audited MCP/HTTP create/update/soft-delete for invariants and criteria | T13 |
 
 T11 and T12 may run in parallel after T10 merges. T13 integrates both branches after they merge.
 
@@ -124,5 +125,6 @@ T11 and T12 may run in parallel after T10 merges. T13 integrates both branches a
 | T11 | `task/T11-compact-contract-retrieval` | **merged** |
 | T12 | `task/T12-evidence-close-gate` | **merged** |
 | T13 | `task/T13-compliance-dashboard` | **merged** |
+| T14 | `task/T14-contract-authoring-api` | **in review** |
 
 Update this table as tasks move: `not started → in progress → in review → changes requested → merged`.

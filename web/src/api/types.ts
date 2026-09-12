@@ -326,6 +326,44 @@ export interface RequirementContract {
   criteria: AcceptanceCriterion[];
 }
 
+/** T14 — create-invariant JSON body. Omitted optional fields are allocated by the service. */
+export interface CreateInvariantInput {
+  statement: string;
+  kind: string;
+  risk: string;
+  key?: string;
+  sort_order?: number;
+}
+
+/** T14 — merge-update JSON; omitted keys keep stored values. */
+export interface UpdateInvariantInput {
+  statement?: string;
+  kind?: string;
+  risk?: string;
+  key?: string;
+  sort_order?: number;
+}
+
+/** T14 — create-criterion JSON body. */
+export interface CreateCriterionInput {
+  statement: string;
+  evidence_kind: string;
+  key?: string;
+  required?: boolean;
+  independent_review?: string;
+  sort_order?: number;
+}
+
+/** T14 — merge-update JSON; omitted keys keep stored values. */
+export interface UpdateCriterionInput {
+  statement?: string;
+  evidence_kind?: string;
+  required?: boolean;
+  independent_review?: string;
+  key?: string;
+  sort_order?: number;
+}
+
 export interface RequirementComplianceException {
   kind:
     | "missing"

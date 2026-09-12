@@ -958,7 +958,10 @@ async def test_mcp_contract_tools_audit_schema_and_errors() -> None:
             }
         )
 
-    with patch("pcs.mcp.support.log_tool_call", spy):
+    with (
+        patch("pcs.mcp.support.log_tool_call", spy),
+        patch("pcs.mcp.contract_tools.log_tool_call", spy),
+    ):
         await mcp.call_tool(
             "get_task_contract",
             {"project": PROJECT, "task": "MCP audit", "requirement_ids": [req_id]},

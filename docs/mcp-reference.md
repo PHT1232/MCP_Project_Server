@@ -53,6 +53,12 @@ For focus replacement semantics, prefer `set_current_focus` over `add_focus`.
 | `sync_requirements` | `project=null` | Re-parses the file and returns created, updated, archived, written-back, reconciliation, error, and count details. |
 | `get_requirement_contract` | `requirement_id`, `project=null`, `include="both"` | Verbatim invariants and/or criteria for one requirement. `include` is `invariants`, `criteria`, or `both`. |
 | `get_task_contract` | `task`, `project=null`, `requirement_ids=null`, `max_tokens=500` | Compact relevant contract + close-gate summary. `max_tokens` is `80`–`500`; below 80 is rejected so `token_estimate <= token_budget`. T12 evidence absent → `review: not-configured`. T12 `missing`/`stale` rows identify criteria by `id` (or `invariant_id` + `key`). |
+| `create_requirement_invariant` | `requirement_id`, `statement`, `kind` (`behavior`/`architecture`/`data-boundary`/`forbidden-path`/`integration`/`manual`), `risk` (`low`/`medium`/`high`), `project=null`, `key=null`, `sort_order=null` | Creates one invariant via `pcs.requirements.contracts`. Allocates `INV-N` when `key` is omitted. Caller is stored as author. |
+| `update_requirement_invariant` | `invariant_id`, `project=null`, `statement=null`, `kind=null`, `risk=null`, `key=null`, `sort_order=null` | Merge-update. Omitted fields stay. Empty payloads are rejected. Explicit JSON `null` on any patch field rejects the whole call; `false` and `0` remain valid. |
+| `delete_requirement_invariant` | `invariant_id`, `project=null` | Soft-delete; open criteria cascade. History is kept. |
+| `create_acceptance_criterion` | `invariant_id`, `statement`, `evidence_kind` (`test`/`command`/`review`/`manual`/`file`), `project=null`, `key=null`, `required=true`, `independent_review="not-required"`, `sort_order=null` | Creates one criterion. Allocates `AC-N` when `key` is omitted. |
+| `update_acceptance_criterion` | `criterion_id`, `project=null`, `statement=null`, `evidence_kind=null`, `required=null`, `independent_review=null`, `key=null`, `sort_order=null` | Merge-update. Omitted fields stay. Empty payloads are rejected. Explicit JSON `null` rejects the whole call; `required=false` and `sort_order=0` are accepted. |
+| `delete_acceptance_criterion` | `criterion_id`, `project=null` | Soft-delete; history is kept. |
 | `record_requirement_evidence` | `criterion_id`, `kind` (`test`/`command`/`review`/`manual`/`file`), `result` (`passed`/`failed`/`manual-pending`), `source_commit` (7–40 hex; stored as full 40-char SHA), `project=null`, `command_ref=null`, `test_ref=null`, `file_ref=null`, `worktree_fingerprint=null`, `artifact_ref=null` | Append-only compact evidence. Does not change requirement status (D4). Rejects logs, diffs, secrets, and oversized fields. |
 | `get_requirement_evidence` | `requirement_id`, `project=null` | Compact evidence, violations, and close-gate state. No stdout or diffs. |
 | `add_requirement_violation` | `invariant_id`, `summary` (1–200 chars), `project=null`, `severity="blocking"` (`blocking`/`warning`), `file_ref=null`, `line_no=null` (≥1) | Records a review finding. |
@@ -95,10 +101,17 @@ Resources are read-only. Use tools for all writes.
 
 ## Pre-close agent sequence
 
-1. `prepare_task` with the task and requirement IDs.
-2. `get_requirement_contract` for missing AC details.
-3. `record_requirement_evidence` for each completed criterion.
-4. `review_requirement_compliance` and resolve only the returned exceptions.
-5. `set_requirement_status(..., status="done")` after every configured verdict is `verified`. A `not-configured` verdict is explicit legacy state, not a failed or verified contract.
+Author the contract before writing implementation evidence:
+
+1. `create_requirement_invariant` / `create_acceptance_criterion` (or the matching HTTP routes) until `get_requirement_contract` returns stable IDs. Merge-update with `update_*`; never send empty payloads. Soft-delete with `delete_*`.
+2. `prepare_task` with the task and requirement IDs.
+3. `get_requirement_contract` for missing AC details.
+4. `record_requirement_evidence` for each completed criterion. Independent-review evidence must use a different author when the criterion requires it.
+5. `review_requirement_compliance` and resolve only the returned exceptions.
+6. `evaluate_close_gate` then `set_requirement_status(..., status="done")` after every configured verdict is `verified`. A `not-configured` verdict is explicit legacy state, not a failed or verified contract.
+
+Example create:
+
+`create_requirement_invariant(project="demo", requirement_id="REQ_ENTRY_ID", statement="Adapters delegate to contracts.", kind="architecture", risk="high", key="INV-AUTHOR-1")`
 
 Example: `review_requirement_compliance(project="demo", requirement_ids=["REQ_ENTRY_ID"])`. Successful rows contain no repeated contract prose and an empty `exceptions` list.

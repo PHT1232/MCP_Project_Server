@@ -1,5 +1,7 @@
 import type { ReactNode } from "react";
 
+import { Link } from "../router/router";
+
 import { Card } from "../components/Card";
 import { Callout } from "../components/Callout";
 import { ProjectList } from "../components/ProjectList";
@@ -8,7 +10,7 @@ import { Headline, Highlight, SectionTitle } from "../components/Typography";
 import { useProjects, useRegisterProject } from "../hooks/useProjects";
 import { useNavigate } from "../router/context";
 import { errorText } from "../lib/errors";
-import { projectRoute } from "../routes";
+import { AI_SETTINGS_ROUTE, projectRoute } from "../routes";
 
 /** Landing view: pick a project (FR31) or register a new one. */
 export function ProjectsView(): ReactNode {
@@ -30,7 +32,10 @@ export function ProjectsView(): ReactNode {
       <div className="grid gap-24 md:grid-cols-[1fr_1fr]">
         <Card>
           <div className="flex flex-col gap-16">
-            <SectionTitle>Projects</SectionTitle>
+            <div className="flex items-center justify-between gap-12">
+              <SectionTitle>Projects</SectionTitle>
+              <Link to={AI_SETTINGS_ROUTE}>Global AI settings</Link>
+            </div>
             {projects.isPending ? (
               <p className="text-body text-fey-graphite">Loading…</p>
             ) : projects.isError ? (

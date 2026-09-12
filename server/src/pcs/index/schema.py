@@ -139,7 +139,11 @@ _DDL: tuple[str, ...] = (
         symbol_modes JSONB NOT NULL DEFAULT '{}',
         symbol_count INTEGER NOT NULL DEFAULT 0,
         semantic_model VARCHAR(128),
-        embedded_chunk_count INTEGER NOT NULL DEFAULT 0
+        embedded_chunk_count INTEGER NOT NULL DEFAULT 0,
+        semantic_provider VARCHAR(32),
+        semantic_base_url TEXT,
+        semantic_dimensions INTEGER,
+        reindex_required BOOLEAN NOT NULL DEFAULT FALSE
     )
     """,
     "CREATE INDEX IF NOT EXISTS ix_code_index_files_project_id ON code_index.files (project_id)",

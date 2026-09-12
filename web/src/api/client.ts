@@ -6,6 +6,8 @@
  */
 import type {
   AcceptanceCriterion,
+  AiSettings,
+  AiSettingsInput,
   Briefing,
   CodeMap,
   Entry,
@@ -71,6 +73,65 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return (await response.json()) as T;
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function expectString(record: Record<string, unknown>, key: string): string {
+  const value = record[key];
+  if (typeof value !== "string") throw new ApiError(502, `Invalid AI settings response: ${key}`);
+  return value;
+}
+
+function expectNumber(record: Record<string, unknown>, key: string): number {
+  const value = record[key];
+  if (typeof value !== "number" || !Number.isFinite(value)) throw new ApiError(502, `Invalid AI settings response: ${key}`);
+  return value;
+}
+
+function expectBoolean(record: Record<string, unknown>, key: string): boolean {
+  const value = record[key];
+  if (typeof value !== "boolean") throw new ApiError(502, `Invalid AI settings response: ${key}`);
+  return value;
+}
+
+function expectSource(record: Record<string, unknown>): AiSettings["embedding"]["source"] {
+  const source = record.source;
+  if (source !== "persisted" && source !== "environment" && source !== "default") {
+    throw new ApiError(502, "Invalid AI settings response: source");
+  }
+  return source;
+}
+
+function parseAiSettings(value: unknown): AiSettings {
+  if (!isRecord(value) || !isRecord(value.embedding) || !isRecord(value.summary)) {
+    throw new ApiError(502, "Invalid AI settings response");
+  }
+  const embedding = value.embedding;
+  const summary = value.summary;
+  return {
+    embedding: {
+      backend: expectString(embedding, "backend"),
+      base_url: expectString(embedding, "base_url"),
+      model: expectString(embedding, "model"),
+      dimensions: expectNumber(embedding, "dimensions"),
+      batch_size: expectNumber(embedding, "batch_size"),
+      timeout_seconds: expectNumber(embedding, "timeout_seconds"),
+      api_key_configured: expectBoolean(embedding, "api_key_configured"),
+      source: expectSource(embedding),
+    },
+    summary: {
+      backend: expectString(summary, "backend"),
+      base_url: expectString(summary, "base_url"),
+      model: expectString(summary, "model"),
+      timeout_seconds: expectNumber(summary, "timeout_seconds"),
+      api_key_configured: expectBoolean(summary, "api_key_configured"),
+      source: expectSource(summary),
+    },
+    reindex_required: expectBoolean(value, "reindex_required"),
+  };
+}
+
 function jsonBody(payload: unknown): RequestInit {
   return {
     headers: { "content-type": "application/json" },
@@ -84,6 +145,26 @@ function projectPath(project: string, suffix = ""): string {
 
 export function getHealth(): Promise<Health> {
   return request<Health>("/api/health");
+}
+
+/** T20 / AC-AISET-8 — read the global AI provider configuration. */
+export async function getAiSettings(): Promise<AiSettings> {
+  return parseAiSettings(await request<unknown>("/api/admin/ai-settings"));
+}
+
+/** T20 / AC-AISET-9 — merge-update one or both global AI providers. */
+export function updateAiSettings(
+  input: AiSettingsInput,
+  adminToken: string,
+): Promise<AiSettings> {
+  const body = jsonBody(input);
+  const headers = new Headers(body.headers);
+  headers.set("x-pcs-admin-token", adminToken);
+  return request<unknown>("/api/admin/ai-settings", {
+    ...body,
+    method: "PATCH",
+    headers,
+  }).then(parseAiSettings);
 }
 
 /** FR31 — every registered project with its one-line status. */

@@ -1,5 +1,57 @@
 /** Shapes returned by the `pcs` HTTP API (mirrors pcs.web_api.routes). */
 
+/** T20 — persisted, environment, or built-in source for one global AI provider. */
+export type AiSettingSource = "persisted" | "environment" | "default";
+
+export interface EmbeddingSettings {
+  backend: string;
+  base_url: string;
+  model: string;
+  dimensions: number;
+  batch_size: number;
+  timeout_seconds: number;
+  api_key_configured: boolean;
+  source: AiSettingSource;
+}
+
+export interface SummarySettings {
+  backend: string;
+  base_url: string;
+  model: string;
+  timeout_seconds: number;
+  api_key_configured: boolean;
+  source: AiSettingSource;
+}
+
+export interface AiSettings {
+  embedding: EmbeddingSettings;
+  summary: SummarySettings;
+  reindex_required: boolean;
+}
+
+export interface EmbeddingSettingsInput {
+  backend: string;
+  base_url: string;
+  model: string;
+  dimensions: number;
+  batch_size: number;
+  timeout_seconds: number;
+  api_key?: string | null;
+}
+
+export interface SummarySettingsInput {
+  backend: string;
+  base_url: string;
+  model: string;
+  timeout_seconds: number;
+  api_key?: string | null;
+}
+
+export interface AiSettingsInput {
+  embedding?: EmbeddingSettingsInput;
+  summary?: SummarySettingsInput;
+}
+
 /** One registered project plus its one-line status (FR31). */
 export interface Project {
   id: string;

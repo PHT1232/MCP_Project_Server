@@ -201,4 +201,8 @@ class IndexStatus(Base):
     symbol_count: Mapped[int] = mapped_column(Integer, default=0)
     # Embedding backend model name whose vectors are current, or None (AC21).
     semantic_model: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    semantic_provider: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    semantic_base_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    semantic_dimensions: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    reindex_required: Mapped[bool] = mapped_column(Boolean, default=False)
     embedded_chunk_count: Mapped[int] = mapped_column(Integer, default=0)

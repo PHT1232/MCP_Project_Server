@@ -75,7 +75,7 @@ async def hybrid_search(
     )
     keyword_hits = keyword_result.hits
 
-    backend = backend if backend is not None else get_embedding_backend()
+    backend = backend if backend is not None else await get_embedding_backend(session)
     if backend is None:
         ranked = hybrid_rank(keyword_hits, [], limit=limit)
         return HybridResult(
@@ -86,7 +86,9 @@ async def hybrid_search(
         )
 
     status = await session.get(IndexStatus, row.id)
-    embedded = status.embedded_chunk_count if status is not None else 0
+    embedded = (
+        status.embedded_chunk_count if status is not None and not status.reindex_required else 0
+    )
     if not embedded:
         ranked = hybrid_rank(keyword_hits, [], limit=limit)
         return HybridResult(

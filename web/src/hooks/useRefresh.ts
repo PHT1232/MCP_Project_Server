@@ -16,23 +16,25 @@ interface RefreshControl {
  * FR38 / D6 — the manual refresh. Nothing in the shell polls or subscribes; the
  * only way fresh data enters the UI is this control (or an edit the user makes).
  */
-export function useRefreshAll(project: string | null): RefreshControl {
+export function useRefreshAll(
+  project: string | null,
+  includeGlobal = false,
+): RefreshControl {
   const queryClient = useQueryClient();
   const [lastRefreshedAt, setLastRefreshedAt] = useState<string | null>(null);
   const inFlight = useIsFetching({
-    predicate: (query) =>
-      project !== null && isRefreshable(query.queryKey, project),
+    predicate: (query) => isRefreshable(query.queryKey, project, includeGlobal),
   });
 
   const refresh = useCallback(() => {
-    if (project === null) {
+    if (project === null && !includeGlobal) {
       return;
     }
     setLastRefreshedAt(new Date().toISOString());
     void queryClient.invalidateQueries({
-      predicate: (query) => isRefreshable(query.queryKey, project),
+      predicate: (query) => isRefreshable(query.queryKey, project, includeGlobal),
     });
-  }, [project, queryClient]);
+  }, [includeGlobal, project, queryClient]);
 
   return { refresh, isRefreshing: inFlight > 0, lastRefreshedAt };
 }

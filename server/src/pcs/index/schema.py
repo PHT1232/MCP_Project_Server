@@ -165,6 +165,19 @@ _DDL: tuple[str, ...] = (
     "ON code_index.symbol_refs (scip_symbol)",
     "CREATE INDEX IF NOT EXISTS ix_code_index_symbol_edges_project_id "
     "ON code_index.symbol_edges (project_id)",
+    """
+    CREATE TABLE IF NOT EXISTS code_index.file_notes (
+        project_id VARCHAR(36) NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        path TEXT NOT NULL,
+        summary TEXT NOT NULL,
+        content_hash VARCHAR(64) NOT NULL,
+        updated_by TEXT NOT NULL,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        PRIMARY KEY (project_id, path)
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS ix_code_index_file_notes_project_id "
+    "ON code_index.file_notes (project_id)",
 )
 
 _lock = asyncio.Lock()
@@ -173,14 +186,19 @@ _lock = asyncio.Lock()
 async def ensure_index_schema(session: AsyncSession) -> None:
     """Recreate the ``code_index`` schema only if it is missing. Idempotent (AC15).
 
-    The happy path is a single ``to_regclass`` lookup — effectively free (F1).
+    The happy path is two cheap ``to_regclass`` lookups (embeddings + file_notes).
+    Returning after embeddings alone would skip healing ``file_notes`` (INV-GUIDE-7).
     """
-    probe = await session.execute(text("SELECT to_regclass('code_index.embeddings')"))
-    if probe.scalar() is not None:
+    if await _schema_intact(session):
         return
     async with _lock:
-        probe = await session.execute(text("SELECT to_regclass('code_index.embeddings')"))
-        if probe.scalar() is not None:
+        if await _schema_intact(session):
             return
         for statement in _DDL:
             await session.execute(text(statement))
+
+
+async def _schema_intact(session: AsyncSession) -> bool:
+    embeddings = await session.execute(text("SELECT to_regclass('code_index.embeddings')"))
+    notes = await session.execute(text("SELECT to_regclass('code_index.file_notes')"))
+    return embeddings.scalar() is not None and notes.scalar() is not None

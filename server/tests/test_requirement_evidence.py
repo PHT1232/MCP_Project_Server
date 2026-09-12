@@ -98,7 +98,14 @@ async def _add_required_criterion(
 
 
 async def _pass(
-    ac_id: str, sha: str, *, author: str = "alice", kind: str = "test", project: str = PROJECT
+    ac_id: str,
+    sha: str,
+    *,
+    author: str = "alice",
+    kind: str = "test",
+    project: str = PROJECT,
+    worktree_fingerprint: str | None = None,
+    claim_ref: str | None = None,
 ) -> evidence.EvidenceView:
     async with session_scope() as session:
         return await evidence.record_evidence(
@@ -109,6 +116,8 @@ async def _pass(
             result="passed",
             source_commit=sha,
             author=author,
+            worktree_fingerprint=worktree_fingerprint,
+            claim_ref=claim_ref,
         )
 
 
@@ -286,6 +295,7 @@ async def test_independent_review_rejects_self_authored_review(tmp_path: Path) -
             result="passed",
             source_commit=sha,
             author="bob",
+            review_ref=f"criterion:{ac_id}",
         )
         done = await service.set_requirement_status(
             session, project=PROJECT, entry_id=req_id, status=REQ_DONE
@@ -438,8 +448,8 @@ async def test_open_blocking_violation_survives_soft_deleted_invariant() -> None
     assert done.requirement_status == REQ_DONE
 
 
-async def test_payload_limits_reject_logs_and_do_not_echo_secrets() -> None:
-    req_id = await _seed_requirement()
+async def test_payload_limits_reject_logs_and_do_not_echo_secrets(tmp_path: Path) -> None:
+    req_id, sha = await _seed_git_requirement(tmp_path)
     _, ac_id = await _add_required_criterion(req_id)
     async with session_scope() as session:
         with pytest.raises(ValidationError, match="command_ref") as log_exc:
@@ -449,7 +459,7 @@ async def test_payload_limits_reject_logs_and_do_not_echo_secrets() -> None:
                 criterion_id=ac_id,
                 kind="test",
                 result="passed",
-                source_commit=FAKE_SHA,
+                source_commit=sha,
                 command_ref="pytest\nTraceback (most recent call last):\n  File",
             )
         with pytest.raises(ValidationError, match="artifact_ref") as secret_exc:
@@ -459,7 +469,7 @@ async def test_payload_limits_reject_logs_and_do_not_echo_secrets() -> None:
                 criterion_id=ac_id,
                 kind="test",
                 result="passed",
-                source_commit=FAKE_SHA,
+                source_commit=sha,
                 artifact_ref="password=super-secret-value",
             )
         with pytest.raises(ValidationError, match="summary"):
@@ -506,9 +516,11 @@ async def test_concurrent_evidence_writes_preserve_all_and_latest_is_determinist
     assert gate.ac_verified == 1
 
 
-async def test_project_isolation_rejects_foreign_criterion_and_requirement() -> None:
-    local = await _seed_requirement(title="Local")
-    foreign = await _seed_requirement(name=OTHER, title="Foreign")
+async def test_project_isolation_rejects_foreign_criterion_and_requirement(tmp_path: Path) -> None:
+    local, sha = await _seed_git_requirement(tmp_path / "local", title="Local")
+    foreign, foreign_sha = await _seed_git_requirement(
+        tmp_path / "foreign", name=OTHER, title="Foreign"
+    )
     _, local_ac = await _add_required_criterion(local)
     async with session_scope() as session:
         inv = await contracts.create_invariant(
@@ -535,7 +547,7 @@ async def test_project_isolation_rejects_foreign_criterion_and_requirement() -> 
                 criterion_id=foreign_ac.id,
                 kind="test",
                 result="passed",
-                source_commit=FAKE_SHA,
+                source_commit=foreign_sha,
             )
         with pytest.raises(ValidationError, match="cross-project"):
             await evidence.evaluate_close_gate(session, project=PROJECT, requirement_id=foreign)
@@ -545,13 +557,13 @@ async def test_project_isolation_rejects_foreign_criterion_and_requirement() -> 
             criterion_id=local_ac,
             kind="test",
             result="passed",
-            source_commit=FAKE_SHA,
+            source_commit=sha,
         )
     assert ok.criterion_id == local_ac
 
 
-async def test_evidence_binds_immutable_contract_revision() -> None:
-    req_id = await _seed_requirement()
+async def test_evidence_binds_immutable_contract_revision(tmp_path: Path) -> None:
+    req_id, sha = await _seed_git_requirement(tmp_path)
     _, ac_id = await _add_required_criterion(req_id)
     async with session_scope() as session:
         row = await evidence.record_evidence(
@@ -560,7 +572,7 @@ async def test_evidence_binds_immutable_contract_revision() -> None:
             criterion_id=ac_id,
             kind="test",
             result="passed",
-            source_commit=FAKE_SHA,
+            source_commit=sha,
         )
         revisions = await contracts.list_contract_revisions(
             session, project=PROJECT, requirement_id=req_id
@@ -755,7 +767,7 @@ async def test_short_sha_expands_or_rejects(tmp_path: Path) -> None:
             source_commit=sha,
             author="alice",
         )
-        with pytest.raises(ValidationError, match="40-character SHA"):
+        with pytest.raises(ValidationError, match="existing commit object"):
             await evidence.record_evidence(
                 session,
                 project=PROJECT,
@@ -784,21 +796,23 @@ async def test_dirty_content_changes_fingerprint_with_same_porcelain(tmp_path: P
     req_id, sha = await _seed_git_requirement(tmp_path)
     _, ac_id = await _add_required_criterion(req_id, ac_key="AC-DIRTY")
     (tmp_path / "README").write_text("dirty-one", encoding="utf-8")
-    first = await _pass(ac_id, sha)
+    _, first_fp = await evidence._repo_state(str(tmp_path))
+    first = await _pass(ac_id, sha, worktree_fingerprint=first_fp)
     (tmp_path / "README").write_text("dirty-two", encoding="utf-8")
-    second = await _pass(ac_id, sha)
+    _, second_fp = await evidence._repo_state(str(tmp_path))
+    second = await _pass(ac_id, sha, worktree_fingerprint=second_fp)
     async with session_scope() as session:
         gate = await evidence.evaluate_close_gate(session, project=PROJECT, requirement_id=req_id)
         listed = await evidence.list_evidence(session, project=PROJECT, criterion_id=ac_id)
     assert first.worktree_fingerprint != second.worktree_fingerprint
     assert listed[0].worktree_fingerprint != listed[1].worktree_fingerprint
-    assert gate.passed is True
+    assert gate.passed is False
     (tmp_path / "README").write_text("dirty-three", encoding="utf-8")
     async with session_scope() as session:
         stale_gate = await evidence.evaluate_close_gate(
             session, project=PROJECT, requirement_id=req_id
         )
-        with pytest.raises(evidence.CloseGateError, match="stale AC-DIRTY"):
+        with pytest.raises(evidence.CloseGateError, match=r"(?:stale|provisional) AC-DIRTY"):
             await service.set_requirement_status(
                 session, project=PROJECT, entry_id=req_id, status=REQ_DONE
             )
@@ -831,24 +845,25 @@ async def test_untracked_file_content_change_is_stale(tmp_path: Path) -> None:
         created = await evidence.evaluate_close_gate(
             session, project=PROJECT, requirement_id=req_id
         )
-        with pytest.raises(evidence.CloseGateError, match="stale AC-UNTRACKED"):
+        with pytest.raises(evidence.CloseGateError, match=r"(?:stale|provisional) AC-UNTRACKED"):
             await service.set_requirement_status(
                 session, project=PROJECT, entry_id=req_id, status=REQ_DONE
             )
     assert created.validation == "stale"
-    second = await _pass(ac_id, sha)
+    _, fingerprint = await evidence._repo_state(str(tmp_path))
+    second = await _pass(ac_id, sha, worktree_fingerprint=fingerprint)
     async with session_scope() as session:
         current = await evidence.evaluate_close_gate(
             session, project=PROJECT, requirement_id=req_id
         )
-    assert current.passed is True
+    assert current.passed is False
     assert second.worktree_fingerprint
     scratch.write_text("untracked-two", encoding="utf-8")
     async with session_scope() as session:
         changed = await evidence.evaluate_close_gate(
             session, project=PROJECT, requirement_id=req_id
         )
-        with pytest.raises(evidence.CloseGateError, match="stale AC-UNTRACKED"):
+        with pytest.raises(evidence.CloseGateError, match=r"(?:stale|provisional) AC-UNTRACKED"):
             await service.set_requirement_status(
                 session, project=PROJECT, entry_id=req_id, status=REQ_DONE
             )
@@ -871,9 +886,11 @@ async def test_unreadable_git_state_fails_closed(tmp_path: Path) -> None:
     assert gate.validation == "stale"
 
 
-async def test_ownership_constraints_reject_cross_requirement_and_revision_sql() -> None:
-    left = await _seed_requirement(title="Left")
-    right = await _seed_requirement(title="Right")
+async def test_ownership_constraints_reject_cross_requirement_and_revision_sql(
+    tmp_path: Path,
+) -> None:
+    left, sha = await _seed_git_requirement(tmp_path, title="Left")
+    right = await _seed_requirement(title="Right", root=tmp_path)
     _, left_ac = await _add_required_criterion(left, inv_key="INV-L", ac_key="AC-L")
     _, right_ac = await _add_required_criterion(right, inv_key="INV-R", ac_key="AC-R")
     async with session_scope() as session:
@@ -949,7 +966,7 @@ async def test_ownership_constraints_reject_cross_requirement_and_revision_sql()
             criterion_id=left_ac,
             kind="test",
             result="passed",
-            source_commit=FAKE_SHA,
+            source_commit=sha,
         )
     assert ok.contract_revision_id == left_rev.id
     assert left_invs[0].requirement_id == left

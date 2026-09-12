@@ -6,7 +6,8 @@ validation, inspect logs, or make LLM judgements.
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable, Sequence
+import shlex
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Final, cast
 
@@ -15,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from pcs.context import service as context_service
 from pcs.context.types import (
     INDEPENDENT_REVIEW_REQUIRED,
+    RISK_HIGH,
     SECTION_REQUIREMENTS,
     ContractNotFoundError,
     CriterionView,
@@ -27,11 +29,14 @@ MAX_EXCEPTIONS_PER_REQUIREMENT: Final = 8
 MAX_FILE_REFS_PER_EXCEPTION: Final = 2
 MAX_EVIDENCE_ROWS: Final = 20
 MAX_VIOLATION_ROWS: Final = 20
-
-EvidenceFreshness = Callable[..., bool]
-RepoState = Callable[[str], Awaitable[tuple[str | None, str | None]]]
-evidence_is_stale = cast(EvidenceFreshness, vars(evidence)["_is_stale"])
-evidence_repo_state = cast(RepoState, vars(evidence)["_repo_state"])
+MAX_WARNING_CODES: Final = 6
+NORMALIZED_TEST_REUSE_THRESHOLD: Final = 3
+WARNING_MISSING_COMMIT_REF: Final = "missing-commit-ref"
+WARNING_MISSING_FILE_TEST_REF: Final = "missing-file-test-ref"
+WARNING_DIRTY_NO_FINGERPRINT: Final = "dirty-no-fingerprint"
+WARNING_SECURITY_GENERIC_COMMAND: Final = "security-generic-command"
+WARNING_EXCESSIVE_TEST_REUSE: Final = "excessive-test-reuse"
+WARNING_REVIEWER_AUTHOR_COLLISION: Final = "reviewer-author-collision"
 
 
 @dataclass(frozen=True)
@@ -80,13 +85,131 @@ def _latest(rows: Sequence[evidence.EvidenceView]) -> evidence.EvidenceView | No
     return max(rows, key=lambda row: row.seq, default=None)
 
 
+def _normalized_test_ref(value: str) -> str:
+    """Normalize references before deterministic reuse counting."""
+    normalized = value.strip().replace("\\", "/")
+    while normalized.startswith("./"):
+        normalized = normalized[2:]
+    normalized = "/".join(part for part in normalized.split("/") if part)
+    return normalized.casefold()
+
+
+def _command_tokens(value: str) -> tuple[str, ...] | None:
+    """Tokenize command text and unwrap supported shell runners without execution."""
+    try:
+        tokens = tuple(shlex.split(value, posix=True))
+    except ValueError:
+        return None
+    for _ in range(3):
+        if (
+            len(tokens) >= 3
+            and tokens[0].casefold() in {"sh", "bash", "dash"}
+            and tokens[1] == "-c"
+        ):
+            try:
+                tokens = tuple(shlex.split(tokens[2], posix=True))
+            except ValueError:
+                return None
+            continue
+        if len(tokens) >= 3 and tokens[:2] == ("uv", "run"):
+            tokens = tokens[2:]
+            continue
+        break
+    return tuple(token.casefold() for token in tokens)
+
+
+def _is_generic_command(value: str) -> bool:
+    """Recognize project-wide gates from safely tokenized command text."""
+    tokens = _command_tokens(value)
+    if not tokens:
+        return False
+    command = tokens[0]
+    args = tokens[1:]
+    if command == "just" and args and args[0] == "check":
+        return all(arg.startswith("-") for arg in args[1:])
+    if command in {"pytest", "py.test"}:
+        return not any(not arg.startswith("-") for arg in args)
+    if command == "cargo" and args and args[0] in {"test", "build", "clippy"}:
+        return not any(not arg.startswith("-") for arg in args[1:])
+    if command in {"npm", "pnpm", "yarn"}:
+        scripts = args[1:] if args[:1] == ("run",) else args
+        return (
+            bool(scripts)
+            and scripts[0] in {"test", "build", "lint"}
+            and all(arg.startswith("-") for arg in scripts[1:])
+        )
+    return False
+
+
+def _warning_codes(
+    criteria: Sequence[CriterionView],
+    invariants_by_id: dict[str, object],
+    rows: Sequence[evidence.EvidenceView],
+) -> tuple[str, ...]:
+    """Return six bounded deterministic weak-evidence codes (INV-EVIDENCE-5).
+
+    ``missing-commit-ref`` and ``dirty-no-fingerprint`` diagnose explicit legacy
+    rows; the public recorder rejects those states for newly recorded evidence.
+    """
+    del invariants_by_id
+    current = [row for row in rows if row.lifecycle != evidence.EVIDENCE_LIFECYCLE_SUPERSEDED]
+    verified = [row for row in current if row.lifecycle == evidence.EVIDENCE_LIFECYCLE_VERIFIED]
+    codes: set[str] = set()
+    if any(not row.source_commit or not row.source_commit_verified for row in current):
+        codes.add(WARNING_MISSING_COMMIT_REF)
+    if any(
+        (row.file_ref is not None and row.file_ref_verified is False)
+        or (row.test_ref is not None and row.test_ref_verified is False)
+        or (row.evidence_kind in {"test", "file"} and not (row.test_ref or row.file_ref))
+        for row in current
+    ):
+        codes.add(WARNING_MISSING_FILE_TEST_REF)
+    if any(
+        row.recording_state == evidence.EVIDENCE_LIFECYCLE_PROVISIONAL
+        and row.worktree_fingerprint is None
+        for row in current
+    ):
+        codes.add(WARNING_DIRTY_NO_FINGERPRINT)
+    criterion_by_id = {row.id: row for row in criteria}
+    security_terms = ("security", "auth", "secret", "permission", "access", "injection")
+    if any(
+        row.evidence_kind == "command"
+        and row.command_ref is not None
+        and _is_generic_command(row.command_ref)
+        and any(
+            term in criterion_by_id[row.criterion_id].statement.casefold()
+            for term in security_terms
+        )
+        for row in verified
+        if row.criterion_id in criterion_by_id
+    ):
+        codes.add(WARNING_SECURITY_GENERIC_COMMAND)
+    test_reuse: dict[str, set[str]] = {}
+    for row in verified:
+        if row.test_ref:
+            test_reuse.setdefault(_normalized_test_ref(row.test_ref), set()).add(row.criterion_id)
+    if any(len(ids) > NORMALIZED_TEST_REUSE_THRESHOLD for ids in test_reuse.values()):
+        codes.add(WARNING_EXCESSIVE_TEST_REUSE)
+    implementation_authors: dict[str, set[str]] = {}
+    review_authors: dict[str, set[str]] = {}
+    for row in verified:
+        target = review_authors if row.evidence_kind == "review" else implementation_authors
+        target.setdefault(row.criterion_id, set()).add(row.author.strip().casefold())
+    if any(
+        implementation_authors.get(criterion_id, set()) & reviewers
+        for criterion_id, reviewers in review_authors.items()
+    ):
+        codes.add(WARNING_REVIEWER_AUTHOR_COLLISION)
+    return tuple(sorted(codes)[:MAX_WARNING_CODES])
+
+
 def _criterion_exception_kind(
     criterion: CriterionView,
     rows: Sequence[evidence.EvidenceView],
     *,
     current_revision_id: str | None,
-    current_commit: str | None,
-    current_fingerprint: str | None,
+    invariant_risk: str,
+    invariant_id: str,
 ) -> str | None:
     """Match T12 close-gate semantics using stable criterion identity (T13)."""
     current_rows = [row for row in rows if row.contract_revision_id == current_revision_id]
@@ -102,26 +225,23 @@ def _criterion_exception_kind(
         return "stale" if older_pass else "missing"
     if latest_impl.result != evidence.EVIDENCE_RESULT_PASSED:
         return "missing"
-    if evidence_is_stale(
-        latest_impl,
-        current_commit=current_commit,
-        current_fingerprint=current_fingerprint,
-    ):
+    if latest_impl.lifecycle != evidence.EVIDENCE_LIFECYCLE_VERIFIED:
         return "stale"
-    if criterion.independent_review != INDEPENDENT_REVIEW_REQUIRED:
+    if criterion.independent_review != INDEPENDENT_REVIEW_REQUIRED and invariant_risk != RISK_HIGH:
         return None
     latest_review = _latest(reviews)
     if latest_review is None:
         return "review-missing"
     if latest_review.result != evidence.EVIDENCE_RESULT_PASSED:
         return "review-failed"
-    if evidence_is_stale(
-        latest_review,
-        current_commit=current_commit,
-        current_fingerprint=current_fingerprint,
-    ):
+    if latest_review.lifecycle != evidence.EVIDENCE_LIFECYCLE_VERIFIED:
         return "review-stale"
     if latest_review.author.strip().casefold() == latest_impl.author.strip().casefold():
+        return "review-failed"
+    if latest_review.review_ref not in {
+        f"criterion:{criterion.id}",
+        f"invariant:{invariant_id}",
+    }:
         return "review-failed"
     return None
 
@@ -153,6 +273,9 @@ async def compact_requirement_evidence(
             "kind": row.get("evidence_kind"),
             "result": row.get("result"),
             "source_commit": row.get("source_commit"),
+            "lifecycle": row.get("lifecycle"),
+            "claim_ref": row.get("claim_ref"),
+            "review_ref": row.get("review_ref"),
             "file_refs": _refs(
                 _str_value(row.get("file_ref")),
                 _str_value(row.get("test_ref")),
@@ -215,6 +338,7 @@ async def _exceptions(
         session, project=project, requirement_id=requirement_id
     )
     invariant_keys = {row.id: row.key for row in invariants}
+    invariant_risks = {row.id: row.risk for row in invariants}
     criteria = await contracts.list_criteria(
         session, project=project, requirement_id=requirement_id
     )
@@ -229,9 +353,6 @@ async def _exceptions(
     evidence_by_criterion: dict[str, list[evidence.EvidenceView]] = {}
     for evidence_row in evidence_rows:
         evidence_by_criterion.setdefault(evidence_row.criterion_id, []).append(evidence_row)
-    project_row = await context_service.resolve_project(session, project)
-    current_commit, current_fingerprint = await evidence_repo_state(project_row.root_path)
-
     output: list[dict[str, object]] = []
     for criterion in criteria:
         if not criterion.required or criterion.invariant_id not in invariant_keys:
@@ -240,8 +361,8 @@ async def _exceptions(
             criterion,
             evidence_by_criterion.get(criterion.id, []),
             current_revision_id=current_revisions.get(criterion.id),
-            current_commit=current_commit,
-            current_fingerprint=current_fingerprint,
+            invariant_risk=invariant_risks[criterion.invariant_id],
+            invariant_id=criterion.invariant_id,
         )
         if kind is None:
             continue
@@ -315,6 +436,16 @@ async def review_requirement_compliance(
         gate = await evidence.evaluate_close_gate(
             session, project=project, requirement_id=requirement_id
         )
+        criteria = await contracts.list_criteria(
+            session, project=project, requirement_id=requirement_id
+        )
+        invariants = await contracts.list_invariants(
+            session, project=project, requirement_id=requirement_id, include_deleted=True
+        )
+        evidence_rows = await evidence.list_evidence(
+            session, project=project, requirement_id=requirement_id
+        )
+        warnings = _warning_codes(criteria, {row.id: row for row in invariants}, evidence_rows)
         exceptions, omitted = await _exceptions(
             session, project=project, requirement_id=requirement_id
         )
@@ -332,6 +463,8 @@ async def review_requirement_compliance(
                 # T12 canonical values: ok, stale, not-configured. Missing ACs are exceptions.
                 "validation": gate.validation,
                 "review": gate.review,
+                "warning_codes": list(warnings),
+                "warning_count": len(warnings),
                 "exceptions": exceptions,
                 "omitted_exceptions": omitted,
             }

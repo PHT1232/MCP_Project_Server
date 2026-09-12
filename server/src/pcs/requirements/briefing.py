@@ -108,6 +108,9 @@ class CloseGateSummary:
     stale_count: int = 0
     missing_links: tuple[_PayloadLink, ...] = ()
     stale_links: tuple[_PayloadLink, ...] = ()
+    evidence_counts: tuple[tuple[str, int], ...] = ()
+    warning_count: int = 0
+    violation_count: int = 0
 
     @classmethod
     def unconfigured(cls) -> CloseGateSummary:
@@ -315,6 +318,15 @@ def close_gate_from_payload(payload: object) -> CloseGateSummary:
                 blocking.append((key, summary))
             if len(blocking) >= 8:
                 break
+    lifecycle_raw = data.get("evidence_lifecycle")
+    evidence_counts: list[tuple[str, int]] = []
+    if isinstance(lifecycle_raw, Mapping):
+        for key in ("verified-at-commit", "provisional", "stale", "superseded"):
+            count = _as_int(lifecycle_raw.get(key))
+            if count:
+                evidence_counts.append((key, count))
+    warning_count = _as_int(data.get("warning_count")) or 0
+    violation_count = _as_int(data.get("violation_count")) or 0
     stale_count = _as_int(data.get("stale_count"))
     blocking_count = _as_int(data.get("blocking_count"))
     if blocking_count is None:
@@ -337,6 +349,9 @@ def close_gate_from_payload(payload: object) -> CloseGateSummary:
         stale_count=stale_count,
         missing_links=missing_links,
         stale_links=stale_links,
+        evidence_counts=tuple(evidence_counts),
+        warning_count=warning_count,
+        violation_count=violation_count,
     )
 
 
@@ -391,10 +406,13 @@ def _format_close_gate(gate: CloseGateSummary) -> str:
         review_line += "s)" if gate.blocking_count != 1 else ")"
     else:
         review_line = f"Review: {gate.review}"
+    lifecycle = ", ".join(f"{key}={count}" for key, count in gate.evidence_counts) or "none"
     return "\n".join(
         (
             "CLOSE GATE",
             ac_line,
+            f"Evidence: {lifecycle}",
+            f"Findings: warnings={gate.warning_count}, violations={gate.violation_count}",
             f"Validation: {validation}",
             review_line,
             DRILL_DOWN_LINE,

@@ -55,7 +55,7 @@ Do not edit MCP/HTTP/frontend/docs/requirements modules or `requirements/service
 - [x] Markdown output is deterministic and contains coverage, prose, connections, undocumented and stale states — `test_markdown_is_deterministic`
 - [x] Focused tests and `just check` pass
 - [x] Handoff lists schema, payload shape, security decisions, test evidence, and limitations
-- [ ] Independent review of path safety, transactions, schema healing, and SQL parameterization
+- [x] Independent review of path safety, transactions, schema healing, and SQL parameterization
 
 ## Required evidence
 
@@ -74,52 +74,37 @@ just check
 
 ## Handoff
 
-Status: **ready for independent review** on `task/T15-codebase-guide-core`. R-064 stays **in-progress** until a clean independent review, fresh evidence at the commit SHA, violations resolved, and `evaluate_close_gate` passes.
+Status: **code + independent review clean** on `task/T15-codebase-guide-core` @ `f89efcc`. R-064 stays **in-progress** — close gate blocked on fresh evidence at this SHA.
 
 ### Review fixes (this pass)
 
-- **INV-GUIDE-5 / blocking `4054d8f2`:** `pcs.repofile.atomic_write` now takes `contain_under` and re-checks containment immediately before `os.replace` (and again on the final real path). Relative guide writes from `write_guide_file` pass the project root so a symlink planted after resolve cannot escape. Interrupted temp write / replace leaves the prior artifact intact.
-- **INV-GUIDE-2 / warning `31e69995`:** `_load_connections` joins both `src_path` and `dst_path` to active `code_index.files` with `skipped=false`; skipped and missing endpoints are dropped.
-- **Tests:** `test_relative_traversal_rejected_and_writes_atomic` covers symlink escape + interrupted replace; removed tautology `artifact.read_text(...) == first or artifact.exists()`; added `test_connection_facts_exclude_skipped_and_missing_endpoints`.
+- **INV-GUIDE-5 / blocking `4054d8f2`:** FIXED + resolved. `atomic_write(..., contain_under=)` re-checks before `os.replace` and on the final path; relative `write_guide_file` passes project root.
+- **INV-GUIDE-2 / warning `31e69995`:** FIXED + resolved. `_load_connections` joins both endpoints to active `code_index.files` (`skipped=false`).
+- **Tests:** symlink race, interrupted replace, connection skipped/missing endpoints; removed tautological markdown assertion.
 
-### Schema
+### Independent review
 
-`code_index.file_notes` (`0008_codebase_guide`, down revision `0007_requirement_evidence`):
+Agent [T15 independent review](4d9c8799-9e73-4726-bb4a-9d55f32052f4) verdict **CLEAN** at `f89efcc`. Both prior findings FIXED; AC-GUIDE-1/2/3/5/6/7 pass; only notes on absolute configured paths and post-replace cleanup.
 
-- PK `(project_id, path)` — not `files.id` (INV-GUIDE-3)
-- `summary text`, `content_hash varchar(64)`, `updated_by text`, `updated_at timestamptz`
-- FK `project_id → projects.id` ON DELETE CASCADE
+### PCS gate (live)
 
-AC15 `ensure_index_schema` probes **both** `code_index.embeddings` and `code_index.file_notes` before returning, then applies IF NOT EXISTS DDL including `file_notes`.
+- Violations `4054d8f2` and `31e69995`: **resolved**
+- `evaluate_close_gate`: `passed=false`, `review=passed`, `validation=stale`, `ac_verified=0/12`
+- **Blocker:** PCS project root is `/repos/MCP_Project_Server` on host `100.86.141.82`. Recording evidence with `source_commit=f89efcc…` fails: `source_commit must resolve to an existing commit object` (T19 strict git resolve). No push was done per instructions, so the remote checkout cannot see this SHA. After the SHA is available on that root (push + pull, or equivalent sync), re-record all 12 ACs + review evidence, re-run `evaluate_close_gate`, then set `R-064=done` only if it passes.
 
-### Payload shape
+### Validation
 
-`get_codebase_guide(project, scope?, include=all|documented|undocumented|stale)`:
-
-```json
-{"project":"...","scope":null,"include":"all","coverage":{"documented":1,"total":4,"stale":0},"generated_from":{"source":"code_index","indexed":true},"files":[{"path":"lib/money.py","language":"python","loc":3,"symbols":["Money"],"imports":[],"imported_by":["services/billing/invoice.py"],"summary":"...","note":{"updated_by":"...","updated_at":"...","content_hash":"..."},"stale":false}]}
-```
-
-`describe_files` applies valid notes, reports `unknown` with bounded `near` matches, deletes on empty summary, then attempts `write_guide_file`.
-
-### Security
-
-- Relative `PCS_CODEBASE_GUIDE_FILE` and note paths reject `..`; writes use temp + `os.replace` with write-time root containment (`pcs.repofile`).
-- Absolute configured paths follow the requirements-file policy (used as-is, no project-root containment).
-- SQL uses bound parameters only.
-- Read-only artifact I/O is caught; the DB note remains (`file_writable: false`).
-- Summaries reject secrets/diffs/logs and >8000 chars.
-
-### Validation (pre-commit)
-
-- `uv run pytest tests/test_codebase_guide.py` — 13 passed (includes migration container round-trip)
+- `uv run pytest tests/test_codebase_guide.py` — 13 passed (container migration round-trip included)
 - `just check` — 241 passed / 1 skipped server, 68 vitest
 - `ruff` / `mypy --strict` / `git diff --check` — clean
-- Host `alembic upgrade/downgrade` against the shared DB was blocked because that DB already sits on T19 `0019_evidence_quality` (out of this worktree). Container migration test covers 0008 round-trip.
+
+### Schema / payload / security
+
+Unchanged from prior handoff: path-keyed `file_notes`, include modes, bound SQL, read-only artifact degradation, write-time root containment for relative guide paths.
 
 ### Limitations / out of scope
 
-No MCP/HTTP/frontend (T16–T18). `.env.example` and ROADMAP not edited (not owned). `pcs.requirements.service` not refactored onto `pcs.repofile`. No push/merge. Independent review + PCS evidence/close gate still required after commit.
+No MCP/HTTP/frontend (T16–T18). No push/merge. Evidence + `R-064=done` still pending remote commit visibility.
 
 ### New dependencies
 

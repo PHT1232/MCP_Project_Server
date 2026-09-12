@@ -12,7 +12,7 @@ import hashlib
 import os
 import re
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Final
@@ -40,6 +40,10 @@ from pcs.db.models import (
 from pcs.requirements import contracts
 
 __all__ = [
+    "EVIDENCE_LIFECYCLE_PROVISIONAL",
+    "EVIDENCE_LIFECYCLE_STALE",
+    "EVIDENCE_LIFECYCLE_SUPERSEDED",
+    "EVIDENCE_LIFECYCLE_VERIFIED",
     "EVIDENCE_RESULT_FAILED",
     "EVIDENCE_RESULT_PASSED",
     "EVIDENCE_RESULT_PENDING",
@@ -81,6 +85,17 @@ SUMMARY_MAX: Final = 200
 COMMIT_SHORT_MIN: Final = 7
 COMMIT_FULL_LEN: Final = 40
 FINGERPRINT_MAX: Final = 64
+CLAIM_REF_MAX: Final = 160
+REVIEW_REF_MAX: Final = 80
+_REVIEW_REF_RE = re.compile(
+    r"^(criterion|invariant):[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+    re.IGNORECASE,
+)
+EVIDENCE_LIFECYCLE_PROVISIONAL: Final = "provisional"
+EVIDENCE_LIFECYCLE_VERIFIED: Final = "verified-at-commit"
+EVIDENCE_LIFECYCLE_STALE: Final = "stale"
+EVIDENCE_LIFECYCLE_SUPERSEDED: Final = "superseded"
+_CLEAN_FINGERPRINT: Final = hashlib.sha256(b"").hexdigest()
 
 _COMMIT_RE = re.compile(r"^[0-9a-f]{7,40}$", re.IGNORECASE)
 _FULL_COMMIT_RE = re.compile(r"^[0-9a-f]{40}$")
@@ -117,9 +132,21 @@ class EvidenceView:
     source_commit: str
     worktree_fingerprint: str | None
     artifact_ref: str | None
+    claim_ref: str | None
+    review_ref: str | None
+    recording_state: str
+    effective_lifecycle: str
+    source_commit_verified: bool
+    file_ref_verified: bool | None
+    test_ref_verified: bool | None
     author: str
     created_at: datetime
     seq: int
+
+    @property
+    def lifecycle(self) -> str:
+        """Return the derived four-state lifecycle (INV-EVIDENCE-2)."""
+        return self.effective_lifecycle
 
     def as_dict(self) -> dict[str, object]:
         return {
@@ -136,6 +163,14 @@ class EvidenceView:
             "source_commit": self.source_commit,
             "worktree_fingerprint": self.worktree_fingerprint,
             "artifact_ref": self.artifact_ref,
+            "claim_ref": self.claim_ref,
+            "review_ref": self.review_ref,
+            "recording_state": self.recording_state,
+            "lifecycle": self.lifecycle,
+            "effective_lifecycle": self.effective_lifecycle,
+            "source_commit_verified": self.source_commit_verified,
+            "file_ref_verified": self.file_ref_verified,
+            "test_ref_verified": self.test_ref_verified,
             "author": self.author,
             "seq": self.seq,
             "created_at": self.created_at.isoformat(),
@@ -246,6 +281,13 @@ def _as_evidence(row: RequirementEvidence) -> EvidenceView:
         source_commit=row.source_commit,
         worktree_fingerprint=row.worktree_fingerprint,
         artifact_ref=row.artifact_ref,
+        claim_ref=row.claim_ref,
+        review_ref=row.review_ref,
+        recording_state=row.recording_state,
+        effective_lifecycle=row.recording_state,
+        source_commit_verified=row.source_commit_verified,
+        file_ref_verified=row.file_ref_verified,
+        test_ref_verified=row.test_ref_verified,
         author=row.author,
         created_at=row.created_at,
         seq=row.seq,
@@ -376,15 +418,18 @@ def _fingerprint_dirty_layers(
 
 
 async def _repo_state(root: str) -> tuple[str | None, str | None]:
-    """Return ``(full_head_sha, dirty_fingerprint)`` or ``(None, None)`` if unreadble."""
+    """Return the current commit and a bounded clean/dirty fingerprint (INV-EVIDENCE-1)."""
     commit = await _git(root, "rev-parse", "HEAD")
     if commit is None or not _FULL_COMMIT_RE.fullmatch(commit.lower()):
         return None, None
     index_listing = await _git_bytes(root, "ls-files", "-s", "-z")
+    staged = await _git_bytes(root, "diff", "--cached", "--name-only", "-z")
     unstaged = await _git_bytes(root, "diff", "--name-only", "-z")
     untracked = await _git_bytes(root, "ls-files", "-o", "--exclude-standard", "-z")
-    if index_listing is None or unstaged is None or untracked is None:
+    if index_listing is None or staged is None or unstaged is None or untracked is None:
         return None, None
+    if not staged and not unstaged and not untracked:
+        return commit.lower(), _CLEAN_FINGERPRINT
     return commit.lower(), _fingerprint_dirty_layers(
         index_listing=index_listing, unstaged=unstaged, untracked=untracked, root=root
     )
@@ -402,9 +447,37 @@ async def _normalize_commit(root: str, value: str) -> str:
         full = resolved.lower()
         if _FULL_COMMIT_RE.fullmatch(full):
             return full
-    if _FULL_COMMIT_RE.fullmatch(cleaned):
-        return cleaned
-    raise ValidationError("source_commit could not be resolved to a full 40-character SHA")
+    raise ValidationError("source_commit must resolve to an existing commit object")
+
+
+def _normalize_repo_ref(value: str | None, *, field: str, max_chars: int) -> str | None:
+    bounded = _bound_optional(value, field=field, max_chars=max_chars)
+    if bounded is None:
+        return None
+    normalized = bounded.replace("\\", "/")
+    while normalized.startswith("./"):
+        normalized = normalized[2:]
+    if normalized.startswith("/") or any(part in {"", ".."} for part in normalized.split("/")):
+        raise ValidationError(f"{field} must be a repository-relative path")
+    return normalized
+
+
+def _bound_review_ref(value: str | None) -> str | None:
+    bounded = _bound_optional(value, field="review_ref", max_chars=REVIEW_REF_MAX)
+    if bounded is None:
+        return None
+    normalized = bounded.casefold()
+    if not _REVIEW_REF_RE.fullmatch(normalized):
+        raise ValidationError("review_ref must be criterion:<uuid> or invariant:<uuid>")
+    return normalized
+
+
+async def _commit_has_path(root: str, commit: str, path: str | None) -> bool | None:
+    """Return whether a claimed commit path resolves specifically to a blob."""
+    if path is None:
+        return None
+    object_type = await _git(root, "cat-file", "-t", f"{commit}:{path}")
+    return object_type == "blob"
 
 
 def _is_stale(
@@ -419,7 +492,7 @@ def _is_stale(
         return True
     stored = evidence.worktree_fingerprint
     if stored is None:
-        return current_fingerprint != hashlib.sha256(b"").hexdigest() and bool(current_fingerprint)
+        return current_fingerprint != _CLEAN_FINGERPRINT
     return stored != current_fingerprint
 
 
@@ -498,8 +571,10 @@ async def record_evidence(
     file_ref: str | None = None,
     worktree_fingerprint: str | None = None,
     artifact_ref: str | None = None,
+    claim_ref: str | None = None,
+    review_ref: str | None = None,
 ) -> EvidenceView:
-    """Append compact evidence for one criterion. Does not change status (D4)."""
+    """Append bounded evidence with explicit recording state (INV-EVIDENCE-1..3)."""
     kind_key = kind.strip().lower()
     if kind_key not in EVIDENCE_KINDS:
         raise ValidationError(f"evidence kind must be one of {sorted(EVIDENCE_KINDS)}")
@@ -527,9 +602,33 @@ async def record_evidence(
         requirement_id=invariant.requirement_id,
         criterion_id=criterion.id,
     )
-    _, current_fp = await _repo_state(project_row.root_path)
+    current_commit, current_fp = await _repo_state(project_row.root_path)
     supplied_fp = _bound_fingerprint(worktree_fingerprint)
-    stored_fp = supplied_fp if supplied_fp is not None else current_fp
+    dirty = current_fp is not None and current_fp != _CLEAN_FINGERPRINT
+    if dirty and supplied_fp is None:
+        raise ValidationError("dirty-worktree: worktree_fingerprint required")
+    if dirty and supplied_fp != current_fp:
+        raise ValidationError("dirty-worktree: worktree_fingerprint does not match")
+    normalized_command_ref = _bound_optional(command_ref, field="command_ref", max_chars=REF_MAX)
+    normalized_artifact_ref = _bound_optional(
+        artifact_ref, field="artifact_ref", max_chars=ARTIFACT_MAX
+    )
+    normalized_claim_ref = _bound_optional(claim_ref, field="claim_ref", max_chars=CLAIM_REF_MAX)
+    normalized_review_ref = _bound_review_ref(review_ref)
+    normalized_file_ref = _normalize_repo_ref(file_ref, field="file_ref", max_chars=FILE_REF_MAX)
+    normalized_test_ref = _normalize_repo_ref(test_ref, field="test_ref", max_chars=REF_MAX)
+    normalized_commit = await _normalize_commit(project_row.root_path, source_commit)
+    file_verified = await _commit_has_path(
+        project_row.root_path, normalized_commit, normalized_file_ref
+    )
+    test_verified = await _commit_has_path(
+        project_row.root_path, normalized_commit, normalized_test_ref
+    )
+    recording_lifecycle = (
+        EVIDENCE_LIFECYCLE_PROVISIONAL
+        if dirty or current_commit is None or normalized_commit != current_commit
+        else EVIDENCE_LIFECYCLE_VERIFIED
+    )
     row = RequirementEvidence(
         project_id=project_row.id,
         requirement_id=invariant.requirement_id,
@@ -537,12 +636,18 @@ async def record_evidence(
         contract_revision_id=revision.id,
         evidence_kind=kind_key,
         result=result_key,
-        command_ref=_bound_optional(command_ref, field="command_ref", max_chars=REF_MAX),
-        test_ref=_bound_optional(test_ref, field="test_ref", max_chars=REF_MAX),
-        file_ref=_bound_optional(file_ref, field="file_ref", max_chars=FILE_REF_MAX),
-        source_commit=await _normalize_commit(project_row.root_path, source_commit),
-        worktree_fingerprint=stored_fp,
-        artifact_ref=_bound_optional(artifact_ref, field="artifact_ref", max_chars=ARTIFACT_MAX),
+        command_ref=normalized_command_ref,
+        test_ref=normalized_test_ref,
+        file_ref=normalized_file_ref,
+        source_commit=normalized_commit,
+        worktree_fingerprint=supplied_fp,
+        artifact_ref=normalized_artifact_ref,
+        claim_ref=normalized_claim_ref,
+        review_ref=normalized_review_ref,
+        recording_state=recording_lifecycle,
+        source_commit_verified=True,
+        file_ref_verified=file_verified,
+        test_ref_verified=test_verified,
         author=_bound_author(author),
     )
     session.add(row)
@@ -572,7 +677,34 @@ async def list_evidence(
         stmt = stmt.where(RequirementEvidence.requirement_id == requirement_id)
     stmt = stmt.order_by(RequirementEvidence.seq.asc())
     result = await session.execute(stmt)
-    return [_as_evidence(row) for row in result.scalars().all()]
+    stored = [_as_evidence(row) for row in result.scalars().all()]
+    current_commit, current_fp = await _repo_state(project_row.root_path)
+    current_revisions: dict[str, str] = {}
+    if requirement_id is not None:
+        current_revisions = await _current_revision_ids(
+            session, project_id=project_row.id, requirement_id=requirement_id
+        )
+    elif stored:
+        current_revisions = await _current_revision_ids(
+            session, project_id=project_row.id, requirement_id=stored[0].requirement_id
+        )
+    latest_by_slot: dict[tuple[str, str], int] = {}
+    for row in stored:
+        if row.contract_revision_id == current_revisions.get(row.criterion_id):
+            latest_by_slot[(row.criterion_id, row.evidence_kind)] = row.seq
+    derived: list[EvidenceView] = []
+    for row in stored:
+        lifecycle = row.recording_state
+        revision_stale = row.contract_revision_id != current_revisions.get(row.criterion_id)
+        provenance_stale = _is_stale(
+            row, current_commit=current_commit, current_fingerprint=current_fp
+        )
+        if revision_stale or provenance_stale:
+            lifecycle = EVIDENCE_LIFECYCLE_STALE
+        elif latest_by_slot.get((row.criterion_id, row.evidence_kind)) != row.seq:
+            lifecycle = EVIDENCE_LIFECYCLE_SUPERSEDED
+        derived.append(replace(row, effective_lifecycle=lifecycle))
+    return derived
 
 
 async def get_requirement_evidence(
@@ -695,6 +827,16 @@ def _latest(rows: Sequence[EvidenceView]) -> EvidenceView | None:
     return max(rows, key=lambda row: row.seq)
 
 
+def _review_is_scoped(
+    review: EvidenceView, criterion: CriterionView, invariant: InvariantView
+) -> bool:
+    """Require an explicit invariant/criterion claim scope (INV-EVIDENCE-4)."""
+    return review.review_ref in {
+        f"criterion:{criterion.id}",
+        f"invariant:{invariant.id}",
+    }
+
+
 def _link(criterion: CriterionView, invariant: InvariantView) -> dict[str, str]:
     return {
         "id": criterion.id,
@@ -769,8 +911,6 @@ async def evaluate_close_gate(
     current_revs = await _current_revision_ids(
         session, project_id=project_row.id, requirement_id=requirement_id
     )
-    current_commit, current_fp = await _repo_state(project_row.root_path)
-
     missing: list[dict[str, str]] = []
     stale: list[dict[str, str]] = []
     unmet: list[str] = []
@@ -803,11 +943,14 @@ async def evaluate_close_gate(
             missing.append(link)
             unmet.append(f"failed {criterion.key}")
             continue
-        if _is_stale(latest_impl, current_commit=current_commit, current_fingerprint=current_fp):
+        if latest_impl.lifecycle != EVIDENCE_LIFECYCLE_VERIFIED:
             stale.append(link)
-            unmet.append(f"stale {criterion.key}")
+            unmet.append(f"{latest_impl.lifecycle} {criterion.key}")
             continue
-        if criterion.independent_review == INDEPENDENT_REVIEW_REQUIRED:
+        review_required = (
+            criterion.independent_review == INDEPENDENT_REVIEW_REQUIRED or invariant.risk == "high"
+        )
+        if review_required:
             latest_review = _latest(reviews)
             if latest_review is None:
                 missing.append(link)
@@ -817,15 +960,17 @@ async def evaluate_close_gate(
                 missing.append(link)
                 unmet.append(f"independent review of {criterion.key} is {latest_review.result}")
                 continue
-            if _is_stale(
-                latest_review, current_commit=current_commit, current_fingerprint=current_fp
-            ):
+            if latest_review.lifecycle != EVIDENCE_LIFECYCLE_VERIFIED:
                 stale.append(link)
-                unmet.append(f"stale independent review for {criterion.key}")
+                unmet.append(f"{latest_review.lifecycle} independent review for {criterion.key}")
                 continue
             if _reviewer_identity(latest_review.author) == _reviewer_identity(latest_impl.author):
                 missing.append(link)
                 unmet.append(f"independent review of {criterion.key} cannot be self-authored")
+                continue
+            if not _review_is_scoped(latest_review, criterion, invariant):
+                missing.append(link)
+                unmet.append(f"independent review scope missing for {criterion.key}")
                 continue
         verified += 1
 
@@ -868,6 +1013,35 @@ async def summarize_close_gate(
     missing: list[dict[str, str]] = []
     stale: list[dict[str, str]] = []
     blocking: list[dict[str, str]] = []
+    lifecycle_counts = {
+        EVIDENCE_LIFECYCLE_VERIFIED: 0,
+        EVIDENCE_LIFECYCLE_PROVISIONAL: 0,
+        EVIDENCE_LIFECYCLE_STALE: 0,
+        EVIDENCE_LIFECYCLE_SUPERSEDED: 0,
+    }
+    warning_codes: set[str] = set()
+    violation_count = 0
+    from pcs.requirements import compliance
+
+    for requirement_id in requirement_ids:
+        rows = await list_evidence(session, project=project, requirement_id=requirement_id)
+        for row in rows:
+            lifecycle_counts[row.lifecycle] += 1
+        criteria = await contracts.list_criteria(
+            session, project=project, requirement_id=requirement_id
+        )
+        invariants = await contracts.list_invariants(
+            session, project=project, requirement_id=requirement_id, include_deleted=True
+        )
+        warning_codes.update(
+            compliance._warning_codes(criteria, {row.id: row for row in invariants}, rows)
+        )
+        project_row = await resolve_project(session, project)
+        violation_count += len(
+            await _list_violations(
+                session, project_id=project_row.id, requirement_id=requirement_id
+            )
+        )
     for gate in configured:
         missing.extend(gate.missing)
         stale.extend(gate.stale)
@@ -888,6 +1062,9 @@ async def summarize_close_gate(
         "review": review,
         "blocking": blocking[:8],
         "blocking_count": len(blocking),
+        "evidence_lifecycle": lifecycle_counts,
+        "warning_count": min(len(warning_codes), compliance.MAX_WARNING_CODES),
+        "violation_count": violation_count,
     }
 
 

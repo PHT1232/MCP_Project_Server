@@ -395,6 +395,21 @@ class RequirementEvidence(Base):
             "char_length(source_commit) = 40",
             name="ck_requirement_evidence_commit_len",
         ),
+        CheckConstraint(
+            "recording_state IN ('provisional', 'verified-at-commit')",
+            name="ck_requirement_evidence_recording_state",
+        ),
+        CheckConstraint(
+            "claim_ref IS NULL OR char_length(claim_ref) BETWEEN 1 AND 160",
+            name="ck_requirement_evidence_claim_ref_len",
+        ),
+        CheckConstraint(
+            (
+                "review_ref IS NULL OR review_ref ~ '^(criterion|invariant):[0-9a-f]{8}-"
+                "[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'"
+            ),
+            name="ck_requirement_evidence_review_ref",
+        ),
         UniqueConstraint("id", "project_id", name="uq_requirement_evidence_id_project"),
         ForeignKeyConstraint(
             ["requirement_id", "project_id"],
@@ -452,6 +467,16 @@ class RequirementEvidence(Base):
     source_commit: Mapped[str] = mapped_column(String(64), nullable=False)
     worktree_fingerprint: Mapped[str | None] = mapped_column(String(64), nullable=True)
     artifact_ref: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    claim_ref: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    review_ref: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    recording_state: Mapped[str] = mapped_column(
+        String(24), nullable=False, server_default="provisional"
+    )
+    source_commit_verified: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("false")
+    )
+    file_ref_verified: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    test_ref_verified: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     author: Mapped[str] = mapped_column(String(120), nullable=False)
     seq: Mapped[int] = mapped_column(BigInteger, Identity(always=True), nullable=False)
     created_at: Mapped[datetime] = mapped_column(

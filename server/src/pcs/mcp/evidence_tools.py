@@ -43,6 +43,8 @@ def register_evidence_tools(mcp: FastMCP) -> None:
             str | None, Field(max_length=64, pattern=_FINGERPRINT_PATTERN)
         ] = None,
         artifact_ref: Annotated[str | None, Field(max_length=500)] = None,
+        claim_ref: Annotated[str | None, Field(max_length=160)] = None,
+        review_ref: Annotated[str | None, Field(max_length=80)] = None,
         ctx: Context[Any, Any] | None = None,
     ) -> dict[str, object]:
         """Append compact evidence. Does not change requirement status (D4, T12)."""
@@ -61,6 +63,8 @@ def register_evidence_tools(mcp: FastMCP) -> None:
                 file_ref=file_ref,
                 worktree_fingerprint=worktree_fingerprint,
                 artifact_ref=artifact_ref,
+                claim_ref=claim_ref,
+                review_ref=review_ref,
             )
             return view.as_dict()
 

@@ -600,6 +600,7 @@ async def test_legacy_requirement_to_verified_close_gate(tmp_path: Path) -> None
             result="passed",
             source_commit=sha,
             author="reviewer",
+            review_ref=f"criterion:{criterion['id']}",
         )
         gate = await evidence.evaluate_close_gate(session, project=PROJECT, requirement_id=req_id)
         review = await compliance.review_requirement_compliance(

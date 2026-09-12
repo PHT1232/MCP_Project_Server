@@ -61,7 +61,7 @@ async def _criterion(
             key=f"INV-{key}",
             statement="Invariant.",
             kind="behavior",
-            risk="high",
+            risk="medium",
         )
         criterion = await contracts.create_criterion(
             session,
@@ -86,6 +86,7 @@ async def _record(criterion_id: str, sha: str, *, kind: str = "test", author: st
             source_commit=sha,
             test_ref="tests/test_ship.py",
             author=author,
+            review_ref=f"criterion:{criterion_id}" if kind == "review" else None,
         )
 
 
@@ -201,7 +202,7 @@ async def test_duplicate_criterion_keys_are_classified_by_identity(tmp_path: Pat
             key="INV-VERIFIED",
             statement="Verified invariant.",
             kind="behavior",
-            risk="high",
+            risk="medium",
         )
         missing_invariant = await contracts.create_invariant(
             session,
@@ -210,7 +211,7 @@ async def test_duplicate_criterion_keys_are_classified_by_identity(tmp_path: Pat
             key="INV-MISSING",
             statement="Missing invariant.",
             kind="behavior",
-            risk="high",
+            risk="medium",
         )
         verified = await contracts.create_criterion(
             session,

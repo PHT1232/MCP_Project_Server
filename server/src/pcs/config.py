@@ -114,6 +114,14 @@ class Settings(BaseSettings):
             "requirements section of the store (D15)."
         ),
     )
+    codebase_guide_file: str = Field(
+        default=".project-context/CODEBASE_GUIDE.md",
+        description=(
+            "One-way generated Codebase Guide artifact (FR43, D18). Relative paths resolve "
+            "under the project's root_path and must not contain '..'; an absolute path is "
+            "used as-is (same policy as PCS_REQUIREMENTS_FILE). Overwritten on sync."
+        ),
+    )
     embedding_backend: str = Field(
         default="",
         description=(

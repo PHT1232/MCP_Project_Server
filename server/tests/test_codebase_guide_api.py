@@ -13,7 +13,7 @@ from __future__ import annotations
 import json
 import logging
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 from unittest.mock import patch
 
 import pytest
@@ -76,9 +76,11 @@ def _extract_dict(result: object) -> dict[str, Any]:
     if isinstance(result, list) and result:
         text_val = getattr(result[0], "text", None)
         if text_val:
-            return json.loads(text_val)  # type: ignore[no-any-return]
+            parsed: object = json.loads(str(text_val))
+            if isinstance(parsed, dict):
+                return cast(dict[str, Any], parsed)
     if isinstance(result, dict):
-        return result
+        return cast(dict[str, Any], result)
     raise AssertionError(f"Unexpected result: {result!r}")
 
 

@@ -412,7 +412,9 @@ async def test_full_embedding_success_records_identity_batch_and_clears(
     from pcs.index.models import IndexChunk, IndexStatus
 
     root = Path(str(tmp_path))
-    (root / "sample.py").write_text("def sample():\n    return 1\n", encoding="utf-8")
+    source = "def sample():\n    return 1\n"
+    (root / "sample.py").write_text(source, encoding="utf-8")
+    (root / "duplicate.py").write_text(source, encoding="utf-8")
     async with session_scope() as session:
         project = await context_service.register_project(
             session, name="ai-full", root_path=str(root), overview="full"
@@ -438,10 +440,24 @@ async def test_full_embedding_success_records_identity_batch_and_clears(
     ) -> tuple[int, int]:
         del backend
         batches.append(batch_size)
-        result = await session.execute(
-            select(func.count()).select_from(IndexChunk).where(IndexChunk.project_id == project_id)
+        chunks = list(
+            (
+                await session.execute(select(IndexChunk).where(IndexChunk.project_id == project_id))
+            ).scalars()
         )
-        total = int(result.scalar_one())
+        assert len(chunks) >= 2
+        shared_hash = chunks[0].chunk_hash
+        assert shared_hash is not None
+        for chunk in chunks:
+            chunk.chunk_hash = shared_hash
+        await session.flush()
+        distinct = await session.execute(
+            select(func.count(func.distinct(IndexChunk.chunk_hash))).where(
+                IndexChunk.project_id == project_id,
+                IndexChunk.chunk_hash.is_not(None),
+            )
+        )
+        total = int(distinct.scalar_one())
         return total, total
 
     monkeypatch.setattr(index_service, "embed_pending_chunks", successful_embed)
@@ -460,9 +476,11 @@ async def test_full_embedding_success_records_identity_batch_and_clears(
 
 @pytest.mark.usefixtures("clean_db")
 async def test_failed_full_embedding_is_observable_and_stays_incompatible(
-    tmp_path: object, monkeypatch: pytest.MonkeyPatch
+    tmp_path: object, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
     from pathlib import Path
+
+    from sqlalchemy.ext.asyncio import AsyncSession
 
     from pcs.context import service as context_service
     from pcs.index import service as index_service
@@ -479,15 +497,42 @@ async def test_failed_full_embedding_is_observable_and_stays_incompatible(
             {"embedding": embedding(None, backend="hashing", base_url="local", dimensions=32)},
         )
 
-    async def failed_embed(**_kwargs: object) -> tuple[int, int]:
-        raise RuntimeError("secret provider response")
+    async def failed_embed(session: AsyncSession, **_kwargs: object) -> tuple[int, int]:
+        await session.execute(
+            text("UPDATE code_index.status SET semantic_model='partial' WHERE project_id=:pid"),
+            {"pid": project.id},
+        )
+        await session.execute(text("SELECT 1 / 0 /* secret provider response */"))
+        raise AssertionError("unreachable")
 
     monkeypatch.setattr(index_service, "embed_pending_chunks", failed_embed)
-    async with session_scope() as session:
-        result = await index_service.reindex(session, project="ai-failed", incremental=False)
-        status = await session.get(IndexStatus, project.id)
-        assert status is not None and status.reindex_required is True
+    with caplog.at_level("WARNING", logger="pcs"):
+        async with session_scope() as session:
+            result = await index_service.reindex(session, project="ai-failed", incremental=False)
+            status = await session.get(IndexStatus, project.id)
+            assert status is not None
+            assert status.state == "error"
+            assert status.reindex_required is True
+            assert status.semantic_model != "partial"
+            assert (await session.execute(text("SELECT 1"))).scalar_one() == 1
     assert result.state == "error"
+    assert "secret provider response" not in caplog.text
+    async with session_scope() as session:
+        persisted = await session.get(IndexStatus, project.id)
+        assert persisted is not None
+        assert persisted.state == "error"
+        assert persisted.reindex_required is True
+
+    async def provider_failure(**_kwargs: object) -> tuple[int, int]:
+        raise RuntimeError("secret provider response")
+
+    caplog.clear()
+    monkeypatch.setattr(index_service, "embed_pending_chunks", provider_failure)
+    with caplog.at_level("WARNING", logger="pcs"):
+        async with session_scope() as session:
+            retried = await index_service.reindex(session, project="ai-failed", incremental=False)
+    assert retried.state == "error"
+    assert "secret provider response" not in caplog.text
 
 
 @pytest.mark.usefixtures("clean_db")

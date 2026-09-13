@@ -470,12 +470,13 @@ async def _embed_index(
         status.embedded_chunk_count = 0
         return True
     try:
-        _, total = await embed_pending_chunks(
-            session,
-            project_id=project_id,
-            backend=backend,
-            batch_size=runtime.embedding.batch_size or 64,
-        )
+        async with session.begin_nested():
+            _, total = await embed_pending_chunks(
+                session,
+                project_id=project_id,
+                backend=backend,
+                batch_size=runtime.embedding.batch_size or 64,
+            )
     except Exception:
         status.reindex_required = True
         logger.warning("embedding_failed", extra={"context": {"project": project_id}})
@@ -483,7 +484,10 @@ async def _embed_index(
     status.semantic_model = backend.name
     status.embedded_chunk_count = total
     chunk_total_result = await session.execute(
-        select(func.count()).select_from(IndexChunk).where(IndexChunk.project_id == project_id)
+        select(func.count(func.distinct(IndexChunk.chunk_hash))).where(
+            IndexChunk.project_id == project_id,
+            IndexChunk.chunk_hash.is_not(None),
+        )
     )
     chunk_total = int(chunk_total_result.scalar_one())
     if full_reindex and total == chunk_total:

@@ -180,6 +180,13 @@ class Settings(BaseSettings):
         default="api.openai.com",
         description="Comma-separated exact host allowlist for outbound AI providers.",
     )
+    ai_provider_allowed_private_hosts: str = Field(
+        default="",
+        description=(
+            "Exact allowlisted provider hosts permitted to resolve to private or Tailscale "
+            "addresses; loopback and unsafe special-use addresses remain blocked."
+        ),
+    )
     admin_token: str = Field(
         default="", description="Bearer or X-PCS-Admin-Token required for admin writes."
     )

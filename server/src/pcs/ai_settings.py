@@ -213,14 +213,29 @@ def _decrypt(blob: bytes | None, *, field: str, cfg: Settings) -> str | None:
     return None
 
 
+def _host_set(value: str) -> frozenset[str]:
+    return frozenset(item.strip().lower() for item in value.split(",") if item.strip())
+
+
 def _allowlist(cfg: Settings) -> frozenset[str]:
-    return frozenset(
-        item.strip().lower() for item in cfg.ai_provider_allowed_hosts.split(",") if item.strip()
+    return _host_set(cfg.ai_provider_allowed_hosts)
+
+
+def _private_allowlist(cfg: Settings) -> frozenset[str]:
+    return _host_set(cfg.ai_provider_allowed_private_hosts)
+
+
+def _check_address(
+    address: ipaddress.IPv4Address | ipaddress.IPv6Address, *, allow_private: bool
+) -> None:
+    prohibited = (
+        address.is_loopback
+        or address.is_link_local
+        or address.is_multicast
+        or address.is_reserved
+        or address.is_unspecified
     )
-
-
-def _check_address(address: ipaddress.IPv4Address | ipaddress.IPv6Address) -> None:
-    if not address.is_global:
+    if prohibited or (not allow_private and not address.is_global):
         raise AiSettingsError("provider URL resolves to a prohibited network")
 
 
@@ -263,12 +278,13 @@ async def resolve_provider_endpoint(
     host = (parsed.hostname or "").lower()
     if not host or host not in _allowlist(settings):
         raise AiSettingsError("provider hostname is not in PCS_AI_PROVIDER_ALLOWED_HOSTS")
+    allow_private = host in _private_allowlist(settings)
     try:
         literal = ipaddress.ip_address(host)
     except ValueError:
         literal = None
     if literal is not None:
-        _check_address(literal)
+        _check_address(literal, allow_private=allow_private)
     try:
         rows = await asyncio.to_thread(
             socket.getaddrinfo, host, parsed.port or 443, 0, socket.SOCK_STREAM
@@ -279,7 +295,7 @@ async def resolve_provider_endpoint(
     if not addresses:
         raise AiSettingsError("provider hostname could not be resolved safely")
     for address in addresses:
-        _check_address(address)
+        _check_address(address, allow_private=allow_private)
     address = sorted(addresses, key=str)[0]
     literal_host = f"[{address}]" if address.version == 6 else str(address)
     netloc = literal_host if parsed.port is None else f"{literal_host}:{parsed.port}"

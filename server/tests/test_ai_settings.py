@@ -66,12 +66,14 @@ def summary(secret: object = "summary-secret") -> dict[str, object]:
 def master_key() -> object:
     os.environ["PCS_AI_SETTINGS_MASTER_KEY"] = KEY
     os.environ["PCS_AI_PROVIDER_ALLOWED_HOSTS"] = "example.com,www.example.com,api.openai.com"
+    os.environ.pop("PCS_AI_PROVIDER_ALLOWED_PRIVATE_HOSTS", None)
     os.environ["PCS_ADMIN_TOKEN"] = "admin-secret"
     get_settings.cache_clear()
     reset_runtime_ai_settings()
     yield
     os.environ.pop("PCS_AI_SETTINGS_MASTER_KEY", None)
     os.environ.pop("PCS_AI_PROVIDER_ALLOWED_HOSTS", None)
+    os.environ.pop("PCS_AI_PROVIDER_ALLOWED_PRIVATE_HOSTS", None)
     os.environ.pop("PCS_ADMIN_TOKEN", None)
     get_settings.cache_clear()
     reset_runtime_ai_settings()
@@ -220,6 +222,29 @@ def test_crypto_envelope_is_strict_field_bound_and_rotation_aware() -> None:
     get_settings.cache_clear()
     with pytest.raises(MasterKeyRequiredError):
         _encrypt("must-not-use-previous", field="embedding.api_key", cfg=get_settings())
+
+
+async def test_exact_private_host_allowlist_permits_tailscale_only() -> None:
+    os.environ["PCS_AI_PROVIDER_ALLOWED_HOSTS"] = "100.113.232.34,127.0.0.1"
+    os.environ["PCS_AI_PROVIDER_ALLOWED_PRIVATE_HOSTS"] = "100.113.232.34,127.0.0.1"
+    os.environ["PCS_AI_SETTINGS_ALLOW_HTTP"] = "true"
+    get_settings.cache_clear()
+
+    assert (
+        await validate_provider_url("http://100.113.232.34:11434/v1")
+        == "http://100.113.232.34:11434/v1"
+    )
+    with pytest.raises(AiSettingsError, match="prohibited network"):
+        await validate_provider_url("http://127.0.0.1:11434/v1")
+
+
+async def test_private_address_requires_private_host_allowlist() -> None:
+    os.environ["PCS_AI_PROVIDER_ALLOWED_HOSTS"] = "100.113.232.34"
+    os.environ["PCS_AI_SETTINGS_ALLOW_HTTP"] = "true"
+    get_settings.cache_clear()
+
+    with pytest.raises(AiSettingsError, match="prohibited network"):
+        await validate_provider_url("http://100.113.232.34:11434/v1")
 
 
 async def test_url_dns_lookup_runs_off_event_loop() -> None:

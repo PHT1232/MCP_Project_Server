@@ -1,11 +1,11 @@
 """T19: evidence provenance, effective lifecycle inputs, and review scope.
 
 Revision ID: 0019_evidence_quality
-Revises: 0007_requirement_evidence
+Revises: 0008_codebase_guide
 Create Date: 2026-09-12
 
-The 0019 identifier avoids T15's reserved 0008. Integration must rebase the
-parent onto the eventual post-T15-T18 migration head when one exists.
+The 0019 identifier avoids T15's reserved 0008. The migration follows the
+T15 Codebase Guide schema now that both changes are integrated on main.
 """
 
 from __future__ import annotations
@@ -16,7 +16,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "0019_evidence_quality"
-down_revision: str | None = "0007_requirement_evidence"
+down_revision: str | None = "0008_codebase_guide"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

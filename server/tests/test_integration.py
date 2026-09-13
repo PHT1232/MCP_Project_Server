@@ -80,6 +80,9 @@ EXPECTED_TOOLS = frozenset(
         "create_acceptance_criterion",
         "update_acceptance_criterion",
         "delete_acceptance_criterion",
+        "get_codebase_guide",
+        "describe_files",
+        "sync_codebase_guide",
     }
 )
 
@@ -170,6 +173,7 @@ async def test_context_resources_are_registered_and_readable() -> None:
     uris = {getattr(t, "uriTemplate", None) or getattr(t, "uri_template", None) for t in templates}
     assert "context://{project}/blockers" in uris
     assert "context://{project}/history/{entry_id}" in uris
+    assert "context://{project}/codebase-guide" in uris
     contents = list(await mcp.read_resource(f"context://{PROJECT}/blockers"))
     assert contents
     body = str(contents[0].content)
@@ -187,6 +191,8 @@ async def test_http_app_and_ac14_http_mcp_share_the_store() -> None:
     assert "/api/projects/{project}/index" in paths
     assert "/api/projects/{project}/reindex" in paths
     assert "/api/projects/{project}/search" in paths
+    assert "/api/projects/{project}/codebase-guide" in paths
+    assert "/api/projects/{project}/codebase-guide/sync" in paths
 
     with TestClient(app) as client:
         health = client.get("/api/health")

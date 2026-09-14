@@ -4,7 +4,7 @@
 
 ## Goal
 
-Establish the normative product contract, architecture decisions, requirements, and task briefs for the Plan & Task Orchestration milestone (Phase 4), ensuring that multi-agent task execution, DAG dependency tracking, normalized requirement links, atomic leases, and AI plan generation are strictly defined and governed by PCS before production code is implemented.
+Establish the normative product contract, architecture decisions, requirements, and task briefs for the Plan & Task Orchestration milestone (Phase 4), ensuring that multi-agent task execution, DAG dependency tracking, database-level plan/tenant isolation, normalized requirement links with section validation, atomic leases, and AI plan generation are strictly defined and governed by PCS before production code is implemented.
 
 ## Owned files/modules
 
@@ -33,7 +33,7 @@ Do not implement production backend or frontend code in this task.
 
 ## Invariants
 
-- `INV-PLAN-1` (`952fcb34-050f-42d5-860b-d3c421131c26`): Tasks belong to one plan and one project; dependency graph is strictly acyclic; requirement links use normalized plan_task_requirements with composite foreign keys; self-dependencies, cycles, cross-plan, and cross-project references are rejected.
+- `INV-PLAN-1` (`952fcb34-050f-42d5-860b-d3c421131c26`): Tasks belong to one plan and one project; task dependencies and requirement links enforce tenant and plan isolation via database composite foreign keys; dependency graph is strictly acyclic; self-dependencies, cycles, cross-plan, and cross-project references are rejected.
 - `INV-PLAN-2` (`fdab6d29-f527-4d13-91c2-6510a3309f2d`): Task and plan completion never mutate requirement status or close-gate state; requirement verification remains governed strictly by evidence (D4).
 - `INV-PLAN-3` (`c212e6cb-a1e5-4e81-8301-4c6febae6739`): Claiming a task atomically allocates an expiring lease and returns an ephemeral one-time secret token; stale or invalid tokens cannot modify claimed tasks; expired leases can be safely reclaimed.
 - `INV-PLAN-4` (`d196d5d6-20fc-4771-ad07-f80397eda510`): Every plan task mutation appends an immutable event recording author, event type, prior state, new state, timestamp, and structured payload; events are never updated or deleted.
@@ -48,8 +48,8 @@ Do not implement production backend or frontend code in this task.
 - Add milestone non-goals (no agent process supervisor, no shell execution, no worktree automation, no GitHub sync, no RBAC).
 - Author product requirement `R-086` (`f5abbe7d-fbe4-438e-a0ac-d2b0e88f9453`), invariants `INV-PLAN-1..7`, and criteria `AC-PLAN-1..13` in PCS via MCP.
 - Update `ROADMAP.md` with Phase 4 tasks T22–T29 and status table.
-- Author comprehensive milestone plan `tasks/PLAN-TASK-ORCHESTRATION.md` including state machine, normalized requirement link schema, structured event history, and Starlette/FastMCP architecture.
-- Author detailed task briefs for T23–T29 with strict non-overlapping file ownership, invariants, criteria, and verification commands.
+- Author comprehensive milestone plan `tasks/PLAN-TASK-ORCHESTRATION.md` including database-enforced dependency isolation, complete lease lifecycle, nested HTTP routes, and sequenced shared integration seams.
+- Author detailed task briefs for T23–T29 with sequenced shared integration seams, invariants, criteria, and verification commands.
 
 ## Acceptance checklist
 
@@ -62,12 +62,14 @@ Do not implement production backend or frontend code in this task.
 - [x] Criteria `AC-PLAN-1` through `AC-PLAN-13` are authored in PCS with real IDs and risk-appropriate independent review policies.
 - [x] `ROADMAP.md` is updated with Phase 4 tasks and dependency table.
 - [x] `tasks/PLAN-TASK-ORCHESTRATION.md` defines the complete milestone architecture, models, APIs, and non-goals.
-- [x] Task briefs `tasks/T23-*.md` through `tasks/T29-*.md` are authored with non-overlapping module boundaries, real PCS IDs, checklists, and handoff templates.
-- [x] Contract additions for `update_plan` and `archive_plan` incorporated into T24, T27, and master plan.
-- [x] Plan task state machine formally defined with 8 states, transition matrix, actors, and canonical ready predicate across T23, T24, T26, T27, and master plan.
-- [x] Normalized `plan_task_requirements` junction table specified with composite FKs and project isolation.
-- [x] Starlette + FastMCP framework guidance aligned with repository patterns (no FastAPI, no `router.py`).
-- [x] Task history specified with structured, redacted JSONB payload schema.
+- [x] Task briefs `tasks/T23-*.md` through `tasks/T29-*.md` are authored with sequenced shared integration seams, real PCS IDs, checklists, and handoff templates.
+- [x] Database dependency isolation enforced via composite FKs `(task_id, plan_id, project_id)` and `(depends_on_task_id, plan_id, project_id)` referencing `plan_tasks`.
+- [x] Event model isolation enforced via composite FK `(task_id, plan_id, project_id)` referencing `plan_tasks`.
+- [x] Complete lease lifecycle defined with clear field behavior (`claim_token_hash`, `claimed_by`, `lease_expires_at`) across all transitions, including release revocation, reclaim, blocked cleanup, review expiry, and plan archival lease freeze.
+- [x] Standardized nested task HTTP routes (`/api/projects/{project}/plans/{plan_id}/tasks/{task_id}/*`) aligned across master plan, T24, T27, and T29 with URL-plan verification.
+- [x] Event contract formalized with 10 event types and bounded, redacted JSONB payload schema.
+- [x] Requirement links target section `requirements` via database check/composite FK discriminator and service validation.
+- [x] Sequenced shared integration seams articulated for T24/T26 and T27/T28 without claiming false non-overlapping ownership.
 - [x] T29 updated to require PostgreSQL-only migrations and correct pytest paths.
 - [x] Trailing blank lines at EOF in `REQUIREMENTS.md` removed (`git diff origin/main --check` clean).
 - [x] Live PCS contract for `R-086` updated via MCP without duplicate criteria.
@@ -104,18 +106,40 @@ just check
   - Registered product requirement `R-086` (`f5abbe7d-fbe4-438e-a0ac-d2b0e88f9453`) in PCS and transitioned to `in-progress`.
   - Authored Invariants `INV-PLAN-1` through `INV-PLAN-7` with real UUIDs in PCS via MCP.
   - Authored Acceptance Criteria `AC-PLAN-1` through `AC-PLAN-13` with real UUIDs in PCS via MCP.
-  - Resolved Review Findings 1–8:
-    1. Added `update_plan` and `archive_plan` to T24 MCP tools, Starlette HTTP routes, schemas, and T27 UI controls.
-    2. Formalized Plan Task State Machine: 8 states (`pending`, `ready`, `claimed`, `in_progress`, `blocked`, `in_review`, `completed`, `cancelled`), transition rules, actors, persisted vs derived eligibility, and single canonical ready predicate.
-    3. Replaced loose JSONB requirement IDs with normalized `plan_task_requirements` junction table enforcing database-level composite foreign keys and project isolation.
-    4. Corrected framework references to Starlette (`mcp.custom_route`) and FastMCP; removed all references to FastAPI, `router.py`, and `app.py`.
-    5. Specified structured, redacted JSONB payload schema for `plan_task_events` and updated history APIs/UI.
-    6. Refined T29 verification: removed SQLite; specified PostgreSQL clean migration, upgrade, and downgrade/re-upgrade; corrected pytest paths.
-    7. Eliminated trailing blank lines at EOF in `REQUIREMENTS.md` (`git diff origin/main --check` clean).
-    8. Updated live contract for `R-086` via PCS MCP tools (`update_requirement_invariant`, `update_acceptance_criterion`) without creating duplicate records or using raw SQL.
+  - Resolved Review Findings:
+    1. **Database Dependency Isolation:**
+       - Added `project_id` and `plan_id` to `task_dependencies`.
+       - Enforced composite foreign keys on both sides:
+         - `(task_id, plan_id, project_id)` -> `plan_tasks(id, plan_id, project_id)`
+         - `(depends_on_task_id, plan_id, project_id)` -> `plan_tasks(id, plan_id, project_id)`
+       - Added `UniqueConstraint("id", "plan_id", "project_id", name="uq_plan_tasks_id_plan_project")` on `plan_tasks`.
+       - Enforced event isolation via composite FK `(task_id, plan_id, project_id)` on `plan_task_events`.
+    2. **Lease Lifecycle and State Machine:**
+       - Defined explicit field behavior for `claim_token_hash`, `claimed_by`, and `lease_expires_at` across all transitions.
+       - Token permanently revoked on `release_task`, `complete_task`, `set_task_status('blocked')`, cancellation, and `archive_plan`.
+       - `archive_plan` atomically revokes all active leases and freezes plan mutations.
+       - Mutations on completed or archived plans fail with `PlanNotActiveError` (409).
+       - Stale token presentation rejected with `StaleClaimTokenError` (409).
+    3. **Standardized Nested HTTP Routes:**
+       - All task routes standardized to `/api/projects/{project}/plans/{plan_id}/tasks/{task_id}/*`.
+       - Handlers verify task belongs to URL plan and project, returning 404 if mismatched.
+    4. **Formalized Event Contract:**
+       - 10 distinct event types: `created`, `updated`, `dependency_added`, `claimed`, `reclaimed`, `heartbeat`, `released`, `status_changed`, `completed`, `cancelled`.
+       - Bounded, redacted JSONB payload schema defined per event type.
+    5. **Requirement Link Section Discrimination:**
+       - Added `requirement_section = mapped_column(String(32), nullable=False, server_default="requirements")` with `CheckConstraint("requirement_section = 'requirements'")`.
+       - Added composite FK `(requirement_id, requirement_section)` referencing `context_entries(id, section)` matching the repo's `RequirementInvariant` pattern.
+       - Service validation confirms `section == 'requirements'` and rejects non-requirement entries.
+    6. **Sequenced Shared Integration Seams:**
+       - Replaced false "non-overlapping" claims with clearly documented sequenced shared seams for T24/T26 (`planning_tools.py`, `planning_routes.py`) and T27/T28 (`planning.ts`, `PlansView.tsx`).
+    7. **PostgreSQL Specifics & Clean Pytest Paths:**
+       - Updated T29 to require PostgreSQL migrations (no SQLite).
+       - Fixed pytest invocation paths to `cd server && uv run pytest tests/...`.
+    8. **Live PCS Contract Alignment:**
+       - Updated statements for `INV-PLAN-1` and `AC-PLAN-1` via PCS MCP authoring tools without duplicate rows.
   - Updated `ROADMAP.md` with Phase 4 tasks and set T22 status to `in review`.
   - Authored `tasks/PLAN-TASK-ORCHESTRATION.md` as the master milestone implementation architecture.
-  - Authored detailed task briefs `tasks/T23-plan-task-core.md` through `tasks/T29-plan-task-integration.md` with strictly non-overlapping file ownership and full checklists.
+  - Authored detailed task briefs `tasks/T23-plan-task-core.md` through `tasks/T29-plan-task-integration.md`.
   - Verified no production code was touched; ran `just check` to verify repository cleanliness.
 - **Allocated PCS IDs:**
   - Requirement: `R-086` (`f5abbe7d-fbe4-438e-a0ac-d2b0e88f9453`)

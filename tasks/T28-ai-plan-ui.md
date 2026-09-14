@@ -9,10 +9,13 @@ Integrate advisory AI plan draft generation into the Plans UI (`/projects/:proje
 ## Owned files/modules
 
 - `web/src/components/plans/AiPlanDraftModal.tsx` (and associated draft preview components)
-- Additions to `web/src/api/planning.ts` (`generatePlanDraft`, `useGeneratePlanDraftMutation`)
-- Trigger button and draft lifecycle wiring in `web/src/views/PlansView.tsx`
+- Additions (*sequenced shared seam* on merged T27):
+  - `web/src/api/planning.ts` (`generatePlanDraft`, `useGeneratePlanDraftMutation`)
+  - `web/src/views/PlansView.tsx` (trigger button and draft modal state wiring)
 - `web/src/components/plans/AiPlanDraftModal.test.tsx`
 - `tasks/T28-ai-plan-ui.md`
+
+*Sequenced Shared Integration Seam:* T28 builds upon merged T27. It hooks the AI draft generation modal into `PlansView.tsx` and adds the mutation hook to `planning.ts` without modifying base plan presentation or task lifecycle components.
 
 Do not touch server backend code, non-planning web views, or core storage models.
 

@@ -4,7 +4,7 @@
 
 ## Goal
 
-Expose the planning domain via audited, typed MCP tools and Starlette HTTP endpoints mounted through FastMCP, with strict input validation, stable HTTP status mappings, and token redaction, delegating all business logic to `pcs.planning.service`.
+Expose the planning domain via audited, typed MCP tools and Starlette HTTP endpoints mounted through FastMCP, with nested task routes, strict URL-plan-task verification, stable HTTP status mappings, and token redaction, delegating all business logic to `pcs.planning.service`.
 
 ## Owned files/modules
 
@@ -13,6 +13,8 @@ Expose the planning domain via audited, typed MCP tools and Starlette HTTP endpo
 - Minimal registration additions in `server/src/pcs/mcp/server.py` (`register_planning_tools(mcp)`, `register_planning_routes(mcp)`)
 - `server/tests/test_planning_api.py`
 - `tasks/T24-plan-task-api.md`
+
+*Sequenced Shared Integration Seam:* T24 establishes base `planning_tools.py` and `planning_routes.py`. Downstream task T26 branches sequentially from merged T24 to append AI draft generation endpoints without altering base planning tools/routes.
 
 Do not touch `pcs.index.retrieval`, frontend code, or AI generators. Do not invent non-existent `router.py` or `app.py` modules.
 
@@ -25,7 +27,7 @@ Do not touch `pcs.index.retrieval`, frontend code, or AI generators. Do not inve
 
 ## Invariants
 
-- `INV-PLAN-1` (`952fcb34-050f-42d5-860b-d3c421131c26`): Tasks belong to one plan and one project; dependency graph is strictly acyclic; requirement links use normalized plan_task_requirements with composite foreign keys; self-dependencies, cycles, cross-plan, and cross-project references are rejected.
+- `INV-PLAN-1` (`952fcb34-050f-42d5-860b-d3c421131c26`): Tasks belong to one plan and one project; task dependencies and requirement links enforce tenant and plan isolation via database composite foreign keys; dependency graph is strictly acyclic; self-dependencies, cycles, cross-plan, and cross-project references are rejected.
 - `INV-PLAN-3` (`c212e6cb-a1e5-4e81-8301-4c6febae6739`): Claiming a task atomically allocates an expiring lease and returns an ephemeral one-time secret token; stale or invalid tokens cannot modify claimed tasks; expired leases can be safely reclaimed.
 
 ## Requirements
@@ -60,25 +62,28 @@ Do not touch `pcs.index.retrieval`, frontend code, or AI generators. Do not inve
   - `POST /api/projects/{project}/plans/{plan_id}/tasks` (`add_plan_task`)
   - `PATCH /api/projects/{project}/plans/{plan_id}/tasks/{task_id}` (`update_plan_task`)
   - `POST /api/projects/{project}/plans/{plan_id}/dependencies` (`add_task_dependency`)
-  - `GET /api/projects/{project}/ready-tasks` (`list_ready_tasks`)
-  - `POST /api/projects/{project}/tasks/{task_id}/claim` (`claim_task`)
-  - `POST /api/projects/{project}/tasks/{task_id}/heartbeat` (`heartbeat_task`)
-  - `POST /api/projects/{project}/tasks/{task_id}/release` (`release_task`)
-  - `POST /api/projects/{project}/tasks/{task_id}/status` (`set_task_status`)
-  - `POST /api/projects/{project}/tasks/{task_id}/complete` (`complete_task`)
+  - `GET /api/projects/{project}/ready-tasks` (`list_ready_tasks` across all plans)
+  - `GET /api/projects/{project}/plans/{plan_id}/ready-tasks` (`list_ready_tasks` plan-scoped)
+  - `POST /api/projects/{project}/plans/{plan_id}/tasks/{task_id}/claim` (`claim_task`)
+  - `POST /api/projects/{project}/plans/{plan_id}/tasks/{task_id}/heartbeat` (`heartbeat_task`)
+  - `POST /api/projects/{project}/plans/{plan_id}/tasks/{task_id}/release` (`release_task`)
+  - `POST /api/projects/{project}/plans/{plan_id}/tasks/{task_id}/status` (`set_task_status`)
+  - `POST /api/projects/{project}/plans/{plan_id}/tasks/{task_id}/complete` (`complete_task`)
   - `POST /api/projects/{project}/plans/{plan_id}/complete` (`complete_plan`)
-  - `GET /api/projects/{project}/tasks/{task_id}/history` (`get_task_history`)
+  - `GET /api/projects/{project}/plans/{plan_id}/tasks/{task_id}/history` (`get_task_history`)
+- URL Hierarchy & Plan Verification:
+  - Handlers verify that the task requested at `.../plans/{plan_id}/tasks/{task_id}/...` belongs to both `plan_id` and `project` in the URL; cross-plan mismatches return 404 (`TaskNotFoundError`).
 - Request & Response Schemas:
   - `UpdatePlanRequest`: Optional `title` (1..160 chars), optional `goal` (1..8000 chars). Reject empty patches with 400.
   - `ArchivePlanResponse`: Returns updated plan with `status: "archived"`.
   - `TaskEventResponse`: `id`, `event_type`, `actor`, `old_status`, `new_status`, `payload` (JSON dict), `created_at`.
 - Validation & Error Handling:
-  - Delegate all business logic and invariants to `pcs.planning.service`; adapters must not duplicate validation logic.
+  - Delegate all business logic to `pcs.planning.service`.
   - Extract caller identity from header `x-pcs-caller` (defaulting to `"frontend"`).
   - Map `ProjectNotFoundError` -> 404 with available projects.
   - Map `PlanNotFoundError`, `TaskNotFoundError` -> 404.
-  - Map `ValidationError`, empty patch, unknown fields -> 400.
-  - Map `ClaimConflictError` -> 409 Conflict.
+  - Map `ValidationError`, empty patch, unknown fields, mismatched types -> 400.
+  - Map `ClaimConflictError`, `StaleClaimTokenError`, `PlanNotActiveError` -> 409 Conflict.
   - Map `InvalidStateTransitionError` -> 400.
 - Token Redaction & Audit Safety:
   - Emit structured audit log lines (`log_tool_call`) for every call recording tool, project, caller, and outcome (NFR6).
@@ -91,11 +96,15 @@ Do not touch `pcs.index.retrieval`, frontend code, or AI generators. Do not inve
 - [ ] `AC-PLAN-7` (`eeb30422-628b-4a3d-bd01-b267c42e8a2f`): Audited MCP and HTTP planning tools expose typed operations including update_plan and archive_plan with token redaction and input validation.
 - [ ] Every MCP tool call emits structured audit log containing tool, project, caller, outcome (NFR6).
 - [ ] `update_plan` successfully updates title and/or goal; empty patch returns 400.
-- [ ] `archive_plan` transitions plan status to `archived` and disables task claims.
+- [ ] `archive_plan` transitions plan status to `archived` and revokes active leases.
+- [ ] All task-level HTTP routes use nested `/plans/{plan_id}/tasks/{task_id}/...` structure.
+- [ ] Request with mismatched `plan_id` in URL returns 404 / TaskNotFoundError.
 - [ ] `claim_task` returns raw claim token exactly once; subsequent reads omit token and token hash.
+- [ ] Stale or expired token on heartbeat/status/complete returns 409 / StaleClaimTokenError.
+- [ ] Mutation on task in completed or archived plan returns 409 / PlanNotActiveError.
 - [ ] Unknown fields, malformed JSON, and empty patch bodies return HTTP 400.
 - [ ] Concurrent claim conflict returns clean 409 Conflict in MCP and HTTP.
-- [ ] `get_task_history` returns structured, chronologically ordered task events with safe payloads.
+- [ ] `get_task_history` returns structured, chronologically ordered task events with safe payloads across all 10 event types.
 - [ ] MCP tools and HTTP routes return equivalent typed JSON response shapes.
 - [ ] `just check` passes with zero lint, typecheck, or test failures.
 - [ ] Task handoff documents tool signatures, route paths, and test results.
@@ -125,10 +134,11 @@ just check
   - `add_plan_task`, `update_plan_task`, `add_task_dependency`, `activate_plan`
   - `list_ready_tasks`, `claim_task`, `heartbeat_task`, `release_task`
   - `set_task_status`, `complete_task`, `complete_plan`, `get_task_history`
-- **Public HTTP Endpoints:**
-  - `/api/projects/{project}/plans/*`
+- **Public HTTP Endpoints (Nested):**
+  - `/api/projects/{project}/plans`
+  - `/api/projects/{project}/plans/{plan_id}`
+  - `/api/projects/{project}/plans/{plan_id}/tasks/{task_id}/*`
   - `/api/projects/{project}/ready-tasks`
-  - `/api/projects/{project}/tasks/*`
 - **Verification:**
   - `test_planning_api.py` results
   - `just check` result

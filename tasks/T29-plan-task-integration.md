@@ -10,8 +10,8 @@ Execute end-to-end cross-layer verification for Phase 4 Plan & Task Orchestratio
 
 - `server/tests/test_planning_integration.py` (cross-layer integration, concurrency, security, and performance test suite)
 - `docs/mcp-reference.md` (documentation of all new planning MCP tools)
-- `docs/http-api.md` (documentation of all new planning HTTP routes)
-- `docs/architecture.md` (data model diagrams, lease lifecycle, and DAG resolution mechanics)
+- `docs/http-api.md` (documentation of all new planning HTTP routes, including nested task endpoints)
+- `docs/architecture.md` (data model diagrams, composite FK isolation, lease lifecycle, and DAG resolution mechanics)
 - `README.md` (updated feature overview and workflow guide)
 - `ROADMAP.md` (status updates for completed Phase 4 tasks)
 - `tasks/T29-plan-task-integration.md`
@@ -27,7 +27,7 @@ Do not add new unsolicited feature endpoints, alter existing requirements contra
 
 ## Invariants
 
-- `INV-PLAN-1` (`952fcb34-050f-42d5-860b-d3c421131c26`): Tasks belong to one plan and one project; dependency graph is strictly acyclic; requirement links use normalized plan_task_requirements with composite foreign keys; self-dependencies, cycles, cross-plan, and cross-project references are rejected.
+- `INV-PLAN-1` (`952fcb34-050f-42d5-860b-d3c421131c26`): Tasks belong to one plan and one project; task dependencies and requirement links enforce tenant and plan isolation via database composite foreign keys; dependency graph is strictly acyclic; self-dependencies, cycles, cross-plan, and cross-project references are rejected.
 - `INV-PLAN-2` (`fdab6d29-f527-4d13-91c2-6510a3309f2d`): Task and plan completion never mutate requirement status or close-gate state; requirement verification remains governed strictly by evidence (D4).
 - `INV-PLAN-3` (`c212e6cb-a1e5-4e81-8301-4c6febae6739`): Claiming a task atomically allocates an expiring lease and returns an ephemeral one-time secret token; stale or invalid tokens cannot modify claimed tasks; expired leases can be safely reclaimed.
 - `INV-PLAN-4` (`d196d5d6-20fc-4771-ad07-f80397eda510`): Every plan task mutation appends an immutable event recording author, event type, prior state, new state, timestamp, and structured payload; events are never updated or deleted.
@@ -42,11 +42,16 @@ Do not add new unsolicited feature endpoints, alter existing requirements contra
   - Activate plan and discover initial ready tasks.
   - Two concurrent agents attempt claiming the same task: exactly one succeeds with a valid claim token; the second receives a 409 Conflict.
   - Heartbeat extends lease; expired lease allows another agent to reclaim.
-  - Stale claim token is rejected when attempting to update or complete a reclaimed task.
+  - Stale claim token is rejected when attempting to update or complete a reclaimed or released task.
   - Completing task unlocks downstream dependent tasks in `list_ready_tasks`.
   - Task completion preserves requirement status unchanged (D4).
   - Attempting to complete plan with incomplete required tasks fails with validation error.
-  - Task event history contains complete, chronologically ordered audit trail with structured payload data.
+  - `archive_plan` revokes all active leases and marks non-completed tasks cancelled.
+  - Mutations on completed or archived plans are rejected.
+  - Task event history contains complete, chronologically ordered audit trail with structured payload across all 10 event types.
+  - Database composite FKs strictly prevent cross-plan and cross-project dependencies.
+  - Database and service check reject linking non-requirement entries to `plan_task_requirements`.
+  - Nested HTTP routes `/api/projects/{project}/plans/{plan_id}/tasks/{task_id}/*` reject mismatched plan IDs with 404.
   - Cross-project requests cannot access or mutate plans/tasks.
   - `prepare_task(task_id=...)` outputs complete Markdown prompt without secrets or claim tokens.
   - Cancelled or rejected AI draft leaves zero rows in all planning tables.
@@ -60,8 +65,8 @@ Do not add new unsolicited feature endpoints, alter existing requirements contra
   - All public tool and route responses redact claim tokens on read operations.
 - Documentation updates:
   - Update `docs/mcp-reference.md` with complete documentation of all planning MCP tools (including `update_plan` and `archive_plan`).
-  - Update `docs/http-api.md` with endpoints, request/response schemas, and status codes.
-  - Update `docs/architecture.md` with planning domain architecture and sequence diagrams.
+  - Update `docs/http-api.md` with endpoints, request/response schemas, nested paths, and status codes.
+  - Update `docs/architecture.md` with planning domain architecture, composite FK isolation, and sequence diagrams.
   - Update `README.md` with Phase 4 orchestration capabilities.
 - Compliance and Close Gate:
   - Author and attach test evidence for all acceptance criteria `AC-PLAN-1` through `AC-PLAN-13` referencing final commit SHA.
@@ -74,6 +79,12 @@ Do not add new unsolicited feature endpoints, alter existing requirements contra
 - [ ] `AC-PLAN-13` (`c89b24eb-9e64-4e8f-ac83-022f42bd7d14`): End-to-end integration verifies full planning lifecycle, migration clean from empty PostgreSQL DB, and just check pass (T29).
 - [ ] End-to-end integration test suite passes in `server/tests/test_planning_integration.py`.
 - [ ] Concurrency and lease collision tests pass reliably under parallel execution.
+- [ ] Stale token after release and reclaim verified rejected.
+- [ ] Reclaim of expired lease in `in_review` verified.
+- [ ] `archive_plan` lease revocation and post-archive mutation rejection verified.
+- [ ] Database composite FKs verified blocking cross-plan/cross-project dependencies.
+- [ ] Requirement section check verified blocking non-requirement context entry links.
+- [ ] Nested route plan validation verified returning 404 on mismatched plan URL.
 - [ ] Database migration cleanly runs on blank PostgreSQL target and upgrades from integrated head.
 - [ ] Downgrade to down_revision and upgrade back to head verified without data corruption.
 - [ ] Zero secret leaks verified in logs and API read endpoints.

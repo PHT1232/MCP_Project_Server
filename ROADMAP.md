@@ -145,8 +145,8 @@ Implementation plan: [tasks/PLAN-TASK-ORCHESTRATION.md](tasks/PLAN-TASK-ORCHESTR
 | T16 | `task/T16-codebase-guide-api` | **merged** (`a9e48ea`) |
 | T17 | `task/T17-codebase-guide-ui` | **in review** |
 | T19 | `task/T19-evidence-quality` | **merged** |
-| T20 | `task/T20-ai-provider-settings` | **in review** |
-| T21 | `task/T21-semantic-runtime-fallback` | **in review** |
+| T20 | `task/T20-ai-provider-settings` | **merged** |
+| T21 | `task/T21-semantic-runtime-fallback` | **merged** |
 | T22 | `task/T22-plan-task-contract` | **in review** |
 | T23 | `task/T23-plan-task-core` | **not started** |
 | T24 | `task/T24-plan-task-api` | **not started** |

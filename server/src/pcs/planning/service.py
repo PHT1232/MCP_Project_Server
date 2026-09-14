@@ -12,21 +12,11 @@ import secrets
 from collections import deque
 from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from pcs.context.service import resolve_project
-from pcs.db.models import (
-    ContextEntry,
-    Plan,
-    PlanTask,
-    PlanTaskEvent,
-    PlanTaskRequirement,
-    Project,
-    TaskDependency,
-)
 from pcs.planning.errors import (
     ClaimConflictError,
     DependencyCycleError,
@@ -37,6 +27,16 @@ from pcs.planning.errors import (
     StaleClaimTokenError,
     TaskNotFoundError,
 )
+from pcs.planning.models import (
+    Plan,
+    PlanTask,
+    PlanTaskEvent,
+    PlanTaskRequirement,
+    TaskDependency,
+)
+
+if TYPE_CHECKING:
+    from pcs.db.models import Project
 from pcs.planning.types import (
     DEFAULT_LEASE_SECONDS,
     EVENT_CANCELLED,
@@ -107,6 +107,12 @@ def _now() -> datetime:
 
 def _hash_token(token: str) -> str:
     return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+async def _resolve_project(session: AsyncSession, project: str) -> Project:
+    from pcs.context.service import resolve_project
+
+    return await resolve_project(session, project)
 
 
 def _validate_title(title: str) -> str:
@@ -219,6 +225,8 @@ async def _validate_requirement_entries(
     """Ensure all requirement_ids exist in the project and belong to section 'requirements'."""
     if not req_ids:
         return
+    from pcs.db.models import ContextEntry
+
     unique_ids = list(set(req_ids))
     result = await session.execute(
         select(ContextEntry).where(
@@ -285,7 +293,7 @@ async def create_plan(
     """Create an empty plan in 'draft' status (FR43, D18)."""
     clean_title = _validate_title(title)
     clean_goal = _validate_goal(goal)
-    proj = await resolve_project(session, project)
+    proj = await _resolve_project(session, project)
 
     plan = Plan(
         project_id=proj.id,
@@ -297,8 +305,7 @@ async def create_plan(
         updated_at=_now(),
     )
     session.add(plan)
-    await session.commit()
-    await session.refresh(plan)
+    await session.flush()
     return _as_plan_view(plan, [])
 
 
@@ -317,7 +324,7 @@ async def create_plan_with_tasks(
     """Atomically create a plan with tasks, dependencies, and requirements (FR43-FR45, D18, D23)."""
     clean_title = _validate_title(title)
     clean_goal = _validate_goal(goal)
-    proj = await resolve_project(session, project)
+    proj = await _resolve_project(session, project)
 
     if not tasks:
         raise PlanningValidationError("At least one task is required.")
@@ -444,8 +451,7 @@ async def create_plan_with_tasks(
             },
         )
 
-    await session.commit()
-    await session.refresh(plan)
+    await session.flush()
 
     task_views = [
         _as_task_view(
@@ -467,7 +473,7 @@ async def get_plan(
     plan_id: str,
 ) -> PlanView:
     """Retrieve a plan with all its tasks, dependencies, and requirements (FR43)."""
-    proj = await resolve_project(session, project)
+    proj = await _resolve_project(session, project)
     result = await session.execute(
         select(Plan).where(Plan.id == plan_id, Plan.project_id == proj.id)
     )
@@ -522,7 +528,7 @@ async def list_plans(
     status: str | None = None,
 ) -> list[PlanView]:
     """List plans in a project, optionally filtered by status (FR43)."""
-    proj = await resolve_project(session, project)
+    proj = await _resolve_project(session, project)
     stmt = select(Plan).where(Plan.project_id == proj.id)
     if status is not None:
         if status not in PLAN_STATUSES:
@@ -559,7 +565,7 @@ async def update_plan(
     goal: str | None = None,
 ) -> PlanView:
     """Update title and/or goal of an active or draft plan (FR43)."""
-    proj = await resolve_project(session, project)
+    proj = await _resolve_project(session, project)
     result = await session.execute(
         select(Plan).where(Plan.id == plan_id, Plan.project_id == proj.id).with_for_update()
     )
@@ -579,7 +585,7 @@ async def update_plan(
         plan.goal = _validate_goal(goal)
 
     plan.updated_at = _now()
-    await session.commit()
+    await session.flush()
     return await get_plan(session, project, plan_id)
 
 
@@ -593,7 +599,7 @@ async def archive_plan(
     actor: str = "agent",
 ) -> PlanView:
     """Archive a plan; sole administrative exception revoking all active leases (FR43, D20)."""
-    proj = await resolve_project(session, project)
+    proj = await _resolve_project(session, project)
     result = await session.execute(
         select(Plan).where(Plan.id == plan_id, Plan.project_id == proj.id).with_for_update()
     )
@@ -637,7 +643,7 @@ async def archive_plan(
 
     plan.status = PLAN_STATUS_ARCHIVED
     plan.updated_at = now
-    await session.commit()
+    await session.flush()
     return await get_plan(session, project, plan_id)
 
 
@@ -651,7 +657,7 @@ async def activate_plan(
     actor: str = "agent",
 ) -> PlanView:
     """Activate a draft plan; transitions root tasks (zero dependencies) to ready (FR43, FR44)."""
-    proj = await resolve_project(session, project)
+    proj = await _resolve_project(session, project)
     result = await session.execute(
         select(Plan).where(Plan.id == plan_id, Plan.project_id == proj.id).with_for_update()
     )
@@ -703,7 +709,7 @@ async def activate_plan(
                 payload={"reason": "plan_activated"},
             )
 
-    await session.commit()
+    await session.flush()
     return await get_plan(session, project, plan_id)
 
 
@@ -727,7 +733,7 @@ async def add_plan_task(
     clean_local_id = _validate_local_task_id(local_task_id)
     clean_title = _validate_title(title)
     clean_objective = _validate_objective(objective)
-    proj = await resolve_project(session, project)
+    proj = await _resolve_project(session, project)
 
     plan_res = await session.execute(
         select(Plan).where(Plan.id == plan_id, Plan.project_id == proj.id)
@@ -800,7 +806,7 @@ async def add_plan_task(
         },
     )
 
-    await session.commit()
+    await session.flush()
     return _as_task_view(pt, dependencies=[], requirement_ids=req_ids)
 
 
@@ -822,7 +828,7 @@ async def update_plan_task(
     actor: str = "agent",
 ) -> PlanTaskView:
     """Update task fields; active leases strictly require valid claim token (FR44, D20)."""
-    proj = await resolve_project(session, project)
+    proj = await _resolve_project(session, project)
     plan_res = await session.execute(
         select(Plan).where(Plan.id == plan_id, Plan.project_id == proj.id)
     )
@@ -913,7 +919,7 @@ async def update_plan_task(
         payload={"updated_fields": updated_fields},
     )
 
-    await session.commit()
+    await session.flush()
 
     # Load dependencies and requirement IDs for view
     deps_res = await session.execute(
@@ -952,7 +958,7 @@ async def add_task_dependency(
             f"Self-dependency detected: task {task_id!r} cannot depend on itself."
         )
 
-    proj = await resolve_project(session, project)
+    proj = await _resolve_project(session, project)
     plan_res = await session.execute(
         select(Plan).where(Plan.id == plan_id, Plan.project_id == proj.id)
     )
@@ -1061,7 +1067,7 @@ async def add_task_dependency(
         },
     )
 
-    await session.commit()
+    await session.flush()
 
 
 # ---------------------------------------------------------------------------
@@ -1081,7 +1087,7 @@ async def list_ready_tasks(
     4. Task is 'ready' OR has expired lease (status in ('claimed', 'in_progress',
        'in_review') AND lease_expires_at <= now()).
     """
-    proj = await resolve_project(session, project)
+    proj = await _resolve_project(session, project)
     now = _now()
 
     # Load active plans
@@ -1201,7 +1207,7 @@ async def claim_task(
     if not clean_claimant:
         raise PlanningValidationError("claimed_by must be non-empty.")
 
-    proj = await resolve_project(session, project)
+    proj = await _resolve_project(session, project)
     plan_res = await session.execute(
         select(Plan).where(Plan.id == plan_id, Plan.project_id == proj.id)
     )
@@ -1319,7 +1325,7 @@ async def claim_task(
             },
         )
 
-    await session.commit()
+    await session.flush()
 
     # Load requirements for view
     reqs_res = await session.execute(
@@ -1351,7 +1357,7 @@ async def heartbeat_task(
             f"lease_seconds must be between {MIN_LEASE_SECONDS} and {MAX_LEASE_SECONDS}."
         )
 
-    proj = await resolve_project(session, project)
+    proj = await _resolve_project(session, project)
     plan_res = await session.execute(
         select(Plan).where(Plan.id == plan_id, Plan.project_id == proj.id)
     )
@@ -1406,7 +1412,7 @@ async def heartbeat_task(
         },
     )
 
-    await session.commit()
+    await session.flush()
 
     deps_res = await session.execute(
         select(TaskDependency.depends_on_task_id).where(
@@ -1439,7 +1445,7 @@ async def release_task(
     reason: str = "voluntary_release",
 ) -> PlanTaskView:
     """Voluntarily release a claimed/in_progress task back to ready (FR47, D20)."""
-    proj = await resolve_project(session, project)
+    proj = await _resolve_project(session, project)
     plan_res = await session.execute(
         select(Plan).where(Plan.id == plan_id, Plan.project_id == proj.id)
     )
@@ -1496,7 +1502,7 @@ async def release_task(
         payload={"reason": reason[:MAX_REASON_CHARS]},
     )
 
-    await session.commit()
+    await session.flush()
 
     deps_res = await session.execute(
         select(TaskDependency.depends_on_task_id).where(
@@ -1534,7 +1540,7 @@ async def set_task_status(
     if status not in TASK_STATUSES:
         raise PlanningValidationError(f"Invalid task status {status!r}.")
 
-    proj = await resolve_project(session, project)
+    proj = await _resolve_project(session, project)
     plan_res = await session.execute(
         select(Plan).where(Plan.id == plan_id, Plan.project_id == proj.id)
     )
@@ -1652,7 +1658,7 @@ async def set_task_status(
         payload=payload,
     )
 
-    await session.commit()
+    await session.flush()
 
     deps_res = await session.execute(
         select(TaskDependency.depends_on_task_id).where(
@@ -1688,7 +1694,7 @@ async def complete_task(
 
     Never mutates requirements (FR44, FR47, D4, INV-PLAN-2).
     """
-    proj = await resolve_project(session, project)
+    proj = await _resolve_project(session, project)
     plan_res = await session.execute(
         select(Plan).where(Plan.id == plan_id, Plan.project_id == proj.id)
     )
@@ -1818,7 +1824,7 @@ async def complete_task(
                     },
                 )
 
-    await session.commit()
+    await session.flush()
 
     deps_res = await session.execute(
         select(TaskDependency.depends_on_task_id).where(
@@ -1852,7 +1858,7 @@ async def complete_plan(
 
     Never mutates requirements (FR43, D4, INV-PLAN-2).
     """
-    proj = await resolve_project(session, project)
+    proj = await _resolve_project(session, project)
     plan_res = await session.execute(
         select(Plan).where(Plan.id == plan_id, Plan.project_id == proj.id).with_for_update()
     )
@@ -1882,7 +1888,7 @@ async def complete_plan(
 
     plan.status = PLAN_STATUS_COMPLETED
     plan.updated_at = _now()
-    await session.commit()
+    await session.flush()
     return await get_plan(session, project, plan_id)
 
 
@@ -1896,7 +1902,7 @@ async def get_task_history(
     task_id: str,
 ) -> list[TaskEventView]:
     """Retrieve immutable chronological audit event history for a task (FR48, D21, INV-PLAN-4)."""
-    proj = await resolve_project(session, project)
+    proj = await _resolve_project(session, project)
     t_res = await session.execute(
         select(PlanTask.id).where(
             PlanTask.id == task_id,

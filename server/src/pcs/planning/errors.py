@@ -5,8 +5,6 @@ No ORM or I/O — imported by service, MCP, and HTTP layers.
 
 from __future__ import annotations
 
-from pcs.context.types import ValidationError
-
 
 class PlanningError(Exception):
     """Base exception for planning domain operations."""
@@ -41,8 +39,12 @@ class TaskNotFoundError(PlanningError):
         super().__init__(" ".join(parts) + ".")
 
 
-class PlanningValidationError(PlanningError, ValidationError):
+class PlanningValidationError(PlanningError):
     """Malformed planning request or constraint violation."""
+
+
+# Compatibility alias for transports expecting ValidationError
+ValidationError = PlanningValidationError
 
 
 class DependencyCycleError(PlanningValidationError):

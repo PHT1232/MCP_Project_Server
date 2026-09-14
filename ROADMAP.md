@@ -105,6 +105,21 @@ Implementation contract: [tasks/CONTRACT-COMPLIANCE-PLAN.md](tasks/CONTRACT-COMP
 
 T11 and T12 may run in parallel after T10 merges. T13 integrates both branches after they merge.
 
+### Phase 4 — Plan & Task Orchestration
+
+Implementation plan: [tasks/PLAN-TASK-ORCHESTRATION.md](tasks/PLAN-TASK-ORCHESTRATION.md).
+
+| Task | Scope | Depends on |
+|------|-------|------------|
+| [T22](tasks/T22-plan-task-contract.md) | Plan & Task Orchestration product contract, decisions D18–D24, FR43–FR53, task briefs T22–T29 | Latest main |
+| [T23](tasks/T23-plan-task-core.md) | Planning core model, service, migrations, DAG cycles, atomic leases, task events, isolation | T22 |
+| [T24](tasks/T24-plan-task-api.md) | Planning MCP tools and HTTP routes, input validation, token redaction, audit logging | T23 |
+| [T25](tasks/T25-planned-task-handoff.md) | `prepare_task(task_id)` integration, bounded role-neutral prompt generation, contract linking | T24 |
+| [T26](tasks/T26-ai-plan-draft.md) | Advisory AI plan draft generation using secure T20 settings, schema validation, zero-persistence | T20, T24 |
+| [T27](tasks/T27-plans-ui.md) | Plans frontend route/view, typed client/hooks, DAG display, ready filter, claim controls | T24 |
+| [T28](tasks/T28-ai-plan-ui.md) | AI draft flow in Plans UI, draft review modal, atomic approval creation | T25, T26, T27 |
+| [T29](tasks/T29-plan-task-integration.md) | End-to-end milestone integration, migration roundtrip, docs, release gate | T25, T26, T27, T28 |
+
 ---
 
 ## Status
@@ -125,6 +140,20 @@ T11 and T12 may run in parallel after T10 merges. T13 integrates both branches a
 | T11 | `task/T11-compact-contract-retrieval` | **merged** |
 | T12 | `task/T12-evidence-close-gate` | **merged** |
 | T13 | `task/T13-compliance-dashboard` | **merged** |
-| T14 | `task/T14-contract-authoring-api` | **in review** |
+| T14 | `task/T14-contract-authoring-api` | **merged** |
+| T15 | `task/T15-codebase-guide-core` | **merged** (`0cd4544`) |
+| T16 | `task/T16-codebase-guide-api` | **merged** (`a9e48ea`) |
+| T17 | `task/T17-codebase-guide-ui` | **in review** |
+| T19 | `task/T19-evidence-quality` | **merged** |
+| T20 | `task/T20-ai-provider-settings` | **in review** |
+| T21 | `task/T21-semantic-runtime-fallback` | **in review** |
+| T22 | `task/T22-plan-task-contract` | **in review** |
+| T23 | `task/T23-plan-task-core` | **not started** |
+| T24 | `task/T24-plan-task-api` | **not started** |
+| T25 | `task/T25-planned-task-handoff` | **not started** |
+| T26 | `task/T26-ai-plan-draft` | **not started** |
+| T27 | `task/T27-plans-ui` | **not started** |
+| T28 | `task/T28-ai-plan-ui` | **not started** |
+| T29 | `task/T29-plan-task-integration` | **not started** |
 
 Update this table as tasks move: `not started → in progress → in review → changes requested → merged`.

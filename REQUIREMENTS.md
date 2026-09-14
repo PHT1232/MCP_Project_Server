@@ -58,6 +58,13 @@ sub-questions are in §11.
 | D15 | **Requirements sync model.** File owns requirement existence + title/prose; store owns status + links + history. 3-way merge against a last-synced snapshot; on a status conflict the store wins and the file's status token is rewritten. Status is never inferred. (FR16a) |
 | D16 | **Docker + Tailscale.** Ships as a Docker Compose stack (server + PostgreSQL). Access is localhost by default; optionally the stack joins the user's Tailscale tailnet and serves the frontend + HTTP MCP endpoint there, so the user reaches it from any of their own devices. Tailscale provides device identity/ACLs; no public exposure (no Funnel). (§7.8) |
 | D17 | **Design language = `DESIGN.md`.** The frontend follows the "Fey" style reference in `DESIGN.md` — dark matte-black canvas, Calibre type, pill (99px) controls, 16px cards, single-black-halo depth, chromatic accents (Ember/Signal/Growth) only as meaning-carriers. Tokens are implemented verbatim from that file. (FR39a) |
+| D18 | **Deterministic plan & task DAG.** Plans decompose work into tasks with explicit directed acyclic graph (DAG) dependencies. Cycles, self-dependencies, cross-plan, and cross-project links are rejected at creation and update by database and service constraints. (FR43–FR45) |
+| D19 | **Requirement independence (Preserve D4).** Task completion and plan completion never mutate requirement status or close-gate state. Tasks track operational execution progress; requirements represent verified product contracts governed strictly by the evidence ledger and close gate. (FR53) |
+| D20 | **Atomic exclusive leases & ephemeral tokens.** Claiming a task atomically grants a time-bounded lease with an expiring TTL and returns an ephemeral one-time secret token. Mutating a claimed task requires presenting the valid current token. Expired leases can be reclaimed safely by other workers without data loss. (FR47) |
+| D21 | **Immutable task event audit trail.** Every plan task mutation (creation, claim, heartbeat, release, status change, completion) appends an immutable event row recording author, transition, and timestamp (mirroring D5). (FR48) |
+| D22 | **Bounded role-neutral task handoff prompt.** `prepare_task(task_id=...)` returns a self-contained, token-budgeted Markdown prompt ready to paste into any implementation agent, incorporating task objective, acceptance criteria, dependency state, and linked requirement contracts without emitting secrets, tokens, or raw diffs. (FR49) |
+| D23 | **Advisory AI plan generation with human approval.** AI plan drafting (`generate_plan_draft`) is an unprivileged, read-only advisory service utilizing validated T20 settings. It creates zero database records; persistence occurs only upon explicit human review and atomic creation (`create_plan_with_tasks`). (FR50–FR51) |
+| D24 | **Milestone execution boundaries (Non-goals).** Agent process spawning/dispatch, local shell or container execution, Git worktree orchestration, GitHub issue/PR sync, and fine-grained authorization are non-goals for this milestone. PCS is the central context and orchestration ledger, not a runtime supervisor. (FR43–FR53) |
 
 ---
 
@@ -110,6 +117,10 @@ rebuilt**:
   in scope; anything multi-user or publicly exposed is not.
 - The server does not infer context from tests, CI, or code (D4) — it only stores
   what an agent or human tells it.
+- **Not an agent process supervisor or task execution worker (D24):** PCS manages plan state, DAG dependencies, leases, and handoff prompts; it does not spawn processes, manage terminal/shell sessions, or run agent commands.
+- **Not a Git worktree or branch orchestrator (D24):** PCS does not create worktrees, switch branches, or automate git operations for tasks.
+- **Not an external issue tracker sync (D24):** PCS does not sync bidirectional issues or pull requests with GitHub, Jira, or Linear in this milestone.
+- **No fine-grained multi-user authorization (D2, D24):** Single-user model is preserved; no per-agent ACLs or role-based access control.
 
 ---
 
@@ -509,6 +520,46 @@ first:
   agent running in the same environment as the server always has a stdio MCP path
   that needs no network.
 
+### 7.9 Plan and task orchestration
+
+- **FR43** — **Plan management** — The server supports creating, listing, reading,
+  updating, archiving, and activating named plans per project. A plan defines a high-level
+  goal/milestone with lifecycle state (`draft`, `active`, `completed`, `archived`) and
+  strict project isolation.
+- **FR44** — **Plan task model** — Each plan contains structured tasks with title,
+  objective, acceptance criteria, optional linked files, optional requirement IDs,
+  priority, and lifecycle status (`pending`, `ready`, `claimed`, `in_progress`,
+  `blocked`, `in_review`, `completed`, `cancelled`).
+- **FR45** — **DAG dependencies** — Tasks declare prerequisite task dependencies within
+  the same plan. The service rejects self-dependencies, dependency cycles, cross-plan, and
+  cross-project references. Completing a prerequisite unlocks dependent tasks whose
+  prerequisites are fully met.
+- **FR46** — **Ready-task discovery** — The server exposes operations to query ready
+  tasks across a plan or project whose prerequisites are all completed and that currently
+  have no active unexpired claim lease.
+- **FR47** — **Atomic claim and lease heartbeat** — Workers claim ready tasks via atomic
+  leases with a random one-time claim token and expiring TTL. A worker heartbeats the
+  lease to extend expiration, or releases it explicitly. Expired in-progress tasks can be
+  reclaimed. Stale or invalid claim tokens cannot mutate claimed tasks.
+- **FR48** — **Task audit history** — Every plan task mutation appends an immutable event
+  row recording author, event type, prior state, new state, and timestamp.
+- **FR49** — **Planned task handoff prompt** — `prepare_task(task_id=...)` builds a
+  role-neutral, token-budgeted Markdown prompt containing task objective, acceptance
+  criteria, dependency state, relevant requirement contract, and guidelines without
+  exposing secrets, tokens, or raw diffs.
+- **FR50** — **Advisory AI plan draft generation** — `generate_plan_draft` uses secure
+  T20 AI settings to produce structured candidate task DAGs; generation is strictly
+  read-only and creates zero database entities.
+- **FR51** — **Explicit draft approval and atomic creation** — Persisting an AI plan
+  draft requires explicit caller approval via `create_plan_with_tasks`, executing in a
+  single atomic database transaction.
+- **FR52** — **Plans web interface** — The frontend provides a `/projects/:project/plans`
+  route and nav item to browse plans, inspect task DAG status, filter ready tasks,
+  manage claims/leases, view task history, and review/create AI plan drafts using
+  `DESIGN.md` tokens.
+- **FR53** — **Requirement status independence (D4)** — Task and plan completion never
+  mutate requirement status or bypass evidence close gates.
+
 ---
 
 ## 8. Non-Functional Requirements
@@ -691,6 +742,22 @@ first:
   `DESIGN.md` token values, not literals; and a review finds no violations of
   that file's "Don't" list (e.g. filled chromatic buttons, a second typeface,
   blue used as a status color) (D17).
+- **AC28** — `create_plan_with_tasks` atomically creates a plan, tasks, dependencies,
+  and initial history events in a single transaction; duplicate keys, cycles, cross-plan
+  references, and cross-project requirement IDs are rejected (D18, FR43–FR45).
+- **AC29** — `claim_task` atomically issues an expiring lease and unique ephemeral token;
+  two concurrent claim attempts for the same task result in exactly one success; operations
+  with an expired or incorrect token are rejected (D20, FR47).
+- **AC30** — Completing a prerequisite task automatically unlocks dependent tasks to ready
+  state; `complete_task` appends an immutable event and never alters requirement status (D4, D19, FR48, FR53).
+- **AC31** — `prepare_task(task_id=...)` outputs a role-neutral Markdown prompt containing
+  task objective, acceptance criteria, dependency state, and linked requirement invariants
+  within the token budget, free of claim tokens, provider keys, or raw diffs (D22, FR49).
+- **AC32** — `generate_plan_draft` validates candidate task schemas locally and persists
+  zero database records until explicit human approval invokes `create_plan_with_tasks` (D23, FR50, FR51).
+- **AC33** — The Plans frontend displays plan DAGs, tracks lease states with feedback,
+  allows manual and approved AI plan creation, and contains zero literal hex/px/shadow
+  values in violation of `DESIGN.md` (D17, D23, FR52).
 
 ---
 
@@ -771,3 +838,9 @@ narrower tuning/design detail, not a blocker.
   (D11).
 - Symbol-level support for languages outside the 7 supported families (D8).
 - Server-inferred context from tests/CI (D4).
+- Agent process supervisor, runner, or automated agent dispatch (D24).
+- Shell execution, terminal sessions, script runners, or automated execution of commands (D24).
+- Git worktree automation, branch creation, or repository lifecycle management (D24).
+- External issue tracker / project management two-way sync (GitHub, Jira, Linear) (D24).
+- Fine-grained per-agent authorization or multi-user access control (D2, D24).
+

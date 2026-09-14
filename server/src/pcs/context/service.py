@@ -6,13 +6,16 @@ Plain async functions over :class:`AsyncSession`. No MCP or HTTP imports
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from pcs.ai_settings import load_runtime_ai_settings
 from pcs.context.assembly import assemble_briefing
+from pcs.context.summarizer import Summarizer
 from pcs.context.types import (
     ACTION_ARCHIVE,
     ACTION_CREATE,
@@ -746,11 +749,14 @@ async def get_project_briefing(
         )
         for e in visible
     ]
-    return assemble_briefing(
+    runtime_ai = await load_runtime_ai_settings(session)
+    return await asyncio.to_thread(
+        assemble_briefing,
         project_name=row.name,
         entries=assembly,
         budget_tokens=budget,
         sections=sections,
+        summarizer=Summarizer(runtime_ai.summary),
     )
 
 

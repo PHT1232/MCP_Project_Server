@@ -5,6 +5,7 @@
  * | Path                                  | View                        |
  * | ------------------------------------- | --------------------------- |
  * | `/`                                   | ProjectsView (picker)       |
+ * | `/settings/ai`                         | Global AI settings          |
  * | `/projects/:project/dashboard`        | DashboardView (FR36)        |
  * | `/projects/:project/requirements`     | RequirementsView (FR36a)    |
  * | `/projects/:project/index`            | IndexView (FR37)            |
@@ -32,3 +33,5 @@ export const NAV_ITEMS: { view: ProjectViewName; label: string }[] = [
   { view: "index", label: "Index" },
   { view: "code-map", label: "Code map" },
 ];
+
+export const AI_SETTINGS_ROUTE = "/settings/ai";

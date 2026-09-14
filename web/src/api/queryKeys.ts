@@ -6,6 +6,7 @@
 
 export const queryKeys = {
   projects: ["projects"] as const,
+  aiSettings: ["admin", "ai-settings"] as const,
   briefing: (project: string) => ["briefing", project] as const,
   section: (project: string, section: string) =>
     ["section", project, section] as const,
@@ -35,7 +36,17 @@ export const queryKeys = {
  * True when a query key belongs to `project` (or is the shared project list).
  * The manual refresh (FR38) invalidates exactly this set — no more, no less.
  */
-export function isRefreshable(key: readonly unknown[], project: string): boolean {
+export function isRefreshable(
+  key: readonly unknown[],
+  project: string | null,
+  includeGlobal = false,
+): boolean {
+  if (includeGlobal && key[0] === "admin" && key[1] === "ai-settings") {
+    return true;
+  }
+  if (project === null) {
+    return false;
+  }
   if (key.length === 1 && key[0] === "projects") {
     return true;
   }

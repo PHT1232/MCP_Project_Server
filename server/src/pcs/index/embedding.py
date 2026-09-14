@@ -23,6 +23,9 @@ import math
 import re
 from typing import Protocol
 
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from pcs.ai_settings import ProviderSettings, load_runtime_ai_settings, resolve_provider_endpoint
 from pcs.config import Settings, get_settings
 
 
@@ -94,13 +97,17 @@ class OpenAIEmbeddingBackend:
     async def embed(self, texts: list[str]) -> list[list[float]]:
         import httpx
 
-        headers = {"content-type": "application/json"}
+        endpoint = await resolve_provider_endpoint(self._base_url)
+        headers = {"content-type": "application/json", **endpoint.request_headers}
         if self._api_key:
             headers["authorization"] = f"Bearer {self._api_key}"
         payload: dict[str, object] = {"model": self.name, "input": texts}
-        async with httpx.AsyncClient(timeout=self._timeout) as client:
+        async with httpx.AsyncClient(timeout=self._timeout, follow_redirects=False) as client:
             response = await client.post(
-                f"{self._base_url}/embeddings", json=payload, headers=headers
+                f"{endpoint.url}/embeddings",
+                json=payload,
+                headers=headers,
+                extensions=endpoint.request_extensions,
             )
             response.raise_for_status()
             data = response.json()
@@ -114,25 +121,38 @@ class OpenAIEmbeddingBackend:
         return vectors
 
 
-def build_embedding_backend(settings: Settings | None = None) -> EmbeddingBackend | None:
-    """Return the configured backend, or ``None`` when semantic search is disabled (D7)."""
+def build_embedding_backend(
+    settings: Settings | ProviderSettings | None = None,
+) -> EmbeddingBackend | None:
+    """Return configured backend, or ``None`` when semantic search is disabled (D7)."""
     cfg = settings or get_settings()
-    choice = cfg.embedding_backend.strip().lower()
+    if isinstance(cfg, ProviderSettings):
+        choice = cfg.backend.strip().lower()
+        dimensions = cfg.dimensions or 1536
+        model = cfg.model
+        base_url = cfg.base_url
+        api_key = cfg.api_key
+        timeout = cfg.timeout_seconds
+    else:
+        choice = cfg.embedding_backend.strip().lower()
+        dimensions = cfg.embedding_dimensions
+        model = cfg.embedding_model
+        base_url = cfg.embedding_base_url
+        api_key = cfg.embedding_api_key
+        timeout = cfg.embedding_timeout_seconds
     if not choice:
         return None
     if choice == "hashing":
-        return HashingEmbeddingBackend(
-            dimensions=cfg.embedding_dimensions, model=cfg.embedding_model
-        )
+        return HashingEmbeddingBackend(dimensions=dimensions, model=model)
     if choice in {"openai", "openai-compatible"}:
         return OpenAIEmbeddingBackend(
-            base_url=cfg.embedding_base_url,
-            api_key=cfg.embedding_api_key,
-            model=cfg.embedding_model,
-            dimensions=cfg.embedding_dimensions,
-            timeout=cfg.embedding_timeout_seconds,
+            base_url=base_url,
+            api_key=api_key,
+            model=model,
+            dimensions=dimensions,
+            timeout=timeout,
         )
-    raise ValueError(f"unknown PCS_EMBEDDING_BACKEND={choice!r} (expected '', 'openai', 'hashing')")
+    raise ValueError(f"unknown embedding backend {choice!r}")
 
 
 _OVERRIDE: EmbeddingBackend | None = None
@@ -148,8 +168,9 @@ def set_embedding_backend_override(
     _OVERRIDE_SET = active
 
 
-def get_embedding_backend() -> EmbeddingBackend | None:
-    """Process-wide embedding backend (FR28). Honours the test override."""
+async def get_embedding_backend(session: AsyncSession) -> EmbeddingBackend | None:
+    """Return the hot-reloaded persisted embedding backend (AC-AISET-6)."""
     if _OVERRIDE_SET:
         return _OVERRIDE
-    return build_embedding_backend()
+    runtime = await load_runtime_ai_settings(session)
+    return build_embedding_backend(runtime.embedding)

@@ -7,6 +7,7 @@ import {
   createRequirementInvariant,
   deleteAcceptanceCriterion,
   deleteRequirementInvariant,
+  getAiSettings,
   getBriefing,
   getCodeMap,
   getIndexStatus,
@@ -24,6 +25,7 @@ import {
   setFocus,
   syncRequirements,
   updateAcceptanceCriterion,
+  updateAiSettings,
   updateEntry,
   updateRequirementInvariant,
 } from "./client";
@@ -51,6 +53,43 @@ function callOf(
 }
 
 describe("api client", () => {
+  it("GETs and PATCHes global AI settings", async () => {
+    const valid = {
+      embedding: { backend: "openai", base_url: "https://embed.test", model: "embed", dimensions: 3, batch_size: 2, timeout_seconds: 10, api_key_configured: false, source: "default" },
+      summary: { backend: "openai", base_url: "https://summary.test", model: "summary", timeout_seconds: 10, api_key_configured: false, source: "default" },
+      reindex_required: false,
+    };
+    const fetchMock = mockFetch(valid);
+
+    await getAiSettings();
+    expect(callOf(fetchMock).url).toBe("/api/admin/ai-settings");
+
+    fetchMock.mockClear();
+    await updateAiSettings({
+      summary: {
+        backend: "openai",
+        base_url: "https://api.example.test",
+        model: "summary-model",
+        timeout_seconds: 30,
+        api_key: null,
+      },
+    }, "admin-token");
+    const { url, init } = callOf(fetchMock);
+    expect(url).toBe("/api/admin/ai-settings");
+    expect(init.method).toBe("PATCH");
+    expect(init.body).toBe(
+      JSON.stringify({
+        summary: {
+          backend: "openai",
+          base_url: "https://api.example.test",
+          model: "summary-model",
+          timeout_seconds: 30,
+          api_key: null,
+        },
+      }),
+    );
+  });
+
   it("lists projects from GET /api/projects", async () => {
     const fetchMock = mockFetch([
       { id: "1", name: "acme", root_path: "/r", status_line: "idle" },
@@ -323,5 +362,17 @@ describe("api client", () => {
     expect(callOf(fetchMock).url).toBe(
       "/api/projects/p/search?q=make_invoice&limit=30",
     );
+  });
+});
+
+describe("AI settings response validation", () => {
+  it("rejects malformed GET responses before they enter typed state", async () => {
+    mockFetch({ embedding: {}, summary: {}, reindex_required: "no" });
+    await expect(getAiSettings()).rejects.toMatchObject({ name: "ApiError", status: 502 });
+  });
+
+  it("rejects malformed PATCH responses", async () => {
+    mockFetch({ embedding: null, summary: {}, reindex_required: false });
+    await expect(updateAiSettings({}, "admin")).rejects.toBeInstanceOf(ApiError);
   });
 });

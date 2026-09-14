@@ -29,11 +29,12 @@ export function useReindex(
   return useMutation({
     mutationFn: (vars: { incremental: boolean }) =>
       reindex(project, vars.incremental),
-    onSuccess: (data) => {
+    onSuccess: (data, variables) => {
       queryClient.setQueryData<IndexStatus>(queryKeys.indexStatus(project), data);
-      void queryClient.invalidateQueries({
-        queryKey: queryKeys.indexStatus(project),
-      });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.indexStatus(project) });
+      if (!variables.incremental) {
+        void queryClient.invalidateQueries({ queryKey: queryKeys.aiSettings });
+      }
     },
   });
 }

@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import logging
 
+from pcs.ai_settings import ProviderSettings, resolve_provider_endpoint
 from pcs.config import Settings, get_settings
 from pcs.context.types import CHARS_PER_TOKEN
 
@@ -24,13 +25,19 @@ logger = logging.getLogger("pcs")
 class Summarizer:
     """Opt-in last-resort summarizer (FR9d)."""
 
-    def __init__(self, settings: Settings | None = None) -> None:
+    def __init__(self, settings: Settings | ProviderSettings | None = None) -> None:
         self._settings = settings or get_settings()
         self._cache: dict[tuple[str, int], str] = {}
 
     def is_available(self) -> bool:
         """Whether an LLM backend is configured (FR9d). Empty setting → False (FR9e)."""
-        return bool(self._settings.summary_backend.strip())
+        return bool(
+            (
+                self._settings.backend
+                if isinstance(self._settings, ProviderSettings)
+                else self._settings.summary_backend
+            ).strip()
+        )
 
     def summarize(self, text: str, *, max_tokens: int, cache_key: str) -> str | None:
         """Return a cached/computed summary, or ``None`` to trigger FR9e fallback."""
@@ -49,7 +56,15 @@ class Summarizer:
         return summary
 
     def _call_backend(self, text: str, *, max_tokens: int) -> str | None:
-        backend = self._settings.summary_backend.strip().lower()
+        backend = (
+            (
+                self._settings.backend
+                if isinstance(self._settings, ProviderSettings)
+                else self._settings.summary_backend
+            )
+            .strip()
+            .lower()
+        )
         if backend not in {"openai", "openai-compatible"}:
             logger.warning("summary_backend_unknown", extra={"context": {"backend": backend}})
             return None
@@ -57,30 +72,52 @@ class Summarizer:
             import httpx
 
             headers = {"content-type": "application/json"}
-            if self._settings.summary_api_key:
-                headers["authorization"] = f"Bearer {self._settings.summary_api_key}"
+            api_key = (
+                self._settings.api_key
+                if isinstance(self._settings, ProviderSettings)
+                else self._settings.summary_api_key
+            )
+            if api_key:
+                headers["authorization"] = f"Bearer {api_key}"
             prompt = (
                 "Summarise the following project-context note in at most "
                 f"{max_tokens} tokens. Keep concrete facts, IDs, and file paths. "
                 "Return prose only.\n\n" + text
             )
             payload = {
-                "model": self._settings.summary_model,
+                "model": self._settings.model
+                if isinstance(self._settings, ProviderSettings)
+                else self._settings.summary_model,
                 "messages": [{"role": "user", "content": prompt}],
                 "max_tokens": max_tokens,
                 "temperature": 0.0,
             }
-            with httpx.Client(timeout=30.0) as client:
+            base_url = (
+                self._settings.base_url
+                if isinstance(self._settings, ProviderSettings)
+                else self._settings.summary_base_url
+            )
+            import asyncio
+
+            endpoint = asyncio.run(resolve_provider_endpoint(base_url))
+            headers.update(endpoint.request_headers)
+            with httpx.Client(
+                follow_redirects=False,
+                timeout=self._settings.timeout_seconds
+                if isinstance(self._settings, ProviderSettings)
+                else self._settings.summary_timeout_seconds,
+            ) as client:
                 response = client.post(
-                    f"{self._settings.summary_base_url.rstrip('/')}/chat/completions",
+                    f"{endpoint.url}/chat/completions",
                     json=payload,
                     headers=headers,
+                    extensions=endpoint.request_extensions,
                 )
                 response.raise_for_status()
                 data = response.json()
             return str(data["choices"][0]["message"]["content"])
-        except Exception as exc:
-            logger.warning("summary_call_failed", extra={"context": {"error": str(exc)}})
+        except Exception:
+            logger.warning("summary_call_failed")
             return None
 
 

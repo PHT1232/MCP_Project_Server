@@ -5,7 +5,8 @@ import { Card } from "./components/Card";
 import { useProject } from "./hooks/useProjects";
 import { useRefreshAll } from "./hooks/useRefresh";
 import { matchPath, useLocation, useNavigate } from "./router/context";
-import { PROJECT_VIEWS, projectRoute, type ProjectViewName } from "./routes";
+import { AI_SETTINGS_ROUTE, PROJECT_VIEWS, projectRoute, type ProjectViewName } from "./routes";
+import { AiSettingsView } from "./views/AiSettingsView";
 import { CodeMapView } from "./views/CodeMapView";
 import { DashboardView } from "./views/DashboardView";
 import { IndexView } from "./views/IndexView";
@@ -65,7 +66,10 @@ function ProjectView({
 export function App(): ReactNode {
   const path = useLocation();
   const navigate = useNavigate();
-  const { project, view, redirectTo } = resolve(path);
+  const globalAiSettings = path === AI_SETTINGS_ROUTE;
+  const { project, view, redirectTo } = globalAiSettings
+    ? { project: null, view: null, redirectTo: null }
+    : resolve(path);
 
   useEffect(() => {
     if (redirectTo !== null) {
@@ -74,7 +78,7 @@ export function App(): ReactNode {
   }, [redirectTo, navigate]);
 
   const projectRow = useProject(project);
-  const refresh = useRefreshAll(project);
+  const refresh = useRefreshAll(project, globalAiSettings);
 
   let content: ReactNode;
   if (redirectTo !== null) {
@@ -83,6 +87,8 @@ export function App(): ReactNode {
         <p className="text-body text-fey-graphite">Loading…</p>
       </Card>
     );
+  } else if (globalAiSettings) {
+    content = <AiSettingsView />;
   } else if (project === null || view === null) {
     content = <ProjectsView />;
   } else {
@@ -96,6 +102,7 @@ export function App(): ReactNode {
       refresh={refresh.refresh}
       isRefreshing={refresh.isRefreshing}
       lastRefreshedAt={refresh.lastRefreshedAt}
+      refreshEnabled={project !== null || globalAiSettings}
     >
       {content}
     </AppShell>

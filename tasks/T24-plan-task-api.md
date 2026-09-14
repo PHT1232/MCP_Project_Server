@@ -85,8 +85,8 @@ Do not touch `pcs.index.retrieval`, frontend code, or AI generators. Do not inve
   - Map `ValidationError`, empty patch, unknown fields, mismatched types -> 400.
   - Map `ClaimConflictError`, `StaleClaimTokenError`, `PlanNotActiveError` -> 409 Conflict.
   - Map `InvalidStateTransitionError` -> 400.
-  - Active lease token enforcement: Any status mutation (`set_task_status`), completion (`complete_task`), or direct cancellation on a task with an active unexpired lease strictly requires presenting the valid claim token. Tokenless calls or attempts to claim operator bypass are rejected with 409 Conflict. Tokenless operations are permitted only when no active lease exists or when lease has expired.
-  - Reclaim semantics: `claim_task` reclaims an expired task in `claimed`, `in_progress`, or `in_review`, atomically transitioning status to `claimed`, issuing a fresh token and lease, and revoking the old token. Claiming an unexpired task in `in_review` is rejected with 409 Conflict.
+  - Active lease token enforcement: Active lease is strictly `lease_expires_at > now()`. Any status mutation (`set_task_status`), completion (`complete_task`), or direct cancellation on a task with an active unexpired lease (`lease_expires_at > now()`) strictly requires presenting the valid claim token. Tokenless calls or attempts to claim operator bypass are rejected with 409 Conflict. Tokenless operations are permitted only when no active lease exists or when lease has expired (`lease_expires_at <= now()`).
+  - Reclaim semantics: `claim_task` reclaims an expired task (`lease_expires_at <= now()`) in `claimed`, `in_progress`, or `in_review`, atomically transitioning status to `claimed`, issuing a fresh token and lease, and revoking the old token. Claiming an unexpired task (`lease_expires_at > now()`, including unexpired `in_review`) is rejected with 409 Conflict. At exact boundary `lease_expires_at == now()`, the task is treated as expired and eligible for reclamation.
   - Heartbeat semantics: `heartbeat_task` validates the token and extends lease expiration, strictly preserving the task's exact persisted status (`claimed -> claimed`, `in_progress -> in_progress`).
 - Token Redaction & Audit Safety:
   - Emit structured audit log lines (`log_tool_call`) for every call recording tool, project, caller, and outcome (NFR6).
@@ -103,11 +103,12 @@ Do not touch `pcs.index.retrieval`, frontend code, or AI generators. Do not inve
 - [ ] All task-level HTTP routes use nested `/plans/{plan_id}/tasks/{task_id}/...` structure.
 - [ ] Request with mismatched `plan_id` in URL returns 404 / TaskNotFoundError.
 - [ ] `claim_task` returns raw claim token exactly once; subsequent reads omit token and token hash.
-- [ ] `claim_task` atomically reclaims expired `in_review` task to `claimed`, issuing new token and lease, revoking old token.
-- [ ] `claim_task` on task with active unexpired lease (including unexpired `in_review`) returns 409 Conflict.
+- [ ] `claim_task` atomically reclaims expired `in_review` task (`lease_expires_at <= now()`) to `claimed`, issuing new token and lease, revoking old token.
+- [ ] `claim_task` on task with active unexpired lease (`lease_expires_at > now()`, including unexpired `in_review`) returns 409 Conflict.
+- [ ] Boundary condition `lease_expires_at == now()` is verified treated as expired (reclaimable via `claim_task`; token presentation returns 409 / StaleClaimTokenError).
 - [ ] Heartbeat on `claimed` task extends lease expiration while strictly preserving status `claimed` (does not mutate to `in_progress`).
 - [ ] Status mutation or completion on task with active lease without valid token returns 409 Conflict (no operator bypass).
-- [ ] Stale or expired token on heartbeat/status/complete returns 409 / StaleClaimTokenError.
+- [ ] Stale or expired token (`lease_expires_at <= now()`) on heartbeat/status/complete returns 409 / StaleClaimTokenError.
 - [ ] Mutation on task in completed or archived plan returns 409 / PlanNotActiveError.
 - [ ] Unknown fields, malformed JSON, and empty patch bodies return HTTP 400.
 - [ ] Concurrent claim conflict returns clean 409 Conflict in MCP and HTTP.

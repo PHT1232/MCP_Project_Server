@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from sqlalchemy import bindparam, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from pcs.index.embedding import EmbeddingBackend
+from pcs.index.embedding import EmbeddingBackend, EmbeddingProviderError
 from pcs.index.search import (
     ScopeClause,
     SearchHit,
@@ -103,7 +103,16 @@ async def semantic_search(
     limit: int,
 ) -> list[SearchHit]:
     """Vector search over embedded chunks, scoped like keyword search (FR20, FR29)."""
-    vectors = await backend.embed([query])
+    try:
+        # Keep the provider catch at the exact adapter boundary. Database and
+        # result-processing errors below must remain visible (NFR8).
+        vectors = await backend.embed([query])
+    except EmbeddingProviderError:
+        raise
+    except TimeoutError as exc:
+        raise EmbeddingProviderError("timeout") from exc
+    except ConnectionError as exc:
+        raise EmbeddingProviderError("connection") from exc
     if not vectors:
         return []
     qvec = _vec_literal(vectors[0])

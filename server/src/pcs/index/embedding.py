@@ -25,8 +25,23 @@ from typing import Protocol
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from pcs.ai_settings import ProviderSettings, load_runtime_ai_settings, resolve_provider_endpoint
+from pcs.ai_settings import (
+    AiSettingsError,
+    ProviderSettings,
+    load_runtime_ai_settings,
+    resolve_provider_endpoint,
+)
 from pcs.config import Settings, get_settings
+
+
+class EmbeddingProviderError(RuntimeError):
+    """Redacted runtime failure from an embedding provider (NFR8, NFR11)."""
+
+    _KINDS = frozenset({"configuration", "connection", "invalid_response", "provider", "timeout"})
+
+    def __init__(self, kind: str = "provider") -> None:
+        self.kind = kind if kind in self._KINDS else "provider"
+        super().__init__("embedding provider request failed")
 
 
 class EmbeddingBackend(Protocol):
@@ -36,7 +51,7 @@ class EmbeddingBackend(Protocol):
     dimensions: int
 
     async def embed(self, texts: list[str]) -> list[list[float]]:
-        """Return one unit-normalised vector per input text, order preserved."""
+        """Return vectors or raise ``EmbeddingProviderError`` for provider failures."""
         ...
 
 
@@ -97,27 +112,39 @@ class OpenAIEmbeddingBackend:
     async def embed(self, texts: list[str]) -> list[list[float]]:
         import httpx
 
-        endpoint = await resolve_provider_endpoint(self._base_url)
+        try:
+            endpoint = await resolve_provider_endpoint(self._base_url)
+        except AiSettingsError as exc:
+            raise EmbeddingProviderError("configuration") from exc
         headers = {"content-type": "application/json", **endpoint.request_headers}
         if self._api_key:
             headers["authorization"] = f"Bearer {self._api_key}"
         payload: dict[str, object] = {"model": self.name, "input": texts}
-        async with httpx.AsyncClient(timeout=self._timeout, follow_redirects=False) as client:
-            response = await client.post(
-                f"{endpoint.url}/embeddings",
-                json=payload,
-                headers=headers,
-                extensions=endpoint.request_extensions,
-            )
-            response.raise_for_status()
+        try:
+            async with httpx.AsyncClient(timeout=self._timeout, follow_redirects=False) as client:
+                response = await client.post(
+                    f"{endpoint.url}/embeddings",
+                    json=payload,
+                    headers=headers,
+                    extensions=endpoint.request_extensions,
+                )
+                response.raise_for_status()
+        except httpx.TimeoutException as exc:
+            raise EmbeddingProviderError("timeout") from exc
+        except httpx.HTTPStatusError as exc:
+            raise EmbeddingProviderError("provider") from exc
+        except httpx.RequestError as exc:
+            raise EmbeddingProviderError("connection") from exc
+        try:
             data = response.json()
-        rows = sorted(data["data"], key=lambda row: int(row.get("index", 0)))
-        vectors = [[float(x) for x in row["embedding"]] for row in rows]
-        if vectors and len(vectors[0]) != self.dimensions:
-            raise ValueError(
-                f"embedding backend returned dim {len(vectors[0])}, "
-                f"PCS_EMBEDDING_DIMENSIONS={self.dimensions}"
-            )
+            rows = sorted(data["data"], key=lambda row: int(row.get("index", 0)))
+            vectors = [[float(x) for x in row["embedding"]] for row in rows]
+            if len(vectors) != len(texts):
+                raise ValueError("embedding response count does not match input count")
+            if vectors and len(vectors[0]) != self.dimensions:
+                raise ValueError("embedding dimensions do not match configured dimensions")
+        except (AttributeError, KeyError, TypeError, ValueError) as exc:
+            raise EmbeddingProviderError("invalid_response") from exc
         return vectors
 
 

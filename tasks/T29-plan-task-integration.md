@@ -4,7 +4,7 @@
 
 ## Goal
 
-Execute end-to-end cross-layer verification for Phase 4 Plan & Task Orchestration, update public reference documentation (`docs/mcp-reference.md`, `docs/http-api.md`, `docs/architecture.md`, `README.md`), verify migration upgrade/downgrade from scratch, record final compliance evidence, and pass the PCS release close gate for requirement `R-086`.
+Execute end-to-end cross-layer verification for Phase 4 Plan & Task Orchestration, update public reference documentation (`docs/mcp-reference.md`, `docs/http-api.md`, `docs/architecture.md`, `README.md`), verify migration upgrade/downgrade from scratch on PostgreSQL, record final compliance evidence, and pass the PCS release close gate for requirement `R-086`.
 
 ## Owned files/modules
 
@@ -27,10 +27,10 @@ Do not add new unsolicited feature endpoints, alter existing requirements contra
 
 ## Invariants
 
-- `INV-PLAN-1` (`952fcb34-050f-42d5-860b-d3c421131c26`): Planning models enforce tenant isolation, acyclic dependencies within the same plan, and immutable event history.
-- `INV-PLAN-2` (`fdab6d29-f527-4d13-91c2-6510a3309f2d`): Task claiming provides single-agent atomic leasing with cryptographic tokens; expired leases permit reclamation; stale tokens fail.
-- `INV-PLAN-3` (`c212e6cb-a1e5-4e81-8301-4c6febae6739`): Task completion resolves dependency gates without inferring or mutating requirement status.
-- `INV-PLAN-4` (`d196d5d6-20fc-4771-ad07-f80397eda510`): MCP and HTTP surfaces are functionally symmetric, validate inputs strictly, and never leak claim tokens or secrets.
+- `INV-PLAN-1` (`952fcb34-050f-42d5-860b-d3c421131c26`): Tasks belong to one plan and one project; dependency graph is strictly acyclic; requirement links use normalized plan_task_requirements with composite foreign keys; self-dependencies, cycles, cross-plan, and cross-project references are rejected.
+- `INV-PLAN-2` (`fdab6d29-f527-4d13-91c2-6510a3309f2d`): Task and plan completion never mutate requirement status or close-gate state; requirement verification remains governed strictly by evidence (D4).
+- `INV-PLAN-3` (`c212e6cb-a1e5-4e81-8301-4c6febae6739`): Claiming a task atomically allocates an expiring lease and returns an ephemeral one-time secret token; stale or invalid tokens cannot modify claimed tasks; expired leases can be safely reclaimed.
+- `INV-PLAN-4` (`d196d5d6-20fc-4771-ad07-f80397eda510`): Every plan task mutation appends an immutable event recording author, event type, prior state, new state, timestamp, and structured payload; events are never updated or deleted.
 - `INV-PLAN-5` (`d55a6164-1772-49c2-b390-be8f988e203b`): Planned task handoff produces bounded, role-neutral prompts linking task contracts and retrieval context without exposing secrets.
 - `INV-PLAN-6` (`56ca7dc0-e3f0-4270-b1ce-48a915fb09b7`): AI plan draft generation is strictly read-only; invalid or cancelled drafts persist zero rows; plans are stored only via explicit approval through atomic create_plan_with_tasks.
 - `INV-PLAN-7` (`78c2bf3b-1e07-4a6b-b80f-3272f56200b9`): Web UI operations reflect server-confirmed truth without speculative optimistic writes; mutations invalidate project queries; DESIGN.md tokens are followed.
@@ -46,19 +46,20 @@ Do not add new unsolicited feature endpoints, alter existing requirements contra
   - Completing task unlocks downstream dependent tasks in `list_ready_tasks`.
   - Task completion preserves requirement status unchanged (D4).
   - Attempting to complete plan with incomplete required tasks fails with validation error.
-  - Task event history contains complete, chronologically ordered audit trail.
+  - Task event history contains complete, chronologically ordered audit trail with structured payload data.
   - Cross-project requests cannot access or mutate plans/tasks.
   - `prepare_task(task_id=...)` outputs complete Markdown prompt without secrets or claim tokens.
   - Cancelled or rejected AI draft leaves zero rows in all planning tables.
   - Web UI accurately reflects server-confirmed state following mutations and page refreshes.
-- Database and migration verification:
-  - Run database migration from completely empty database (`just migrate`).
-  - Verify migration downgrade and re-upgrade: `uv run alembic downgrade -1 && uv run alembic upgrade head`.
+- Database and PostgreSQL migration verification:
+  - Run database migration from completely empty PostgreSQL database (`just migrate`).
+  - Verify migration upgrade from existing integrated schema to planning head.
+  - Verify migration downgrade (`uv run alembic downgrade -1`) and re-upgrade (`uv run alembic upgrade head`) on PostgreSQL.
 - Security and audit verification:
   - Structured logs contain no claim tokens, authorization tokens, or raw secrets.
   - All public tool and route responses redact claim tokens on read operations.
 - Documentation updates:
-  - Update `docs/mcp-reference.md` with complete documentation of all planning MCP tools.
+  - Update `docs/mcp-reference.md` with complete documentation of all planning MCP tools (including `update_plan` and `archive_plan`).
   - Update `docs/http-api.md` with endpoints, request/response schemas, and status codes.
   - Update `docs/architecture.md` with planning domain architecture and sequence diagrams.
   - Update `README.md` with Phase 4 orchestration capabilities.
@@ -70,10 +71,10 @@ Do not add new unsolicited feature endpoints, alter existing requirements contra
 
 ## Acceptance checklist
 
-- [ ] `AC-PLAN-13` (`c89b24eb-9e64-4e8f-ac83-022f42bd7d14`): Full milestone verification passes: clean migration from scratch, upgrade/downgrade, end-to-end integration tests, `just check`, close gate evaluation.
+- [ ] `AC-PLAN-13` (`c89b24eb-9e64-4e8f-ac83-022f42bd7d14`): End-to-end integration verifies full planning lifecycle, migration clean from empty PostgreSQL DB, and just check pass (T29).
 - [ ] End-to-end integration test suite passes in `server/tests/test_planning_integration.py`.
 - [ ] Concurrency and lease collision tests pass reliably under parallel execution.
-- [ ] Database migration cleanly runs on blank SQLite and PostgreSQL targets.
+- [ ] Database migration cleanly runs on blank PostgreSQL target and upgrades from integrated head.
 - [ ] Downgrade to down_revision and upgrade back to head verified without data corruption.
 - [ ] Zero secret leaks verified in logs and API read endpoints.
 - [ ] `docs/mcp-reference.md` and `docs/http-api.md` updated with all planning endpoints.
@@ -85,7 +86,7 @@ Do not add new unsolicited feature endpoints, alter existing requirements contra
 ## Required evidence
 
 - Complete test suite output from `server/tests/test_planning_integration.py`.
-- Migration run logs verifying upgrade, downgrade, and clean database bootstrap.
+- Migration run logs verifying upgrade, downgrade, and clean database bootstrap on PostgreSQL.
 - Independent review verification on security, concurrency, and D4 compliance.
 - PCS evidence recorded for criteria `AC-PLAN-1` through `AC-PLAN-13`.
 - Close gate report demonstrating zero violations.
@@ -95,7 +96,7 @@ Do not add new unsolicited feature endpoints, alter existing requirements contra
 ```bash
 just test
 just check
-uv run pytest server/tests/test_planning_integration.py -v
+cd server && uv run pytest tests/test_planning_integration.py -v
 cd server && uv run alembic downgrade -1 && uv run alembic upgrade head
 ```
 
@@ -107,7 +108,7 @@ cd server && uv run alembic downgrade -1 && uv run alembic upgrade head
 - **Branch:** `task/T29-plan-task-integration`
 - **What was done:**
   - Implemented end-to-end integration test suite covering planning workflows
-  - Verified migration upgrade/downgrade/upgrade from blank database
+  - Verified migration upgrade/downgrade/upgrade from blank PostgreSQL database
   - Updated reference documentation (`docs/mcp-reference.md`, `docs/http-api.md`, `docs/architecture.md`, `README.md`)
   - Recorded contract compliance evidence for all Phase 4 criteria
   - Evaluated release close gate for requirement `R-086`

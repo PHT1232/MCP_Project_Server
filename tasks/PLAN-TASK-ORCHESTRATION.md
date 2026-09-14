@@ -18,24 +18,25 @@ While PCS provides shared project context, full-codebase search, and compact req
 Turn PCS into a deterministic plan and task orchestration hub that coordinates human and AI agent execution without becoming a bloated runtime worker:
 
 - **Deterministic DAG Plans:** Plans decompose milestones into ordered tasks with acyclic prerequisite dependencies and strict project isolation.
+- **Normalized Requirement Links:** Tasks link to project requirements via a dedicated junction table (`plan_task_requirements`) enforcing database-level composite foreign key integrity and project isolation.
 - **Atomic Claim Leases:** Workers claim ready tasks via atomic time-bounded leases with ephemeral one-time tokens, preventing race conditions and permitting expired task reclamation.
-- **Append-Only History:** All task mutations record immutable event audit records.
+- **Append-Only History:** All task mutations record immutable event audit records with structured, redacted payload data.
 - **Self-Contained Handoffs:** `prepare_task(task_id=...)` generates role-neutral, token-bounded Markdown prompts containing task objectives, acceptance criteria, dependency state, and contract rules.
 - **Advisory AI Plan Generation:** AI draft generation proposes candidate task DAGs using secure T20 settings without persisting database records until explicit human review and approval.
-- **Plans Web Interface:** A dedicated `/projects/:project/plans` interface renders task DAGs, tracks lease states, filters ready tasks, and facilitates draft reviews using `DESIGN.md` tokens.
+- **Plans Web Interface:** A dedicated `/projects/:project/plans` interface renders task DAGs, tracks lease states, filters ready tasks, facilitates draft reviews, and enables updating and archiving plans using `DESIGN.md` tokens.
 - **Preservation of D4:** Task and plan completion track operational progress and never automatically modify requirement verification status.
 
 ## 3. Locked Decisions
 
 | Decision | Summary |
 |---|---|
-| **D18** | **Deterministic Plan & Task DAG:** Plans contain tasks with explicit DAG dependencies. Self-dependencies, dependency cycles, cross-plan, and cross-project links are rejected by service validation and database constraints. |
-| **D19** | **Requirement Independence (Preserve D4):** Task completion never mutates requirement status or close-gate state. Tasks track operational execution; requirements represent verified product contracts governed strictly by the evidence ledger and close gate. |
-| **D20** | **Atomic Exclusive Leases & Ephemeral Tokens:** Claiming a task atomically allocates an expiring lease with TTL and returns a cryptographically random one-time secret token. Mutating a claimed task requires presenting the valid token. Expired leases can be reclaimed safely. |
-| **D21** | **Immutable Task Event Audit Trail:** Every task mutation (creation, claim, heartbeat, release, status change, completion) appends an immutable event row recording author, event type, prior state, new state, and timestamp (mirroring D5). |
-| **D22** | **Bounded Role-Neutral Task Handoff Prompt:** `prepare_task(task_id=...)` returns a token-budgeted Markdown prompt containing task objective, acceptance criteria, dependency state, and linked requirement contracts without emitting secrets, tokens, or raw diffs. |
-| **D23** | **Advisory AI Plan Generation with Human Approval:** `generate_plan_draft` is strictly read-only and creates zero database entities. Persisting an AI proposal requires explicit caller review and approval via atomic `create_plan_with_tasks`. |
-| **D24** | **Milestone Execution Boundaries (Non-goals):** Agent process spawning/dispatch, local shell or container execution, Git worktree orchestration, GitHub issue/PR sync, and fine-grained authorization are non-goals for this milestone. |
+| **D18** | **Deterministic Plan & Task DAG:** Plans contain tasks with explicit DAG dependencies. Self-dependencies, dependency cycles, cross-plan, and cross-project links are rejected by service validation and database constraints. (FR43–FR45) |
+| **D19** | **Requirement Independence (Preserve D4):** Task completion never mutates requirement status or close-gate state. Tasks track operational execution; requirements represent verified product contracts governed strictly by the evidence ledger and close gate. (FR53) |
+| **D20** | **Atomic Exclusive Leases & Ephemeral Tokens:** Claiming a task atomically allocates an expiring lease with TTL and returns a cryptographically random one-time secret token. Mutating a claimed task requires presenting the valid token. Expired leases can be reclaimed safely. (FR47) |
+| **D21** | **Immutable Task Event Audit Trail:** Every task mutation (creation, claim, heartbeat, release, status change, completion) appends an immutable event row recording author, event type, prior state, new state, timestamp, and structured payload (mirroring D5). (FR48) |
+| **D22** | **Bounded Role-Neutral Task Handoff Prompt:** `prepare_task(task_id=...)` returns a token-budgeted Markdown prompt containing task objective, acceptance criteria, dependency state, and linked requirement contracts without emitting secrets, tokens, or raw diffs. (FR49) |
+| **D23** | **Advisory AI Plan Generation with Human Approval:** `generate_plan_draft` is strictly read-only and creates zero database entities. Persisting an AI proposal requires explicit caller review and approval via atomic `create_plan_with_tasks`. (FR50–FR51) |
+| **D24** | **Milestone Execution Boundaries (Non-goals):** Agent process spawning/dispatch, local shell or container execution, Git worktree orchestration, GitHub issue/PR sync, and fine-grained authorization are non-goals for this milestone. (FR43–FR53) |
 
 ## 4. Non-Goals
 
@@ -54,7 +55,7 @@ T22 (Product contract & briefs)
            ├── T26 (Advisory AI plan draft generation) [also depends on T20]
            └── T27 (Plans frontend view & components)
                 └── T28 (AI planning UI & draft review modal) [depends on T25, T26, T27]
-                     └── T29 (Integration, migration roundtrip, release gate) [depends on T25-T28]
+                     └── T29 (Integration, PostgreSQL migration roundtrip, release gate) [depends on T25-T28]
 ```
 
 ### Integration Dependencies Note
@@ -63,60 +64,159 @@ T22 (Product contract & briefs)
 - **T17 (Codebase Guide frontend):** Implemented on branch `task/T17-codebase-guide-ui` (commit `14c3437`) and under review. Independent of planning tasks.
 - **T18 (Integration orchestrator):** Not started. Planning tasks do not depend on T18.
 
-## 6. Data Model & Database Architecture
+## 6. Plan Task State Machine
+
+### 6.1 States
+The lifecycle of a `plan_task` is governed by 8 distinct states:
+1. `pending`: The task is waiting for prerequisite tasks in the DAG to complete, or the plan is not yet active.
+2. `ready`: Persisted state! All prerequisite dependencies are satisfied (`status == 'completed'`), and the task is eligible to be claimed.
+3. `claimed`: An agent or human has acquired an exclusive, time-bounded lease via `claim_task` and holds a valid ephemeral claim token.
+4. `in_progress`: The leaseholder has acknowledged and begun active work on the task (via `set_task_status(status='in_progress')`).
+5. `blocked`: The task cannot proceed due to external impediments (flagged by the leaseholder or plan administrator).
+6. `in_review`: Implementation is complete, and the task is awaiting review/verification.
+7. `completed`: Terminal success state. All acceptance criteria have been implemented and verified.
+8. `cancelled`: Terminal cancellation state. The task was aborted or deemed unnecessary.
+
+### 6.2 Persisted vs Derived State
+- `status` is a **persisted column** in `plan_tasks`.
+- When a plan is activated (`activate_plan`), all root tasks (those with zero prerequisites) transition `pending -> ready`.
+- When a task completes (`complete_task`), the service checks all downstream tasks depending on it: if all prerequisites of a downstream task are now `completed`, its persisted status transitions `pending -> ready`.
+- **Derived Claim Eligibility:** If a task in `claimed` or `in_progress` has an expired lease (`lease_expires_at < now()`), it is considered *derivatively reclaimable* by `list_ready_tasks` without requiring a background cron worker to mutate the database row.
+
+### 6.3 Valid Transitions & Authorized Actors
+
+| From State | To State | Trigger / Operation | Required Actor / Authorization |
+|---|---|---|---|
+| `pending` | `ready` | Plan activation (`activate_plan`) OR completion of last prerequisite (`complete_task`) | System / Service transition |
+| `ready` | `claimed` | `claim_task(lease_seconds)` | Any worker; returns ephemeral one-time claim token |
+| `claimed` | `in_progress` | `set_task_status(status='in_progress')` | Active leaseholder presenting valid claim token |
+| `claimed` | `ready` | `release_task()` | Active leaseholder presenting valid claim token |
+| `claimed` (expired) | `claimed` | `claim_task(lease_seconds)` (Reclaim) | Any worker (overwrites expired lease with new token) |
+| `in_progress` | `in_review` | `set_task_status(status='in_review')` | Active leaseholder presenting valid claim token |
+| `in_progress` | `blocked` | `set_task_status(status='blocked')` | Active leaseholder presenting valid claim token |
+| `in_progress` | `ready` | `release_task()` | Active leaseholder presenting valid claim token |
+| `in_progress` (expired) | `claimed` | `claim_task(lease_seconds)` (Reclaim) | Any worker (overwrites expired lease with new token) |
+| `blocked` | `ready` | `set_task_status(status='ready')` | Operator or leaseholder |
+| `blocked` | `in_progress` | `set_task_status(status='in_progress')` | Active leaseholder presenting valid claim token |
+| `in_review` | `completed` | `complete_task()` | Active leaseholder with token OR plan operator |
+| `claimed` / `in_progress` | `completed` | `complete_task()` | Active leaseholder presenting valid claim token |
+| `*` (except `completed`) | `cancelled` | `set_task_status(status='cancelled')` | Plan operator / administrator |
+
+### 6.4 Canonical Predicate for `list_ready_tasks`
+A task is returned by `list_ready_tasks` if and only if it satisfies all of the following:
+1. `plan.status == 'active'` and belongs to the specified project.
+2. `task.status NOT IN ('completed', 'cancelled', 'blocked')`.
+3. All prerequisite tasks in `task_dependencies` have `status == 'completed'`.
+4. The task is currently available for execution:
+   - `task.status == 'ready'`, **OR**
+   - `task.status IN ('claimed', 'in_progress')` AND `task.lease_expires_at IS NOT NULL` AND `task.lease_expires_at < :now` (expired lease).
+
+## 7. Data Model & Database Architecture (PostgreSQL)
 
 All planning tables live in PostgreSQL under the standard schema with composite foreign keys enforcing strict project isolation:
 
 ### `plans` Table
-- `id` (UUID, PK)
-- `project_id` (UUID, FK -> `projects.id` ON DELETE CASCADE)
+- `id` (VARCHAR(36), PK)
+- `project_id` (VARCHAR(36), FK -> `projects.id` ON DELETE CASCADE, index=True)
 - `title` (VARCHAR(160), NOT NULL)
 - `goal` (TEXT, NOT NULL, max 8000 chars)
 - `status` (VARCHAR(32), NOT NULL, default `'draft'`): `draft`, `active`, `completed`, `archived`
 - `created_at` (TIMESTAMPTZ, NOT NULL)
 - `updated_at` (TIMESTAMPTZ, NOT NULL)
 - `author` (VARCHAR(120), NOT NULL)
+- Composite Unique Constraint: `UniqueConstraint("id", "project_id", name="uq_plans_id_project")`
 
 ### `plan_tasks` Table
-- `id` (UUID, PK)
-- `plan_id` (UUID, FK -> `plans.id` ON DELETE CASCADE)
-- `project_id` (UUID, FK -> `projects.id` ON DELETE CASCADE)
+- `id` (VARCHAR(36), PK)
+- `plan_id` (VARCHAR(36), NOT NULL)
+- `project_id` (VARCHAR(36), NOT NULL)
 - `local_task_id` (VARCHAR(32), NOT NULL): Unique local slug or key within the plan (e.g. `T01`, `T02`)
 - `title` (VARCHAR(160), NOT NULL)
 - `objective` (TEXT, NOT NULL, max 8000 chars)
-- `acceptance_criteria` (JSONB, NOT NULL, list of strings)
-- `linked_files` (JSONB, NOT NULL, list of strings)
-- `requirement_ids` (JSONB, NOT NULL, list of requirement UUIDs verified against `context_entries.id`)
+- `acceptance_criteria` (JSONB, NOT NULL, default `'[]'::jsonb`): list of strings
+- `linked_files` (JSONB, NOT NULL, default `'[]'::jsonb`): list of normalized relative paths
 - `priority` (INT, NOT NULL, default 0)
-- `status` (VARCHAR(32), NOT NULL, default `'pending'`): `pending`, `ready`, `claimed`, `in_progress`, `blocked`, `in_review`, `completed`, `cancelled`
-- `claim_token_hash` (VARCHAR(64), NULL): SHA-256 hash of the current active claim token
+- `status` (VARCHAR(32), NOT NULL, default `'pending'`): CheckConstraint for the 8 valid states
+- `claim_token_hash` (VARCHAR(64), NULL): SHA-256 hex digest of active claim token
 - `claimed_by` (VARCHAR(120), NULL): Identity of worker holding the lease
 - `lease_expires_at` (TIMESTAMPTZ, NULL): Expiration timestamp of active claim lease
 - `created_at` (TIMESTAMPTZ, NOT NULL)
 - `updated_at` (TIMESTAMPTZ, NOT NULL)
-- Composite Unique Constraint: `(plan_id, local_task_id)`
+- Foreign Key: `ForeignKeyConstraint(["plan_id", "project_id"], ["plans.id", "plans.project_id"], ondelete="CASCADE", name="fk_plan_tasks_plan")`
+- Composite Unique Constraints:
+  - `UniqueConstraint("id", "project_id", name="uq_plan_tasks_id_project")`
+  - `UniqueConstraint("plan_id", "local_task_id", name="uq_plan_tasks_plan_local_id")`
+- Indexes: `(project_id, status)`, `(plan_id, status)`, `(lease_expires_at)`
 
 ### `task_dependencies` Table
-- `plan_id` (UUID, NOT NULL)
-- `task_id` (UUID, FK -> `plan_tasks.id` ON DELETE CASCADE)
-- `depends_on_task_id` (UUID, FK -> `plan_tasks.id` ON DELETE CASCADE)
-- Composite PK: `(task_id, depends_on_task_id)`
-- Constraints: `task_id != depends_on_task_id`; both tasks must belong to the same `plan_id`.
+- `plan_id` (VARCHAR(36), NOT NULL)
+- `task_id` (VARCHAR(36), NOT NULL)
+- `depends_on_task_id` (VARCHAR(36), NOT NULL)
+- Primary Key: `(task_id, depends_on_task_id)`
+- Foreign Keys:
+  - `ForeignKeyConstraint(["task_id"], ["plan_tasks.id"], ondelete="CASCADE", name="fk_task_deps_task")`
+  - `ForeignKeyConstraint(["depends_on_task_id"], ["plan_tasks.id"], ondelete="CASCADE", name="fk_task_deps_depends_on")`
+- CheckConstraint: `task_id != depends_on_task_id` (no self-dependencies)
 
-### `plan_task_events` Table (Append-Only)
-- `id` (UUID, PK)
-- `task_id` (UUID, FK -> `plan_tasks.id` ON DELETE CASCADE)
-- `plan_id` (UUID, NOT NULL)
-- `project_id` (UUID, NOT NULL)
-- `event_type` (VARCHAR(40), NOT NULL): `created`, `status_change`, `claimed`, `heartbeat`, `released`, `reclaimed`, `completed`, `cancelled`
-- `from_status` (VARCHAR(32), NULL)
-- `to_status` (VARCHAR(32), NULL)
-- `author` (VARCHAR(120), NOT NULL)
-- `detail` (TEXT, NULL, max 2000 chars)
+### `plan_task_requirements` Table (Normalized Requirement Links)
+- `project_id` (VARCHAR(36), NOT NULL)
+- `plan_task_id` (VARCHAR(36), NOT NULL)
+- `requirement_id` (VARCHAR(36), NOT NULL)
 - `created_at` (TIMESTAMPTZ, NOT NULL)
-- Trigger: `BEFORE UPDATE OR DELETE` raises exception to enforce append-only immutability.
+- Primary Key: `(plan_task_id, requirement_id)`
+- Composite Foreign Keys:
+  - `ForeignKeyConstraint(["plan_task_id", "project_id"], ["plan_tasks.id", "plan_tasks.project_id"], ondelete="CASCADE", name="fk_plan_task_reqs_task")`
+  - `ForeignKeyConstraint(["requirement_id", "project_id"], ["context_entries.id", "context_entries.project_id"], ondelete="CASCADE", name="fk_plan_task_reqs_req")`
+- Indexes: `(project_id, requirement_id)`, `(plan_task_id)`
+- Cascade / Soft-delete behavior:
+  - Task deletion cascades and cleans up junction rows.
+  - Hard deletion of context entry cascades and cleans up junction rows.
+  - Requirement resolution (`context_entries.status = 'resolved'`) does not delete junction rows, preserving historical traceability.
 
-## 7. Product Contract Specification
+### `plan_task_events` Table (Append-Only Audit History)
+- `id` (VARCHAR(36), primary_key=True)
+- `project_id` (VARCHAR(36), NOT NULL)
+- `plan_id` (VARCHAR(36), NOT NULL)
+- `task_id` (VARCHAR(36), NOT NULL)
+- `event_type` (VARCHAR(32), NOT NULL): `created`, `claimed`, `heartbeat`, `released`, `status_changed`, `completed`, `reclaimed`, `cancelled`
+- `actor` (VARCHAR(120), NOT NULL)
+- `old_status` (VARCHAR(32), NULL)
+- `new_status` (VARCHAR(32), NULL)
+- `payload` (JSONB, NOT NULL, default `'{}'::jsonb`): Bounded structured dictionary recording event details (e.g. `{"lease_seconds": 900}`, `{"transition_reason": "waiting for CI"}`, `{"updated_fields": ["title", "objective"]}`).
+- `created_at` (TIMESTAMPTZ, NOT NULL)
+- Foreign Key: `ForeignKeyConstraint(["task_id", "project_id"], ["plan_tasks.id", "plan_tasks.project_id"], ondelete="CASCADE", name="fk_plan_task_events_task")`
+- Immutability: Read-only model without updates or deletions.
+
+## 8. Web API & MCP Framework Architecture
+
+The server adheres to repository standards using **Starlette** and **FastMCP**:
+- **MCP Tools:** Defined in `server/src/pcs/mcp/planning_tools.py` and registered onto FastMCP in `server/src/pcs/mcp/server.py` via `register_planning_tools(mcp)`.
+- **HTTP Routes:** Defined in `server/src/pcs/web_api/planning_routes.py` and registered onto the Starlette application in `server/src/pcs/mcp/server.py` via `register_planning_routes(mcp)`, using `mcp.custom_route(path, methods)(handler)`.
+- Handlers delegate directly to `pcs.planning.service`, enforcing DRY validation and unified error mapping.
+- Caller identity is extracted from header `x-pcs-caller` (defaults to `"frontend"`).
+
+### Operations Surface:
+1. `create_plan(project, title, goal)`
+2. `create_plan_with_tasks(project, title, goal, tasks, dependencies)`
+3. `list_plans(project, status=None)`
+4. `get_plan(project, plan_id)`
+5. `update_plan(project, plan_id, title=None, goal=None)`
+6. `archive_plan(project, plan_id)`
+7. `activate_plan(project, plan_id)`
+8. `add_plan_task(project, plan_id, local_task_id, title, objective, acceptance_criteria, linked_files=None, requirement_ids=None, priority=0)`
+9. `update_plan_task(project, plan_id, task_id, title=None, objective=None, acceptance_criteria=None, linked_files=None, requirement_ids=None, priority=None)`
+10. `add_task_dependency(project, plan_id, task_id, depends_on_task_id)`
+11. `list_ready_tasks(project, plan_id=None)`
+12. `claim_task(project, plan_id, task_id, claimed_by, lease_seconds=1800)`
+13. `heartbeat_task(project, plan_id, task_id, claim_token, lease_seconds=1800)`
+14. `release_task(project, plan_id, task_id, claim_token)`
+15. `set_task_status(project, plan_id, task_id, status, claim_token=None, reason=None)`
+16. `complete_task(project, plan_id, task_id, claim_token=None)`
+17. `complete_plan(project, plan_id)`
+18. `get_task_history(project, plan_id, task_id)`
+19. `generate_plan_draft(project, goal, constraints=None, max_tasks=10)` (T26)
+
+## 9. Product Contract Specification
 
 The milestone contract is registered in PCS under product requirement **`R-086`** (`f5abbe7d-fbe4-438e-a0ac-d2b0e88f9453`):
 
@@ -124,10 +224,10 @@ The milestone contract is registered in PCS under product requirement **`R-086`*
 
 | Key | ID | Kind | Risk | Statement |
 |---|---|---|---|---|
-| **INV-PLAN-1** | `952fcb34-050f-42d5-860b-d3c421131c26` | `architecture` | `high` | Tasks belong to one plan and one project; dependency graph is strictly acyclic; self-dependencies, cycles, cross-plan, and cross-project references are rejected. |
+| **INV-PLAN-1** | `952fcb34-050f-42d5-860b-d3c421131c26` | `architecture` | `high` | Tasks belong to one plan and one project; dependency graph is strictly acyclic; requirement links use normalized plan_task_requirements with composite foreign keys; self-dependencies, cycles, cross-plan, and cross-project references are rejected. |
 | **INV-PLAN-2** | `fdab6d29-f527-4d13-91c2-6510a3309f2d` | `data-boundary` | `high` | Task and plan completion never mutate requirement status or close-gate state; requirement verification remains governed strictly by evidence (D4). |
 | **INV-PLAN-3** | `c212e6cb-a1e5-4e81-8301-4c6febae6739` | `data-boundary` | `high` | Claiming a task atomically allocates an expiring lease and returns an ephemeral one-time secret token; stale or invalid tokens cannot modify claimed tasks; expired leases can be safely reclaimed. |
-| **INV-PLAN-4** | `d196d5d6-20fc-4771-ad07-f80397eda510` | `architecture` | `medium` | Every plan task mutation appends an immutable event recording author, event type, prior state, new state, and timestamp; events are never updated or deleted. |
+| **INV-PLAN-4** | `d196d5d6-20fc-4771-ad07-f80397eda510` | `architecture` | `medium` | Every plan task mutation appends an immutable event recording author, event type, prior state, new state, timestamp, and structured payload; events are never updated or deleted. |
 | **INV-PLAN-5** | `d55a6164-1772-49c2-b390-be8f988e203b` | `data-boundary` | `high` | Task preparation with task_id returns a role-neutral, token-bounded prompt with task details, dependency status, and linked contract rules; claim tokens, provider keys, and raw diffs are never emitted. |
 | **INV-PLAN-6** | `56ca7dc0-e3f0-4270-b1ce-48a915fb09b7` | `behavior` | `high` | AI plan draft generation is strictly read-only; invalid or cancelled drafts persist zero rows; plans are stored only via explicit approval through atomic create_plan_with_tasks. |
 | **INV-PLAN-7** | `78c2bf3b-1e07-4a6b-b80f-3272f56200b9` | `architecture` | `high` | Plans UI strictly uses DESIGN.md tokens with no literal visual values; mutations update UI only after server confirmation; zero false-success states. |
@@ -136,28 +236,28 @@ The milestone contract is registered in PCS under product requirement **`R-086`*
 
 | Key | ID | Invariant | Kind | Review | Statement |
 |---|---|---|---|---|---|
-| **AC-PLAN-1** | `bcfa212d-eae5-42c6-b98a-7ba78cbfcb75` | `INV-PLAN-1` | `test` | `not-required` | Plan and task DAG creation rejects cycles, self-dependencies, cross-plan, and cross-project references (T23) |
+| **AC-PLAN-1** | `bcfa212d-eae5-42c6-b98a-7ba78cbfcb75` | `INV-PLAN-1` | `test` | `not-required` | Plan and task DAG creation rejects cycles, self-dependencies, cross-plan, and cross-project references, enforcing normalized requirement links via plan_task_requirements (T23) |
 | **AC-PLAN-2** | `911bab97-9662-4acb-8efe-4cece2aeab7c` | `INV-PLAN-1` | `test` | `not-required` | Ready-task discovery returns only tasks whose prerequisites are complete and lease is unacquired or expired (T23) |
 | **AC-PLAN-3** | `42dfcafc-db94-4bc4-bcc3-9ff1e0091f9b` | `INV-PLAN-2` | `test` | `required` | Task completion and plan completion never mutate requirement status or bypass evidence close gate (T23) |
 | **AC-PLAN-4** | `8fc004f9-b782-4158-afa5-7ceb693a4315` | `INV-PLAN-3` | `test` | `not-required` | Atomic task claim issues unique ephemeral token and rejects concurrent claim race (T23) |
 | **AC-PLAN-5** | `05f02bf6-ab90-4f28-9002-2e88d69a07a1` | `INV-PLAN-3` | `test` | `not-required` | Task heartbeat, release, and reclaim enforce lease validity and reject invalid or stale tokens (T23) |
-| **AC-PLAN-6** | `e671ec47-f6b3-4e18-8fbf-5606f5afe90b` | `INV-PLAN-4` | `test` | `not-required` | Every plan task mutation appends an immutable event and preserves complete queryable task history (T23) |
-| **AC-PLAN-7** | `eeb30422-628b-4a3d-bd01-b267c42e8a2f` | `INV-PLAN-3` | `test` | `required` | Audited MCP and HTTP planning tools expose typed operations with token redaction and input validation (T24) |
+| **AC-PLAN-6** | `e671ec47-f6b3-4e18-8fbf-5606f5afe90b` | `INV-PLAN-4` | `test` | `not-required` | Every plan task mutation appends an immutable event with structured payload diff and preserves complete queryable task history (T23) |
+| **AC-PLAN-7** | `eeb30422-628b-4a3d-bd01-b267c42e8a2f` | `INV-PLAN-3` | `test` | `required` | Audited MCP and HTTP planning tools expose typed operations including update_plan and archive_plan with token redaction and input validation (T24) |
 | **AC-PLAN-8** | `eabc07be-3c22-4227-ae97-9b63bc2ea3f4` | `INV-PLAN-5` | `test` | `required` | prepare_task with task_id produces bounded role-neutral prompt with dependency and contract state without secrets (T25) |
 | **AC-PLAN-9** | `f9d99c08-7383-48f9-932c-94e1a5c24b35` | `INV-PLAN-6` | `test` | `required` | generate_plan_draft uses secure T20 settings, validates structured schema, and persists zero database rows (T26) |
 | **AC-PLAN-10** | `9521864a-18e2-498b-8b09-b24e180580d2` | `INV-PLAN-6` | `test` | `not-required` | AI draft persistence occurs only through explicit caller approval via atomic create_plan_with_tasks (T26, T28) |
 | **AC-PLAN-11** | `98f519b5-6bed-491c-b2a7-ed4150118c91` | `INV-PLAN-7` | `test` | `not-required` | Plans frontend renders plans, DAG dependency status, ready filter, claim/lease controls, and history drill-down (T27) |
 | **AC-PLAN-12** | `5187dff3-9823-49c8-9307-669b99b24976` | `INV-PLAN-7` | `test` | `required` | Plans UI strictly complies with DESIGN.md tokens without literal visual values and prevents false-success states (T27, T28) |
-| **AC-PLAN-13** | `c89b24eb-9e64-4e8f-ac83-022f42bd7d14` | `INV-PLAN-1` | `command` | `not-required` | End-to-end integration verifies full planning lifecycle, migration clean from empty DB, and just check pass (T29) |
+| **AC-PLAN-13** | `c89b24eb-9e64-4e8f-ac83-022f42bd7d14` | `INV-PLAN-1` | `command` | `not-required` | End-to-end integration verifies full planning lifecycle, migration clean from empty PostgreSQL DB, and just check pass (T29) |
 
-## 8. Task Ownership Matrix (T23–T29)
+## 10. Task Ownership Matrix (T23–T29)
 
 | Task | Branch | Exclusive Owned Files | Primary Invariants | Primary Criteria |
 |---|---|---|---|---|
 | **T23** | `task/T23-plan-task-core` | `server/src/pcs/planning/__init__.py`, `models.py`, `service.py`, `types.py`, `errors.py`, `server/src/pcs/db/models.py` (planning registration), Alembic migration, `server/tests/test_planning_core.py`, `tasks/T23-plan-task-core.md` | `INV-PLAN-1`, `INV-PLAN-2`, `INV-PLAN-3`, `INV-PLAN-4` | `AC-PLAN-1`, `AC-PLAN-2`, `AC-PLAN-3`, `AC-PLAN-4`, `AC-PLAN-5`, `AC-PLAN-6` |
-| **T24** | `task/T24-plan-task-api` | `server/src/pcs/mcp/planning_tools.py`, `server/src/pcs/web_api/planning_routes.py`, registration in `pcs/mcp/server.py` & `pcs/web_api/router.py`, `server/tests/test_planning_api.py`, `tasks/T24-plan-task-api.md` | `INV-PLAN-1`, `INV-PLAN-3` | `AC-PLAN-7` |
+| **T24** | `task/T24-plan-task-api` | `server/src/pcs/mcp/planning_tools.py`, `server/src/pcs/web_api/planning_routes.py`, registration in `pcs/mcp/server.py`, `server/tests/test_planning_api.py`, `tasks/T24-plan-task-api.md` | `INV-PLAN-1`, `INV-PLAN-3` | `AC-PLAN-7` |
 | **T25** | `task/T25-planned-task-handoff` | `server/src/pcs/planning/handoff.py`, `server/src/pcs/index/retrieval.py`, `server/src/pcs/mcp/index_tools.py`, `server/src/pcs/web_api/index_routes.py`, `server/tests/test_planned_task_handoff.py`, `tasks/T25-planned-task-handoff.md` | `INV-PLAN-5` | `AC-PLAN-8` |
-| **T26** | `task/T26-ai-plan-draft` | `server/src/pcs/planning/generator.py`, `server/src/pcs/planning/schemas.py`, `server/tests/test_ai_plan_draft.py`, `tasks/T26-ai-plan-draft.md` | `INV-PLAN-6` | `AC-PLAN-9`, `AC-PLAN-10` |
-| **T27** | `task/T27-plans-ui` | `web/src/routes.ts`, `web/src/App.tsx`, `web/src/api/types.ts`, `web/src/api/client.ts`, `web/src/api/queryKeys.ts`, `web/src/hooks/usePlans.ts`, `web/src/views/PlansView.tsx`, `web/src/components/planning/*`, `web/src/views/PlansView.test.tsx`, `tasks/T27-plans-ui.md` | `INV-PLAN-7` | `AC-PLAN-11`, `AC-PLAN-12` |
-| **T28** | `task/T28-ai-plan-ui` | `web/src/components/planning/GenerateDraftModal.tsx`, `web/src/hooks/useGeneratePlanDraft.ts`, `web/src/components/planning/GenerateDraftModal.test.tsx`, `tasks/T28-ai-plan-ui.md` | `INV-PLAN-6`, `INV-PLAN-7` | `AC-PLAN-10`, `AC-PLAN-12` |
+| **T26** | `task/T26-ai-plan-draft` | `server/src/pcs/planning/generator.py`, `server/src/pcs/planning/schemas.py`, draft additions to `planning_tools.py` & `planning_routes.py`, `server/tests/test_ai_plan_draft.py`, `tasks/T26-ai-plan-draft.md` | `INV-PLAN-6` | `AC-PLAN-9`, `AC-PLAN-10` |
+| **T27** | `task/T27-plans-ui` | `web/src/routes.ts`, `web/src/App.tsx`, `web/src/types/planning.ts`, `web/src/api/planning.ts`, `web/src/views/PlansView.tsx`, `web/src/components/plans/*`, `web/src/views/PlansView.test.tsx`, `tasks/T27-plans-ui.md` | `INV-PLAN-7` | `AC-PLAN-11`, `AC-PLAN-12` |
+| **T28** | `task/T28-ai-plan-ui` | `web/src/components/plans/AiPlanDraftModal.tsx`, draft query hooks in `web/src/api/planning.ts`, `web/src/components/plans/AiPlanDraftModal.test.tsx`, `tasks/T28-ai-plan-ui.md` | `INV-PLAN-6`, `INV-PLAN-7` | `AC-PLAN-10`, `AC-PLAN-12` |
 | **T29** | `task/T29-plan-task-integration` | `server/tests/test_planning_integration.py`, `docs/mcp-reference.md`, `docs/http-api.md`, `docs/architecture.md`, `README.md`, `tasks/T29-plan-task-integration.md` | `INV-PLAN-1..7` | `AC-PLAN-13` |

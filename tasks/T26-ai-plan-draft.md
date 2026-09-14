@@ -42,10 +42,10 @@ Do not touch frontend code, core storage models, or `prepare_task`.
   - Bounded string lengths and maximum task counts.
   - Unique local task IDs within proposal.
   - Dependencies form a valid directed acyclic graph (no cycles, no dangling references).
-  - Referenced requirement IDs belong to the active project.
+  - Referenced requirement IDs belong to the active project context (which will link via `plan_task_requirements` upon approval).
   - Linked files are normalized relative paths within project root.
   - Reject unknown schema fields and fail closed on truncated or malformed responses.
-- Enforce read-only semantics: `generate_plan_draft` must perform zero SQL write operations and create zero rows in `plans`, `plan_tasks`, or `plan_task_events`.
+- Enforce read-only semantics: `generate_plan_draft` must perform zero SQL write operations and create zero rows in `plans`, `plan_tasks`, `task_dependencies`, `plan_task_requirements`, or `plan_task_events`.
 - Return provider and model metadata without credentials, plus explicit warnings if AI provider is not configured or unavailable.
 
 ## Acceptance checklist
@@ -55,7 +55,7 @@ Do not touch frontend code, core storage models, or `prepare_task`.
 - [ ] Proposal with dependency cycles fails validation and returns descriptive error.
 - [ ] Cross-project or invalid requirement IDs in draft are rejected.
 - [ ] Unconfigured or unreachable AI provider returns clear warning without crashing.
-- [ ] Database assertion confirms zero rows inserted across all planning tables during draft generation.
+- [ ] Database assertion confirms zero rows inserted across all planning tables (`plans`, `plan_tasks`, `task_dependencies`, `plan_task_requirements`, `plan_task_events`) during draft generation.
 - [ ] `just check` passes cleanly.
 - [ ] Task handoff documents prompt templates, schema validation, and mocked-provider test results.
 

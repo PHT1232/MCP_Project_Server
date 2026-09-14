@@ -527,9 +527,10 @@ first:
   goal/milestone with lifecycle state (`draft`, `active`, `completed`, `archived`) and
   strict project isolation.
 - **FR44** — **Plan task model** — Each plan contains structured tasks with title,
-  objective, acceptance criteria, optional linked files, optional requirement IDs,
-  priority, and lifecycle status (`pending`, `ready`, `claimed`, `in_progress`,
-  `blocked`, `in_review`, `completed`, `cancelled`).
+  objective, acceptance criteria, optional linked files, normalized requirement links
+  via `plan_task_requirements` with composite foreign keys, priority, and lifecycle
+  status (`pending`, `ready`, `claimed`, `in_progress`, `blocked`, `in_review`,
+  `completed`, `cancelled`).
 - **FR45** — **DAG dependencies** — Tasks declare prerequisite task dependencies within
   the same plan. The service rejects self-dependencies, dependency cycles, cross-plan, and
   cross-project references. Completing a prerequisite unlocks dependent tasks whose
@@ -542,7 +543,8 @@ first:
   lease to extend expiration, or releases it explicitly. Expired in-progress tasks can be
   reclaimed. Stale or invalid claim tokens cannot mutate claimed tasks.
 - **FR48** — **Task audit history** — Every plan task mutation appends an immutable event
-  row recording author, event type, prior state, new state, and timestamp.
+  row recording author, event type, prior state, new state, timestamp, and structured
+  payload.
 - **FR49** — **Planned task handoff prompt** — `prepare_task(task_id=...)` builds a
   role-neutral, token-budgeted Markdown prompt containing task objective, acceptance
   criteria, dependency state, relevant requirement contract, and guidelines without
@@ -743,13 +745,15 @@ first:
   that file's "Don't" list (e.g. filled chromatic buttons, a second typeface,
   blue used as a status color) (D17).
 - **AC28** — `create_plan_with_tasks` atomically creates a plan, tasks, dependencies,
-  and initial history events in a single transaction; duplicate keys, cycles, cross-plan
-  references, and cross-project requirement IDs are rejected (D18, FR43–FR45).
+  normalized requirement links via `plan_task_requirements`, and initial history events
+  in a single transaction; duplicate keys, cycles, cross-plan references, and cross-project
+  requirement IDs are rejected (D18, FR43–FR45).
 - **AC29** — `claim_task` atomically issues an expiring lease and unique ephemeral token;
   two concurrent claim attempts for the same task result in exactly one success; operations
   with an expired or incorrect token are rejected (D20, FR47).
 - **AC30** — Completing a prerequisite task automatically unlocks dependent tasks to ready
-  state; `complete_task` appends an immutable event and never alters requirement status (D4, D19, FR48, FR53).
+  state; `complete_task` appends an immutable event with structured payload diff and never
+  alters requirement status (D4, D19, FR48, FR53).
 - **AC31** — `prepare_task(task_id=...)` outputs a role-neutral Markdown prompt containing
   task objective, acceptance criteria, dependency state, and linked requirement invariants
   within the token budget, free of claim tokens, provider keys, or raw diffs (D22, FR49).
@@ -843,4 +847,3 @@ narrower tuning/design detail, not a blocker.
 - Git worktree automation, branch creation, or repository lifecycle management (D24).
 - External issue tracker / project management two-way sync (GitHub, Jira, Linear) (D24).
 - Fine-grained per-agent authorization or multi-user access control (D2, D24).
-

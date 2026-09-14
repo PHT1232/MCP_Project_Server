@@ -596,6 +596,8 @@ async def search_code(
         "hits": [_ranked_hit_dict(r) for r in result.ranked],
         "semantic_available": result.semantic_available,
         "mode": "hybrid" if result.semantic_available else "keyword",
+        "semantic_note": result.semantic_note,
+        # Backward-compatible alias used by the existing frontend/client.
         "note": result.semantic_note,
     }
 

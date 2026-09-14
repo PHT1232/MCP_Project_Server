@@ -70,22 +70,23 @@ Do not touch MCP tools, HTTP routes, retrieval/prepare_task, frontend, or AI gen
 - Plan Task State Machine & Complete Lease Lifecycle:
   - States: `pending`, `ready`, `claimed`, `in_progress`, `blocked`, `in_review`, `completed`, `cancelled`.
   - Persisted status: `status` is persisted. On `activate_plan`, root tasks with zero dependencies transition `pending -> ready`. On `complete_task`, downstream tasks whose dependencies are now all `completed` transition `pending -> ready`.
-  - Claim & in-progress: `claim_task` atomically transitions `ready` (or expired claimed/in_progress) to `claimed`. Worker calls `set_task_status(status='in_progress')` with valid token to transition to `in_progress`, retaining the lease.
-  - Heartbeat: extends `lease_expires_at` when presented with valid token.
+  - Claim & in-progress: `claim_task` atomically transitions `ready` (or expired claimed/in_progress/in_review) to `claimed`. Worker calls `set_task_status(status='in_progress')` with valid token to transition to `in_progress`, retaining the lease.
+  - Heartbeat: verifies active token, extends `lease_expires_at`, and strictly preserves exact persisted status (`claimed` remains `claimed`, `in_progress` remains `in_progress`; never mutates status).
   - Release: `release_task` atomically sets `claim_token_hash = NULL`, `claimed_by = NULL`, `lease_expires_at = NULL`, transitioning task to `ready`. Old token is permanently revoked.
-  - Reclaim: when `lease_expires_at < now()`, another worker can call `claim_task`. Old token is revoked; new token and lease are issued.
-  - Review: `in_progress -> in_review` retains lease fields. If lease expires while in `in_review`, review lease has elapsed; plan operator can complete without token, or reclaimer can reclaim back to `claimed`.
-  - Blocked: `set_task_status(status='blocked')` atomically clears all lease fields (`claim_token_hash = NULL`, `claimed_by = NULL`, `lease_expires_at = NULL`). A blocked task cannot hold a lease. `blocked -> ready` returns task to pool with no active token.
-  - Complete: `complete_task` clears `claim_token_hash = NULL`, `lease_expires_at = NULL`, permanently revoking claim token.
-  - Cancellation: revokes lease fields and marks terminal.
-  - Plan Archival: `archive_plan` atomically revokes all active leases across all tasks in the plan, sets non-completed tasks to `cancelled`, and sets plan status to `archived`.
+  - Reclaim: when `lease_expires_at < now()` across `claimed`, `in_progress`, or `in_review`, another worker can call `claim_task`. Old token is revoked; new token and lease are issued, and status transitions to `claimed`.
+  - Review: `in_progress -> in_review` retains lease fields. While lease is active (`lease_expires_at >= now()`), only the leaseholder with the valid token can complete or mutate the task; concurrent claim attempts are rejected with 409 Conflict. When lease expires, the task appears in `list_ready_tasks` as reclaimable, and can be reclaimed to `claimed` with a new token, or completed without token in the single-user model.
+  - Blocked: `set_task_status(status='blocked')` strictly requires active claim token if lease is active; atomically clears all lease fields (`claim_token_hash = NULL`, `claimed_by = NULL`, `lease_expires_at = NULL`). A blocked task cannot hold a lease. `blocked -> ready` returns task to pool with no active token.
+  - Complete: `complete_task` requires valid token if lease is active; clears `claim_token_hash = NULL`, `lease_expires_at = NULL`, permanently revoking claim token.
+  - Cancellation: requires valid token if lease is active; revokes lease fields and marks terminal.
+  - No Operator Bypass: mutations on tasks with active leases strictly require the valid claim token; no caller can bypass an active lease by claiming to be an operator.
+  - Plan Archival: `archive_plan` is the sole administrative exception that atomically revokes all active leases across all tasks in the plan, sets non-completed tasks to `cancelled`, and sets plan status to `archived`.
   - Completed / Archived Plans: any mutation on a task in a completed or archived plan is strictly rejected with `PlanNotActiveError`.
   - Stale Token Rejection: any mutation presenting an expired, revoked, or mismatched token fails with `StaleClaimTokenError`.
   - Canonical predicate for `list_ready_tasks`:
     - Plan is `active` in active project.
     - Task is not `completed`, `cancelled`, or `blocked`.
     - All prerequisite dependencies in DAG are `completed`.
-    - Task is either `ready` OR has an expired lease (`status IN ('claimed', 'in_progress') AND lease_expires_at < now()`).
+    - Task is either `ready` OR has an expired lease (`status IN ('claimed', 'in_progress', 'in_review') AND lease_expires_at < now()`).
 - Deterministic Service Methods in `pcs.planning.service`:
   - `create_plan`, `create_plan_with_tasks`
   - `get_plan`, `list_plans`, `update_plan`, `archive_plan`, `activate_plan`
@@ -108,7 +109,10 @@ Do not touch MCP tools, HTTP routes, retrieval/prepare_task, frontend, or AI gen
 - [ ] Linking a non-requirement entry (e.g. bug, focus, decision) to `plan_task_requirements` fails at both service validation and database check/FK constraint.
 - [ ] Stale token rejected after task release.
 - [ ] Stale token rejected after task reclaim.
-- [ ] Expired lease in `in_review` can be reclaimed or operator-completed.
+- [ ] Expired lease in `in_review` appears in `list_ready_tasks` and can be reclaimed atomically to `claimed`.
+- [ ] Unexpired lease in `in_review` rejects concurrent claim attempts with 409 Conflict.
+- [ ] Heartbeat on `claimed` task keeps status `claimed` and does not transition to `in_progress`.
+- [ ] Mutating task with active lease without valid token (or claiming operator status) is rejected.
 - [ ] Transitioning task to `blocked` revokes active lease; `blocked -> ready` leaves no active token.
 - [ ] Cancelling a claimed/in-progress task revokes active lease.
 - [ ] `archive_plan` atomically revokes all active leases on plan tasks.

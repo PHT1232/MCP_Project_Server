@@ -41,7 +41,10 @@ Do not add new unsolicited feature endpoints, alter existing requirements contra
   - Create draft plan manually and via approved AI draft.
   - Activate plan and discover initial ready tasks.
   - Two concurrent agents attempt claiming the same task: exactly one succeeds with a valid claim token; the second receives a 409 Conflict.
-  - Heartbeat extends lease; expired lease allows another agent to reclaim.
+  - Heartbeat extends lease and strictly preserves exact persisted status (`claimed` remains `claimed`, `in_progress` remains `in_progress`).
+  - Expired lease across `claimed`, `in_progress`, or `in_review` appears in `list_ready_tasks` and allows another agent to reclaim to `claimed`.
+  - Unexpired lease in `in_review` rejects concurrent claim attempts with 409 Conflict.
+  - Mutations on tasks with active leases strictly require the valid claim token; tokenless calls or operator bypass attempts fail with 409 Conflict.
   - Stale claim token is rejected when attempting to update or complete a reclaimed or released task.
   - Completing task unlocks downstream dependent tasks in `list_ready_tasks`.
   - Task completion preserves requirement status unchanged (D4).
@@ -80,7 +83,10 @@ Do not add new unsolicited feature endpoints, alter existing requirements contra
 - [ ] End-to-end integration test suite passes in `server/tests/test_planning_integration.py`.
 - [ ] Concurrency and lease collision tests pass reliably under parallel execution.
 - [ ] Stale token after release and reclaim verified rejected.
-- [ ] Reclaim of expired lease in `in_review` verified.
+- [ ] Reclaim of expired lease in `in_review` verified (appears in `list_ready_tasks`, atomically reclaims to `claimed` with new token and lease; old token rejected).
+- [ ] Unexpired lease in `in_review` rejects concurrent claim attempts with 409 Conflict.
+- [ ] Heartbeat on `claimed` task verifies status is preserved as `claimed` and not mutated to `in_progress`.
+- [ ] Status mutation or completion on task with active lease without valid token (or claiming operator bypass) is rejected with 409 Conflict.
 - [ ] `archive_plan` lease revocation and post-archive mutation rejection verified.
 - [ ] Database composite FKs verified blocking cross-plan/cross-project dependencies.
 - [ ] Requirement section check verified blocking non-requirement context entry links.

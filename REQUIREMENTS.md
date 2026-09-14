@@ -60,8 +60,8 @@ sub-questions are in §11.
 | D17 | **Design language = `DESIGN.md`.** The frontend follows the "Fey" style reference in `DESIGN.md` — dark matte-black canvas, Calibre type, pill (99px) controls, 16px cards, single-black-halo depth, chromatic accents (Ember/Signal/Growth) only as meaning-carriers. Tokens are implemented verbatim from that file. (FR39a) |
 | D18 | **Deterministic plan & task DAG.** Plans decompose work into tasks with explicit directed acyclic graph (DAG) dependencies. Cycles, self-dependencies, cross-plan, and cross-project links are rejected at creation and update by database and service constraints. (FR43–FR45) |
 | D19 | **Requirement independence (Preserve D4).** Task completion and plan completion never mutate requirement status or close-gate state. Tasks track operational execution progress; requirements represent verified product contracts governed strictly by the evidence ledger and close gate. (FR53) |
-| D20 | **Atomic exclusive leases & ephemeral tokens.** Claiming a task atomically grants a time-bounded lease with an expiring TTL and returns an ephemeral one-time secret token. Mutating a claimed task requires presenting the valid current token. Expired leases can be reclaimed safely by other workers without data loss. (FR47) |
-| D21 | **Immutable task event audit trail.** Every plan task mutation (creation, claim, heartbeat, release, status change, completion) appends an immutable event row recording author, transition, and timestamp (mirroring D5). (FR48) |
+| D20 | **Atomic exclusive leases & ephemeral tokens.** Claiming a task atomically grants a time-bounded lease with an expiring TTL and returns an ephemeral one-time secret token. Mutating a claimed task requires presenting the valid current token; no caller can bypass an active lease as an "operator". Expired leases across claimed, in-progress, or in-review tasks can be reclaimed safely. Archiving a plan atomically revokes all active leases as a trusted administrative exception. (FR47) |
+| D21 | **Immutable task event audit trail.** Every plan task mutation (creation, update, dependency addition, claim, reclaim, heartbeat, release, status change, completion, cancellation) appends an immutable event row recording author, event type, transition, timestamp, and bounded, redacted structured payload (mirroring D5). (FR48) |
 | D22 | **Bounded role-neutral task handoff prompt.** `prepare_task(task_id=...)` returns a self-contained, token-budgeted Markdown prompt ready to paste into any implementation agent, incorporating task objective, acceptance criteria, dependency state, and linked requirement contracts without emitting secrets, tokens, or raw diffs. (FR49) |
 | D23 | **Advisory AI plan generation with human approval.** AI plan drafting (`generate_plan_draft`) is an unprivileged, read-only advisory service utilizing validated T20 settings. It creates zero database records; persistence occurs only upon explicit human review and atomic creation (`create_plan_with_tasks`). (FR50–FR51) |
 | D24 | **Milestone execution boundaries (Non-goals).** Agent process spawning/dispatch, local shell or container execution, Git worktree orchestration, GitHub issue/PR sync, and fine-grained authorization are non-goals for this milestone. PCS is the central context and orchestration ledger, not a runtime supervisor. (FR43–FR53) |
@@ -540,11 +540,15 @@ first:
   have no active unexpired claim lease.
 - **FR47** — **Atomic claim and lease heartbeat** — Workers claim ready tasks via atomic
   leases with a random one-time claim token and expiring TTL. A worker heartbeats the
-  lease to extend expiration, or releases it explicitly. Expired in-progress tasks can be
-  reclaimed. Stale or invalid claim tokens cannot mutate claimed tasks.
+  lease to extend expiration without altering task status, or releases it explicitly to
+  revoke the token. Expired claimed, in-progress, or in-review tasks can be reclaimed.
+  Mutating a task with an active lease strictly requires the valid current token; no
+  caller can bypass an active lease as an "operator". Stale, expired, or invalid tokens
+  are rejected. `archive_plan` atomically revokes all active leases.
 - **FR48** — **Task audit history** — Every plan task mutation appends an immutable event
-  row recording author, event type, prior state, new state, timestamp, and structured
-  payload.
+  row across 10 discrete event types (creation, update, dependency additions, claim,
+  reclaim, heartbeat, release, status change, completion, cancellation) recording author,
+  event type, prior state, new state, timestamp, and bounded, redacted structured payload.
 - **FR49** — **Planned task handoff prompt** — `prepare_task(task_id=...)` builds a
   role-neutral, token-budgeted Markdown prompt containing task objective, acceptance
   criteria, dependency state, relevant requirement contract, and guidelines without

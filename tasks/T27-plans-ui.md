@@ -47,14 +47,15 @@ Do not touch AI plan draft generation (owned by T28), backend server code (owned
   - Action to add tasks to plan (title, objective, acceptance criteria, linked files, requirement IDs).
   - Dependency management control: add dependency between tasks within the same plan.
   - DAG / Dependency visualizer showing prerequisite task chains and blocking relationships.
-  - Filter toggle for "Ready Tasks" (tasks matching canonical ready predicate: active plan, prerequisites completed, status is `ready` or lease is expired).
-  - Task item card displaying: local ID, title, status badge (`pending`, `ready`, `claimed`, `in_progress`, `blocked`, `in_review`, `completed`, `cancelled`), assignee / `claimed_by`, lease expiration countdown/indicator ("Lease Expired - Reclaimable"), and linked requirement tags.
+  - Filter toggle for "Ready Tasks" (tasks matching canonical ready predicate: active plan, prerequisites completed, status is `ready` or lease is expired across `claimed`, `in_progress`, or `in_review`).
+  - Task item card displaying: local ID, title, status badge (`pending`, `ready`, `claimed`, `in_progress`, `blocked`, `in_review`, `completed`, `cancelled`), assignee / `claimed_by`, lease expiration countdown/indicator ("Expired - Reclaimable" for expired `claimed`, `in_progress`, or `in_review` tasks), and linked requirement tags.
 - Task orchestration controls using nested endpoints:
-  - `claim_task`: Prompts for `claimed_by` name, lease seconds; calls `POST .../plans/{plan_id}/tasks/{task_id}/claim`; stores returned one-time claim token in local session storage.
-  - `heartbeat_task`: Extends active lease for currently claimed task via `POST .../plans/{plan_id}/tasks/{task_id}/heartbeat` using stored token.
+  - `claim_task`: Prompts for `claimed_by` name, lease seconds; calls `POST .../plans/{plan_id}/tasks/{task_id}/claim`; stores returned one-time claim token in local session storage. Supports initial claim on `ready` tasks and atomic reclaim on expired `claimed`, `in_progress`, or `in_review` tasks.
+  - `heartbeat_task`: Extends active lease for currently claimed task via `POST .../plans/{plan_id}/tasks/{task_id}/heartbeat` using stored token; strictly preserves current task status (`claimed` remains `claimed`, `in_progress` remains `in_progress`).
   - `release_task`: Relinquishes active claim lease back to `ready` via `POST .../plans/{plan_id}/tasks/{task_id}/release`, clearing stored token.
   - `set_task_status`: Transitions task status (e.g. `claimed -> in_progress`, `in_progress -> in_review`, `in_progress -> blocked`) via `POST .../plans/{plan_id}/tasks/{task_id}/status` using active token.
-  - `complete_task`: Transitions task to `completed` via `POST .../plans/{plan_id}/tasks/{task_id}/complete` using active token.
+  - `complete_task`: Transitions task to `completed` via `POST .../plans/{plan_id}/tasks/{task_id}/complete` using active token (or tokenless only if no active lease / lease has expired).
+  - Active lease token enforcement: Mutations on tasks with active leases strictly require the valid stored claim token; the UI provides no "operator bypass" toggle. Attempting a mutation without a valid token on an active lease displays a conflict banner and disables the action.
   - Visual error/conflict banner when a mutation fails due to lease expiry (409 Conflict), stale token (409 Conflict), or concurrent claiming. On stale token, clears invalid session token.
 - Task history drill-down:
   - Modal or expandable drawer showing append-only `plan_task_events` from `GET .../plans/{plan_id}/tasks/{task_id}/history`:
@@ -80,9 +81,12 @@ Do not touch AI plan draft generation (owned by T28), backend server code (owned
 - [ ] Navigation link to `/projects/:project/plans` renders correctly in sidebar/header.
 - [ ] Plan list and detail views render correctly with progress counters, edit plan modal, and archive action.
 - [ ] All task mutations use nested `/plans/{plan_id}/tasks/{task_id}/...` endpoints.
-- [ ] Ready-task filter accurately filters tasks whose dependencies are satisfied.
+- [ ] Ready-task filter accurately filters tasks whose dependencies are satisfied, including expired `in_review` tasks.
+- [ ] Expired lease display alerts user that task is available for reclamation ("Expired - Reclaimable") across `claimed`, `in_progress`, and `in_review` states.
 - [ ] Task claim modal captures lease duration, stores token, and updates UI to claimed state upon server confirmation.
-- [ ] Expired lease display alerts user that task is available for reclamation.
+- [ ] Reclaim of expired `in_review` task transitions UI to `claimed` with fresh lease.
+- [ ] Heartbeat extends active lease while preserving exact task status (`claimed` stays `claimed`, `in_progress` stays `in_progress`).
+- [ ] Mutations on tasks with active leases strictly require active claim token; missing or invalid token displays conflict banner.
 - [ ] 409 Conflict / StaleClaimToken error displays clear conflict banner and resets stale local token.
 - [ ] Task event history drawer displays chronologically ordered audit events with structured payload data across all event types.
 - [ ] Independent UI review verifies compliance with `DESIGN.md` tokens (no raw hex/px/shadow).

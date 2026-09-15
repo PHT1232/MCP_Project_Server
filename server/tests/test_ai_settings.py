@@ -385,9 +385,7 @@ async def test_get_route_reports_key_configured_booleans_never_secrets() -> None
     """AC-AISET-1 / AC-AISET-6: GET exposes only api_key_configured, never a secret."""
     async with session_scope() as session:
         await update_ai_settings(session, {"embedding": embedding(), "summary": summary()})
-    client = TestClient(
-        Starlette(routes=[Route("/api/admin/ai-settings", _get, methods=["GET"])])
-    )
+    client = TestClient(Starlette(routes=[Route("/api/admin/ai-settings", _get, methods=["GET"])]))
     response = client.get("/api/admin/ai-settings")
     assert response.status_code == 200
     assert response.headers["cache-control"] == "no-store"

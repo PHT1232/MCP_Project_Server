@@ -396,6 +396,7 @@ def test_migration_roundtrip(database_url: str) -> None:
             is True
         )
     engine.dispose()
+    command.upgrade(config, "head")
 
 
 @pytest.mark.usefixtures("clean_db")

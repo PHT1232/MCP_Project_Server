@@ -22,12 +22,14 @@ from pcs.mcp.compliance_tools import register_compliance_tools
 from pcs.mcp.contract_tools import register_contract_tools
 from pcs.mcp.evidence_tools import register_evidence_tools
 from pcs.mcp.index_tools import register_index_tools
+from pcs.mcp.planning_tools import register_planning_tools
 from pcs.mcp.resources import register_resources
 from pcs.mcp.tools import register_tools
 from pcs.web_api import register_routes
 from pcs.web_api.ai_settings_routes import register_ai_settings_routes
 from pcs.web_api.codemap_routes import register_codemap_routes
 from pcs.web_api.index_routes import register_index_routes
+from pcs.web_api.planning_routes import register_planning_routes
 from pcs.web_api.requirements_routes import register_requirement_routes
 from pcs.web_api.source_routes import register_source_routes
 from pcs.web_static import register_frontend
@@ -137,6 +139,7 @@ register_compliance_tools(mcp)
 register_index_tools(mcp)
 register_codemap_tools(mcp)
 register_evidence_tools(mcp)
+register_planning_tools(mcp)
 register_resources(mcp)
 register_routes(mcp)
 register_ai_settings_routes(mcp)
@@ -144,6 +147,7 @@ register_requirement_routes(mcp)
 register_index_routes(mcp)
 register_codemap_routes(mcp)
 register_source_routes(mcp)
+register_planning_routes(mcp)
 
 
 def build_http_app() -> Starlette:

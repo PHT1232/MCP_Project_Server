@@ -10,7 +10,7 @@ from __future__ import annotations
 import hashlib
 import secrets
 from collections import deque
-from collections.abc import Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
@@ -99,6 +99,10 @@ __all__ = [
     "update_plan",
     "update_plan_task",
 ]
+
+# Testing hooks for deterministic concurrency regression tests
+_test_add_task_pause_hook: Callable[[], Awaitable[None]] | None = None
+_test_add_dep_pause_hook: Callable[[str, str], Awaitable[None]] | None = None
 
 
 def _now() -> datetime:
@@ -736,9 +740,26 @@ async def add_plan_task(
     proj = await _resolve_project(session, project)
 
     plan_res = await session.execute(
-        select(Plan).where(Plan.id == plan_id, Plan.project_id == proj.id).with_for_update()
+        select(Plan).where(Plan.id == plan_id, Plan.project_id == proj.id)
     )
     plan = plan_res.scalar_one_or_none()
+    if plan is None:
+        raise PlanNotFoundError(plan_id, proj.name)
+
+    if plan.status in (PLAN_STATUS_COMPLETED, PLAN_STATUS_ARCHIVED):
+        raise PlanNotActiveError(f"Cannot add tasks to plan in status '{plan.status}'.")
+
+    if _test_add_task_pause_hook is not None:
+        await _test_add_task_pause_hook()
+
+    # Serialize mutation with plan lifecycle: acquire row lock and re-check status (FR43, D20)
+    lock_res = await session.execute(
+        select(Plan)
+        .where(Plan.id == plan_id, Plan.project_id == proj.id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+    plan = lock_res.scalar_one_or_none()
     if plan is None:
         raise PlanNotFoundError(plan_id, proj.name)
 
@@ -830,7 +851,10 @@ async def update_plan_task(
     """Update task fields; active leases strictly require valid claim token (FR44, D20)."""
     proj = await _resolve_project(session, project)
     plan_res = await session.execute(
-        select(Plan).where(Plan.id == plan_id, Plan.project_id == proj.id).with_for_update()
+        select(Plan)
+        .where(Plan.id == plan_id, Plan.project_id == proj.id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
     )
     plan = plan_res.scalar_one_or_none()
     if plan is None:
@@ -965,7 +989,10 @@ async def add_task_dependency(
     proj = await _resolve_project(session, project)
     # Serialize dependency authoring per plan to prevent concurrent cycle race (INV-PLAN-1)
     plan_res = await session.execute(
-        select(Plan).where(Plan.id == plan_id, Plan.project_id == proj.id).with_for_update()
+        select(Plan)
+        .where(Plan.id == plan_id, Plan.project_id == proj.id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
     )
     plan = plan_res.scalar_one_or_none()
     if plan is None:
@@ -988,27 +1015,11 @@ async def add_task_dependency(
     if task is None:
         raise TaskNotFoundError(task_id, plan_id, proj.name)
 
-    if task.status in TERMINAL_TASK_STATUSES:
+    if task.status not in (TASK_STATUS_PENDING, TASK_STATUS_READY):
         raise InvalidStateTransitionError(
-            f"Cannot add dependency to task in terminal status '{task.status}'."
+            f"Cannot add dependency to task in status '{task.status}'. "
+            "Target task must be in 'pending' or 'ready' status."
         )
-
-    now = _now()
-    # Active lease enforcement (INV-PLAN-3, D20): no unauthenticated mutations
-    if (
-        task.lease_expires_at is not None
-        and task.lease_expires_at > now
-        and task.claim_token_hash is not None
-    ):
-        if not claim_token:
-            raise ClaimConflictError(
-                f"Task {task_id!r} has an active lease; "
-                "adding dependency requires a valid claim token."
-            )
-        if _hash_token(claim_token) != task.claim_token_hash:
-            raise StaleClaimTokenError("Provided claim_token is invalid or stale.")
-    elif task.lease_expires_at is not None and task.lease_expires_at <= now and claim_token:
-        raise StaleClaimTokenError("Claim lease has expired.")
 
     dep_res = await session.execute(
         select(PlanTask).where(
@@ -1048,6 +1059,9 @@ async def add_task_dependency(
     )
     existing_edges = [(r[0], r[1]) for r in all_deps_res.all()]
     existing_edges.append((task.id, dep_task.id))
+
+    if _test_add_dep_pause_hook is not None:
+        await _test_add_dep_pause_hook(task.id, dep_task.id)
 
     _check_acyclic(all_node_ids, existing_edges)
 

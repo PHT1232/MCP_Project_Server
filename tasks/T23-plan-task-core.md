@@ -148,30 +148,59 @@ just check
 - **What was done:**
   - Implemented core domain types, models, constants, and custom domain exceptions in `pcs.planning` (FR43–FR48, D18–D21, INV-PLAN-1/3/4, AC-PLAN-1/4/6).
   - Authored Alembic migration `0023_plan_task_orchestration.py` adding `plans`, `plan_tasks`, `task_dependencies`, `plan_task_requirements`, and `plan_task_events` tables with composite foreign keys, check constraints, and append-only database trigger.
-  - Implemented deterministic planning domain service in `pcs.planning.service` providing full lifecycle operations: plan creation, task authoring, Kahn's algorithm DAG cycle detection with plan-level serialization, ready-task discovery, atomic concurrency-safe claim leases, heartbeat, release, status transitions, task and plan completion, archival revocation, active lease enforcement on mutations, and 10-event immutable audit logging with SHA-256 token hashing and secret redaction.
+  - Implemented deterministic planning domain service in `pcs.planning.service` providing full lifecycle operations: plan creation, task authoring, Kahn's algorithm DAG cycle detection with plan-level serialization, ready-task discovery, atomic concurrency-safe claim leases, heartbeat, release, status transitions, task and plan completion, archival revocation, state-safe dependency enforcement on mutations, and 10-event immutable audit logging with SHA-256 token hashing and secret redaction.
   - Preserved D4 / INV-PLAN-2: neither task completion nor plan completion touches requirement status or evidence close gate.
   - Addressed all review findings:
-    1. Serialized `add_plan_task` and `update_plan_task` with plan row lock (`with_for_update()`) and re-check plan status, preventing archive/complete races.
-    2. Serialized dependency authoring per plan with plan row lock (`with_for_update()`) in `add_task_dependency`, preventing concurrent opposing DAG cycle races.
-    3. Enforced active lease checks in `add_task_dependency` requiring a valid `claim_token` when target task has an active lease (`lease_expires_at > now()`).
-    4. Enforced database immutability on `plan_task_events` via PostgreSQL trigger `trg_plan_task_events_immutable` executing `pcs_reject_plan_task_event_mutation()` on UPDATE or DELETE, with `ondelete="RESTRICT"` foreign key.
-    5. Disallowed claiming tasks in `pending` status directly in `claim_task`, requiring tasks to be `ready` or expired.
-    6. Corrected service API signatures, schema names, and constraint names in task handoff documentation.
+    1. Enforced state-safe policy on `add_task_dependency`: target task must be in `pending` or `ready` status; adding dependency to leased tasks (`claimed`, `in_progress`, `in_review`) is strictly rejected with `InvalidStateTransitionError` to preserve prerequisite semantics. Adding an uncompleted prerequisite to a `ready` task atomically reverts it to `pending` and prevents premature completion or claims.
+    2. Implemented deterministic, barrier-synchronized concurrency tests:
+       - `test_concurrent_task_insert_and_archive_race`: pauses `add_plan_task` after reading active plan before acquiring row lock; `archive_plan` commits; on resume, `add_plan_task` acquires row lock, refreshes row via `populate_existing=True`, sees archived status, and raises `PlanNotActiveError`.
+       - `test_concurrent_task_insert_and_complete_race`: pauses `add_plan_task` after reading active plan; `complete_plan` commits; on resume, `add_plan_task` raises `PlanNotActiveError`.
+       - `test_concurrent_dag_cycle_prevention`: pauses transaction after reading dependency graph but before Kahn validation; releases both edges simultaneously; verifies plan-level row lock serializes execution, resulting in exactly one success and one `DependencyCycleError`.
+    3. Enforced database immutability on `plan_task_events` via PostgreSQL trigger `trg_plan_task_events_immutable` executing `pcs_reject_plan_task_event_mutation()` on UPDATE or DELETE, with `ondelete="RESTRICT"` foreign key.
+    4. Disallowed claiming tasks in `pending` status directly in `claim_task`, requiring tasks to be `ready` or have expired leases.
+    5. Corrected service API signatures (`author` parameter, `ClaimResult` return type) and verified all constraint, foreign key, index, and trigger names match actual Alembic migration and SQLAlchemy models.
   - Implemented 28 comprehensive PostgreSQL-backed unit, concurrency, and migration tests in `server/tests/test_planning_core.py`.
 - **Schema & Migration:**
   - Migration revision: `0023_plan_task_orchestration`
   - Down revision: `0019_evidence_quality`
   - Tables: `plans`, `plan_tasks`, `task_dependencies`, `plan_task_requirements`, `plan_task_events`
-- **Database Isolation & Integrity:**
-  - `plans`: Primary key `pk_plans`, foreign key `fk_plans_project_id_projects` referencing `projects(id)` ON DELETE CASCADE, check constraint `chk_plans_status` (`draft`, `active`, `completed`, `archived`).
-  - `plan_tasks`: Primary key `pk_plan_tasks`, foreign keys `fk_plan_tasks_plan_id_plans` referencing `plans(id)` ON DELETE CASCADE and `fk_plan_tasks_project_id_projects` referencing `projects(id)` ON DELETE CASCADE; unique composite constraints `uq_plan_tasks_local_task_id` on `(project_id, plan_id, local_task_id)` and `uq_plan_tasks_id_plan_project` on `(id, plan_id, project_id)`; check constraint `chk_plan_tasks_status`.
-  - `task_dependencies`: Primary key `pk_task_dependencies`, composite foreign keys `fk_task_dependencies_task_plan_project` on `(task_id, plan_id, project_id)` and `fk_task_dependencies_depends_on_task_plan_project` on `(depends_on_task_id, plan_id, project_id)` both referencing `plan_tasks(id, plan_id, project_id)` ON DELETE CASCADE; check constraint `chk_task_dependencies_no_self_ref` (`task_id != depends_on_task_id`).
-  - `plan_task_requirements`: Primary key `pk_plan_task_requirements`, composite foreign key `fk_plan_task_requirements_task_plan_project` on `(plan_task_id, project_id)` referencing `plan_tasks(id, project_id)` ON DELETE CASCADE, composite foreign key `fk_plan_task_requirements_req_section` on `(requirement_id, requirement_section)` referencing `context_entries(id, section)` ON DELETE CASCADE; check constraint `chk_ptr_requirement_section` enforcing `requirement_section = 'requirements'`.
-  - `plan_task_events`: Primary key `pk_plan_task_events`, composite foreign key `fk_plan_task_events_task_plan_project` on `(task_id, plan_id, project_id)` referencing `plan_tasks(id, plan_id, project_id)` ON DELETE RESTRICT; check constraint `chk_plan_task_events_event_type`.
-  - Trigger & function: `trg_plan_task_events_immutable` `BEFORE UPDATE OR DELETE ON plan_task_events FOR EACH ROW EXECUTE FUNCTION pcs_reject_plan_task_event_mutation()` raising exception `'plan task events are append-only; mutation rejected'`.
-- **Service API seams for T24:**
-  - `create_plan(session: AsyncSession, project: str, title: str, goal: str, actor: str = "agent") -> PlanView`
-  - `create_plan_with_tasks(session: AsyncSession, project: str, title: str, goal: str, tasks: list[TaskSpec], dependencies: list[DependencySpec] | None = None, actor: str = "agent") -> PlanView`
+- **Database Isolation & Integrity (exact migration constraint/index names):**
+  - `plans`:
+    - Foreign key: `fk_plans_project_id_projects` on `project_id` referencing `projects(id)` ON DELETE CASCADE
+    - Unique constraint: `uq_plans_id_project` on `(id, project_id)`
+    - Check constraints: `ck_plans_status`, `ck_plans_title_len`, `ck_plans_goal_len`
+    - Indexes: `ix_plans_project_id`, `ix_plans_project_status`
+  - `plan_tasks`:
+    - Foreign key: `fk_plan_tasks_plan` on `(plan_id, project_id)` referencing `plans(id, project_id)` ON DELETE CASCADE
+    - Unique constraints:
+      - `uq_plan_tasks_id_plan_project` on `(id, plan_id, project_id)`
+      - `uq_plan_tasks_id_project` on `(id, project_id)`
+      - `uq_plan_tasks_plan_local_id` on `(plan_id, local_task_id)`
+    - Check constraints: `ck_plan_tasks_status`, `ck_plan_tasks_title_len`, `ck_plan_tasks_objective_len`, `ck_plan_tasks_local_task_id_len`
+    - Indexes: `ix_plan_tasks_project_status`, `ix_plan_tasks_plan_status`, `ix_plan_tasks_lease_expires_at`
+  - `task_dependencies`:
+    - Primary key: composite `(task_id, depends_on_task_id)`
+    - Composite foreign keys:
+      - `fk_task_deps_task` on `(task_id, plan_id, project_id)` referencing `plan_tasks(id, plan_id, project_id)` ON DELETE CASCADE
+      - `fk_task_deps_depends_on` on `(depends_on_task_id, plan_id, project_id)` referencing `plan_tasks(id, plan_id, project_id)` ON DELETE CASCADE
+    - Check constraint: `ck_task_dependencies_no_self_dep` (`task_id != depends_on_task_id`)
+    - Indexes: `ix_task_dependencies_depends_on`, `ix_task_dependencies_plan_id`
+  - `plan_task_requirements`:
+    - Primary key: composite `(plan_task_id, requirement_id)`
+    - Composite foreign keys:
+      - `fk_plan_task_reqs_task` on `(plan_task_id, project_id)` referencing `plan_tasks(id, project_id)` ON DELETE CASCADE
+      - `fk_plan_task_reqs_req_project` on `(requirement_id, project_id)` referencing `context_entries(id, project_id)` ON DELETE CASCADE
+      - `fk_plan_task_reqs_req_section` on `(requirement_id, requirement_section)` referencing `context_entries(id, section)` ON DELETE CASCADE
+    - Check constraint: `ck_plan_task_requirements_section` enforcing `requirement_section = 'requirements'`
+    - Indexes: `ix_plan_task_requirements_project_req`, `ix_plan_task_requirements_task_id`
+  - `plan_task_events`:
+    - Composite foreign key: `fk_plan_task_events_task_plan_project` on `(task_id, plan_id, project_id)` referencing `plan_tasks(id, plan_id, project_id)` ON DELETE RESTRICT
+    - Check constraint: `ck_plan_task_events_event_type`
+    - Trigger & Function: `trg_plan_task_events_immutable` `BEFORE UPDATE OR DELETE ON plan_task_events FOR EACH ROW EXECUTE FUNCTION pcs_reject_plan_task_event_mutation()` raising exception `'plan task events are append-only; mutation rejected'`
+    - Indexes: `ix_plan_task_events_task_created`, `ix_plan_task_events_plan_created`
+- **Service API seams for T24 (exact signatures in pcs.planning.service):**
+  - `create_plan(session: AsyncSession, project: str, title: str, goal: str, author: str = "agent") -> PlanView`
+  - `create_plan_with_tasks(session: AsyncSession, project: str, title: str, goal: str, tasks: list[TaskSpec], dependencies: list[DependencySpec] | None = None, author: str = "agent") -> PlanView`
   - `get_plan(session: AsyncSession, project: str, plan_id: str) -> PlanView`
   - `list_plans(session: AsyncSession, project: str, status: str | None = None) -> list[PlanView]`
   - `update_plan(session: AsyncSession, project: str, plan_id: str, title: str | None = None, goal: str | None = None) -> PlanView`
@@ -181,7 +210,7 @@ just check
   - `update_plan_task(session: AsyncSession, project: str, plan_id: str, task_id: str, title: str | None = None, objective: str | None = None, acceptance_criteria: list[str] | None = None, linked_files: list[str] | None = None, requirement_ids: list[str] | None = None, priority: int | None = None, claim_token: str | None = None, actor: str = "agent") -> PlanTaskView`
   - `add_task_dependency(session: AsyncSession, project: str, plan_id: str, task_id: str, depends_on_task_id: str, claim_token: str | None = None, actor: str = "agent") -> None`
   - `list_ready_tasks(session: AsyncSession, project: str, plan_id: str | None = None) -> list[PlanTaskView]`
-  - `claim_task(session: AsyncSession, project: str, plan_id: str, task_id: str, claimed_by: str, lease_seconds: int = DEFAULT_LEASE_SECONDS) -> ClaimResultView`
+  - `claim_task(session: AsyncSession, project: str, plan_id: str, task_id: str, claimed_by: str, lease_seconds: int = DEFAULT_LEASE_SECONDS) -> ClaimResult`
   - `heartbeat_task(session: AsyncSession, project: str, plan_id: str, task_id: str, claim_token: str, lease_seconds: int = DEFAULT_LEASE_SECONDS) -> PlanTaskView`
   - `release_task(session: AsyncSession, project: str, plan_id: str, task_id: str, claim_token: str, reason: str = "voluntary_release") -> PlanTaskView`
   - `set_task_status(session: AsyncSession, project: str, plan_id: str, task_id: str, status: str, claim_token: str | None = None, reason: str | None = None, actor: str = "agent") -> PlanTaskView`
@@ -198,7 +227,7 @@ just check
   - `InvalidStateTransitionError` -> 409 / Conflict
   - `PlanNotActiveError` -> 409 / Conflict
 - **Verification:**
-  - `cd server && uv run pytest tests/test_planning_core.py -v`: 28 passed in 11.08s
+  - `cd server && uv run pytest tests/test_planning_core.py -v`: 28 passed in 9.16s
   - `just check`: green (101 files ruff format/check, web eslint, server mypy, web tsc, 307 server pytest passed, 68 vitest passed, docker compose config verified, web vite build succeeded)
 - **Deviations:** None
 - **Cross-task / Independent Review Needs:**

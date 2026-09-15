@@ -23,6 +23,7 @@ Covers:
 from __future__ import annotations
 
 import asyncio
+import contextlib
 
 import pytest
 from alembic import command
@@ -82,6 +83,7 @@ from pcs.planning import (
     update_plan,
     update_plan_task,
 )
+from pcs.planning import service as planning_service
 
 pytestmark = pytest.mark.usefixtures("clean_db")
 PROJECT_A = "proj-alpha"
@@ -1137,20 +1139,16 @@ async def test_concurrent_task_insert_and_archive_race() -> None:
         )
         await activate_plan(session, PROJECT_A, plan.id)
 
-    archive_barrier = asyncio.Event()
+    add_task_paused = asyncio.Event()
+    resume_add_task = asyncio.Event()
 
-    async def _do_archive() -> Exception | None:
-        try:
-            async with session_scope() as s:
-                archive_barrier.set()
-                await archive_plan(s, PROJECT_A, plan.id)
-            return None
-        except Exception as exc:
-            return exc
+    async def _pause_hook() -> None:
+        add_task_paused.set()
+        await resume_add_task.wait()
+
+    planning_service._test_add_task_pause_hook = _pause_hook
 
     async def _do_add_task() -> Exception | None:
-        await archive_barrier.wait()
-        await asyncio.sleep(0.01)
         try:
             async with session_scope() as s:
                 await add_plan_task(s, PROJECT_A, plan.id, "T02", "Task 2", "Obj 2")
@@ -1158,14 +1156,27 @@ async def test_concurrent_task_insert_and_archive_race() -> None:
         except Exception as exc:
             return exc
 
-    results = await asyncio.gather(_do_archive(), _do_add_task())
-    assert results[0] is None
-    assert isinstance(results[1], PlanNotActiveError)
+    try:
+        add_task_future = asyncio.create_task(_do_add_task())
+        # Wait until add_plan_task has read plan (active) and paused before row lock
+        await add_task_paused.wait()
 
-    async with session_scope() as session:
-        p = await get_plan(session, PROJECT_A, plan.id)
-        assert p.status == PLAN_STATUS_ARCHIVED
-        assert not any(t.local_task_id == "T02" for t in p.tasks)
+        # Commit archive_plan while add_plan_task is paused
+        async with session_scope() as s:
+            await archive_plan(s, PROJECT_A, plan.id)
+
+        # Release add_plan_task to attempt taking lock and continuing mutation
+        resume_add_task.set()
+        add_result = await add_task_future
+
+        assert isinstance(add_result, PlanNotActiveError)
+
+        async with session_scope() as session:
+            p = await get_plan(session, PROJECT_A, plan.id)
+            assert p.status == PLAN_STATUS_ARCHIVED
+            assert not any(t.local_task_id == "T02" for t in p.tasks)
+    finally:
+        planning_service._test_add_task_pause_hook = None
 
 
 @pytest.mark.asyncio
@@ -1185,20 +1196,16 @@ async def test_concurrent_task_insert_and_complete_race() -> None:
         c = await claim_task(session, PROJECT_A, plan.id, plan.tasks[0].id, "w", 1800)
         await complete_task(session, PROJECT_A, plan.id, plan.tasks[0].id, c.claim_token)
 
-    complete_barrier = asyncio.Event()
+    add_task_paused = asyncio.Event()
+    resume_add_task = asyncio.Event()
 
-    async def _do_complete() -> Exception | None:
-        try:
-            async with session_scope() as s:
-                complete_barrier.set()
-                await complete_plan(s, PROJECT_A, plan.id)
-            return None
-        except Exception as exc:
-            return exc
+    async def _pause_hook() -> None:
+        add_task_paused.set()
+        await resume_add_task.wait()
+
+    planning_service._test_add_task_pause_hook = _pause_hook
 
     async def _do_add_task() -> Exception | None:
-        await complete_barrier.wait()
-        await asyncio.sleep(0.01)
         try:
             async with session_scope() as s:
                 await add_plan_task(s, PROJECT_A, plan.id, "T02", "Task 2", "Obj 2")
@@ -1206,14 +1213,27 @@ async def test_concurrent_task_insert_and_complete_race() -> None:
         except Exception as exc:
             return exc
 
-    results = await asyncio.gather(_do_complete(), _do_add_task())
-    assert results[0] is None
-    assert isinstance(results[1], PlanNotActiveError)
+    try:
+        add_task_future = asyncio.create_task(_do_add_task())
+        # Wait until add_plan_task has read plan (active) and paused before row lock
+        await add_task_paused.wait()
 
-    async with session_scope() as session:
-        p = await get_plan(session, PROJECT_A, plan.id)
-        assert p.status == PLAN_STATUS_COMPLETED
-        assert not any(t.local_task_id == "T02" for t in p.tasks)
+        # Commit complete_plan while add_plan_task is paused
+        async with session_scope() as s:
+            await complete_plan(s, PROJECT_A, plan.id)
+
+        # Release add_plan_task to attempt taking lock and continuing mutation
+        resume_add_task.set()
+        add_result = await add_task_future
+
+        assert isinstance(add_result, PlanNotActiveError)
+
+        async with session_scope() as session:
+            p = await get_plan(session, PROJECT_A, plan.id)
+            assert p.status == PLAN_STATUS_COMPLETED
+            assert not any(t.local_task_id == "T02" for t in p.tasks)
+    finally:
+        planning_service._test_add_task_pause_hook = None
 
 
 # ---------------------------------------------------------------------------
@@ -1238,6 +1258,18 @@ async def test_concurrent_dag_cycle_prevention() -> None:
     t1 = next(t for t in plan.tasks if t.local_task_id == "T01")
     t2 = next(t for t in plan.tasks if t.local_task_id == "T02")
 
+    at_check: dict[str, asyncio.Event] = {
+        t1.id: asyncio.Event(),
+        t2.id: asyncio.Event(),
+    }
+    release_both = asyncio.Event()
+
+    async def _pause_hook(task_id: str, dep_task_id: str) -> None:
+        at_check[task_id].set()
+        await release_both.wait()
+
+    planning_service._test_add_dep_pause_hook = _pause_hook
+
     async def _add_dep_1_2() -> DependencyCycleError | None:
         try:
             async with session_scope() as s:
@@ -1254,33 +1286,63 @@ async def test_concurrent_dag_cycle_prevention() -> None:
         except DependencyCycleError as exc:
             return exc
 
-    results = await asyncio.gather(_add_dep_1_2(), _add_dep_2_1())
+    try:
+        task1 = asyncio.create_task(_add_dep_1_2())
+        task2 = asyncio.create_task(_add_dep_2_1())
 
-    successes = [r for r in results if r is None]
-    cycle_errors = [r for r in results if isinstance(r, DependencyCycleError)]
-    assert len(successes) == 1
-    assert len(cycle_errors) == 1
-
-    async with session_scope() as session:
-        deps_res = await session.execute(
-            text("SELECT task_id, depends_on_task_id FROM task_dependencies WHERE plan_id = :pid"),
-            {"pid": plan.id},
+        # Wait for the first transaction to read dependency graph and pause before Kahn check
+        await asyncio.wait(
+            [
+                asyncio.create_task(at_check[t1.id].wait()),
+                asyncio.create_task(at_check[t2.id].wait()),
+            ],
+            return_when=asyncio.FIRST_COMPLETED,
         )
-        edges = list(deps_res.all())
-        assert len(edges) == 1
+
+        # In un-serialized code, the loser would also reach hook before either commits.
+        # In serialized code, loser is blocked by DB lock until winner commits.
+        loser_id = t2.id if at_check[t1.id].is_set() else t1.id
+        with contextlib.suppress(TimeoutError):
+            await asyncio.wait_for(at_check[loser_id].wait(), timeout=0.05)
+
+        # Release both simultaneously
+        release_both.set()
+
+        results = await asyncio.gather(task1, task2)
+
+        successes = [r for r in results if r is None]
+        cycle_errors = [r for r in results if isinstance(r, DependencyCycleError)]
+        assert len(successes) == 1
+        assert len(cycle_errors) == 1
+
+        async with session_scope() as session:
+            deps_res = await session.execute(
+                text(
+                    "SELECT task_id, depends_on_task_id FROM task_dependencies WHERE plan_id = :pid"
+                ),
+                {"pid": plan.id},
+            )
+            edges = list(deps_res.all())
+            assert len(edges) == 1
+    finally:
+        planning_service._test_add_dep_pause_hook = None
 
 
 # ---------------------------------------------------------------------------
-# Finding 3 Regression: Active Lease Bypass in add_task_dependency
+# Finding 1 Regression: Dependency edit on leased task rejected; prerequisite semantics
 # ---------------------------------------------------------------------------
 @pytest.mark.asyncio
-async def test_add_task_dependency_active_lease_enforcement() -> None:
-    """Adding dependency to task with active lease requires valid claim token (INV-PLAN-3, D20)."""
+async def test_add_task_dependency_rejects_leased_and_reverts_ready() -> None:
+    """Adding dependency rejects leased tasks (claimed/in_progress/in_review).
+
+    Also reverts ready to pending on uncompleted prerequisite (INV-PLAN-1, INV-PLAN-3, D20).
+    """
     await _seed_project(PROJECT_A)
 
     tasks = [
         TaskSpec(local_task_id="T01", title="Task 1", objective="Obj 1"),
         TaskSpec(local_task_id="T02", title="Task 2", objective="Obj 2"),
+        TaskSpec(local_task_id="T03", title="Task 3", objective="Obj 3"),
     ]
     async with session_scope() as session:
         plan = await create_plan_with_tasks(session, PROJECT_A, "Dep Lease Plan", "Goal", tasks)
@@ -1288,48 +1350,89 @@ async def test_add_task_dependency_active_lease_enforcement() -> None:
 
     t1 = next(t for t in plan.tasks if t.local_task_id == "T01")
     t2 = next(t for t in plan.tasks if t.local_task_id == "T02")
+    t3 = next(t for t in plan.tasks if t.local_task_id == "T03")
 
-    # Claim T01 with active lease
+    # 1. Claim T01
     async with session_scope() as session:
         c1 = await claim_task(session, PROJECT_A, plan.id, t1.id, "worker-1", 1800)
 
-    # 1. Attempt adding dependency to T01 without token -> ClaimConflictError
-    with pytest.raises(ClaimConflictError, match="active lease"):
-        async with session_scope() as session:
-            await add_task_dependency(session, PROJECT_A, plan.id, t1.id, t2.id)
-
-    # Verify no dependency or event was added
-    async with session_scope() as session:
-        deps_res = await session.execute(
-            text("SELECT count(*) FROM task_dependencies WHERE task_id = :tid"),
-            {"tid": t1.id},
-        )
-        assert deps_res.scalar_one() == 0
-        events = await get_task_history(session, PROJECT_A, plan.id, t1.id)
-        assert not any(e.event_type == EVENT_DEPENDENCY_ADDED for e in events)
-
-    # 2. Attempt adding dependency with invalid token -> StaleClaimTokenError
-    with pytest.raises(StaleClaimTokenError, match="invalid or stale"):
+    # 2. Adding dependency to claimed task fails with InvalidStateTransitionError
+    with pytest.raises(
+        InvalidStateTransitionError, match="Target task must be in 'pending' or 'ready'"
+    ):
         async with session_scope() as session:
             await add_task_dependency(
-                session, PROJECT_A, plan.id, t1.id, t2.id, claim_token="bad_token"
+                session, PROJECT_A, plan.id, t1.id, t2.id, claim_token=c1.claim_token
             )
 
-    # 3. Adding dependency with valid token -> succeeds
+    # 3. Transition to in_progress; adding dependency still rejected
     async with session_scope() as session:
-        await add_task_dependency(
-            session, PROJECT_A, plan.id, t1.id, t2.id, claim_token=c1.claim_token
+        await set_task_status(
+            session,
+            PROJECT_A,
+            plan.id,
+            t1.id,
+            TASK_STATUS_IN_PROGRESS,
+            claim_token=c1.claim_token,
         )
 
-    # Verify dependency exists and event recorded
+    with pytest.raises(
+        InvalidStateTransitionError, match="Target task must be in 'pending' or 'ready'"
+    ):
+        async with session_scope() as session:
+            await add_task_dependency(
+                session, PROJECT_A, plan.id, t1.id, t2.id, claim_token=c1.claim_token
+            )
+
+    # 4. Transition to in_review; adding dependency still rejected
     async with session_scope() as session:
-        deps_res = await session.execute(
-            text("SELECT count(*) FROM task_dependencies WHERE task_id = :tid"),
-            {"tid": t1.id},
+        await set_task_status(
+            session,
+            PROJECT_A,
+            plan.id,
+            t1.id,
+            TASK_STATUS_IN_REVIEW,
+            claim_token=c1.claim_token,
         )
-        assert deps_res.scalar_one() == 1
-        events = await get_task_history(session, PROJECT_A, plan.id, t1.id)
-        assert any(e.event_type == EVENT_DEPENDENCY_ADDED for e in events)
+
+    with pytest.raises(
+        InvalidStateTransitionError, match="Target task must be in 'pending' or 'ready'"
+    ):
+        async with session_scope() as session:
+            await add_task_dependency(
+                session, PROJECT_A, plan.id, t1.id, t2.id, claim_token=c1.claim_token
+            )
+
+    # 5. Adding dependency on uncompleted T03 succeeds and reverts T02 to 'pending'
+    async with session_scope() as session:
+        await add_task_dependency(session, PROJECT_A, plan.id, t2.id, t3.id)
+
+    # 6. Verify T02 is now pending and cannot be completed prematurely
+    async with session_scope() as session:
+        p = await get_plan(session, PROJECT_A, plan.id)
+        t2_cur = next(t for t in p.tasks if t.id == t2.id)
+        assert t2_cur.status == TASK_STATUS_PENDING
+
+        # Attempting to complete T02 while prerequisite T03 is uncompleted fails
+        with pytest.raises(InvalidStateTransitionError, match="pending"):
+            await complete_task(session, PROJECT_A, plan.id, t2.id, claim_token=None)
+
+        # Attempting to claim T02 while pending fails
+        with pytest.raises(InvalidStateTransitionError, match="pending"):
+            await claim_task(session, PROJECT_A, plan.id, t2.id, "worker-2", 1800)
+
+        # 7. Complete prerequisite T03 -> T02 unlocks and becomes ready
+        c3 = await claim_task(session, PROJECT_A, plan.id, t3.id, "worker-3", 1800)
+        await complete_task(session, PROJECT_A, plan.id, t3.id, c3.claim_token)
+
+        p_after = await get_plan(session, PROJECT_A, plan.id)
+        t2_unlocked = next(t for t in p_after.tasks if t.id == t2.id)
+        assert t2_unlocked.status == TASK_STATUS_READY
+
+        # Now T02 can be claimed and completed cleanly
+        c2_new = await claim_task(session, PROJECT_A, plan.id, t2.id, "worker-2", 1800)
+        done = await complete_task(session, PROJECT_A, plan.id, t2.id, c2_new.claim_token)
+        assert done.status == TASK_STATUS_COMPLETED
 
 
 # ---------------------------------------------------------------------------

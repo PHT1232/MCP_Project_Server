@@ -98,3 +98,16 @@ curl -s -X POST http://127.0.0.1:8080/api/projects/demo/requirements/REQ_ENTRY_I
 curl -sG http://127.0.0.1:8080/api/projects/demo/requirements/compliance \
   --data-urlencode requirement_id=REQ_ENTRY_ID
 ```
+
+## Global AI provider settings (T20)
+
+| Method and path | Input | Success |
+|---|---|---|
+| `GET /api/admin/ai-settings` | none | `{embedding, summary, reindex_required}`. Provider objects contain nonsecret settings, `source` (`persisted`, `environment`, or `default`), and `api_key_configured`; API key values are never returned. |
+| `PATCH /api/admin/ai-settings` | One or both complete `embedding` / `summary` objects | Merge-update and return the same redacted shape. Omit a provider to retain it. Inside a supplied provider, omit `api_key` to retain, provide a non-empty string to replace, or use `null` to clear. |
+
+Embedding fields are `backend`, `base_url`, `model`, `dimensions`, `batch_size`, `timeout_seconds`, and optional `api_key`. Summary fields are `backend`, `base_url`, `model`, `timeout_seconds`, and optional `api_key`. Unknown/missing fields, unsupported backends, nonpositive numeric values, and unsafe URLs return `400`. Persisting a secret without `PCS_AI_SETTINGS_MASTER_KEY` also returns `400`; the submitted secret is not included in the response or structured tool-call log.
+
+`PATCH` requires a constant-time validated `PCS_ADMIN_TOKEN` and fails closed when it is unset. Malformed JSON returns `400`. URL validation uses an explicit allowed-host list and repeats all-address DNS safety checks at call time; redirects are disabled. `reindex_required` is derived across all project index rows and clears only after each affected project completes successful full embedding.
+
+All responses from `/api/admin/ai-settings`, including errors, carry `Cache-Control: no-store`. Provider bounds are URL 2048 characters, model 200, backend 32, API key 8192, dimensions 65536, batch size 2048, and timeout 300 seconds; non-finite numbers are invalid. Outbound requests connect to the validated IP while preserving the configured hostname for `Host`, TLS SNI, and certificate verification.

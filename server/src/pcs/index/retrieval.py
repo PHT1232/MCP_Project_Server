@@ -152,6 +152,7 @@ async def retrieve_context(
         "truncated": pack.truncated,
         "semantic_available": pack.semantic_available,
         "mode": "hybrid" if pack.semantic_available else "keyword",
+        "semantic_note": hybrid.semantic_note,
     }
 
 
@@ -242,6 +243,7 @@ async def prepare_task(
         },
         "semantic_available": hybrid.semantic_available,
         "mode": "hybrid" if hybrid.semantic_available else "keyword",
+        "semantic_note": hybrid.semantic_note,
     }
 
 

@@ -172,6 +172,39 @@ class Settings(BaseSettings):
         default="",
         description="Bearer token for summary_backend='openai'. Sent only to summary_base_url.",
     )
+    summary_timeout_seconds: float = Field(
+        default=30.0,
+        description="Per-request timeout for the summary HTTP backend.",
+    )
+    ai_settings_master_key: str = Field(
+        default="",
+        description="URL-safe base64 32-byte key encrypting persisted AI API keys (T20).",
+    )
+    ai_settings_allow_http: bool = Field(
+        default=False,
+        description=("Development-only HTTP endpoint allowance; private targets stay blocked."),
+    )
+    ai_provider_allowed_hosts: str = Field(
+        default="api.openai.com",
+        description="Comma-separated exact host allowlist for outbound AI providers.",
+    )
+    ai_provider_allowed_private_hosts: str = Field(
+        default="",
+        description=(
+            "Exact allowlisted provider hosts permitted to resolve to private or Tailscale "
+            "addresses; loopback and unsafe special-use addresses remain blocked."
+        ),
+    )
+    admin_token: str = Field(
+        default="", description="Bearer or X-PCS-Admin-Token required for admin writes."
+    )
+    ai_settings_key_id: str = Field(default="current", description="Current AI secret key id.")
+    ai_settings_previous_master_key: str = Field(
+        default="", description="Optional previous URL-safe base64 key for rotation reads."
+    )
+    ai_settings_previous_key_id: str = Field(
+        default="previous", description="Key id for the optional previous key."
+    )
     summary_model: str = Field(
         default="gpt-4o-mini",
         description="Chat model used for FR9d summarisation.",

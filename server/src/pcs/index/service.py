@@ -15,7 +15,7 @@ from pathlib import Path
 from sqlalchemy import delete, func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from pcs.config import get_settings
+from pcs.ai_settings import load_runtime_ai_settings
 from pcs.context.service import ProjectNotFoundError, resolve_project
 from pcs.index.chunker import chunk_source, language_for
 from pcs.index.embedding import get_embedding_backend
@@ -422,9 +422,11 @@ async def reindex(
             merged = dict(status.symbol_modes)
             merged.update(modes)
             status.symbol_modes = merged
-        await _embed_index(session, project_id=row.id, status=status)
+        embedding_ok = await _embed_index(
+            session, project_id=row.id, status=status, full_reindex=not use_incremental
+        )
         status.last_commit = commit
-        status.state = "idle"
+        status.state = "idle" if embedding_ok else "error"
         await _refresh_counts(session, status)
         if changed is not None:
             symbol_total = await session.execute(
@@ -453,29 +455,47 @@ async def reindex(
     return await get_index_status(session, project=row.id)
 
 
-async def _embed_index(session: AsyncSession, *, project_id: str, status: IndexStatus) -> None:
-    """Embed any not-yet-embedded chunks if a backend is configured (FR28, NFR10)."""
-    backend = get_embedding_backend()
+async def _embed_index(
+    session: AsyncSession,
+    *,
+    project_id: str,
+    status: IndexStatus,
+    full_reindex: bool,
+) -> bool:
+    """Embed chunks; return false on a redacted provider failure (INV-AISET-5)."""
+    runtime = await load_runtime_ai_settings(session)
+    backend = await get_embedding_backend(session)
     if backend is None:
         status.semantic_model = None
         status.embedded_chunk_count = 0
-        return
+        return True
     try:
-        _, total = await embed_pending_chunks(
-            session,
-            project_id=project_id,
-            backend=backend,
-            batch_size=get_settings().embedding_batch_size,
-        )
-    except Exception as exc:
-        # An embedding-backend failure must not fail the whole index build.
-        logger.warning(
-            "embedding_failed",
-            extra={"context": {"project": project_id, "error": str(exc)}},
-        )
-        return
+        async with session.begin_nested():
+            _, total = await embed_pending_chunks(
+                session,
+                project_id=project_id,
+                backend=backend,
+                batch_size=runtime.embedding.batch_size or 64,
+            )
+    except Exception:
+        status.reindex_required = True
+        logger.warning("embedding_failed", extra={"context": {"project": project_id}})
+        return False
     status.semantic_model = backend.name
     status.embedded_chunk_count = total
+    chunk_total_result = await session.execute(
+        select(func.count(func.distinct(IndexChunk.chunk_hash))).where(
+            IndexChunk.project_id == project_id,
+            IndexChunk.chunk_hash.is_not(None),
+        )
+    )
+    chunk_total = int(chunk_total_result.scalar_one())
+    if full_reindex and total == chunk_total:
+        status.semantic_provider = runtime.embedding.backend
+        status.semantic_base_url = runtime.embedding.base_url
+        status.semantic_dimensions = runtime.embedding.dimensions
+        status.reindex_required = False
+    return True
 
 
 async def get_index_status(session: AsyncSession, *, project: str) -> IndexStatusView:
@@ -576,6 +596,8 @@ async def search_code(
         "hits": [_ranked_hit_dict(r) for r in result.ranked],
         "semantic_available": result.semantic_available,
         "mode": "hybrid" if result.semantic_available else "keyword",
+        "semantic_note": result.semantic_note,
+        # Backward-compatible alias used by the existing frontend/client.
         "note": result.semantic_note,
     }
 

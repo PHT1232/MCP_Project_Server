@@ -8,13 +8,14 @@ are added only when an embedding backend is configured and chunks are embedded
 
 from __future__ import annotations
 
+import logging
 import re
 from dataclasses import dataclass, field
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from pcs.context.service import resolve_project
-from pcs.index.embedding import EmbeddingBackend, get_embedding_backend
+from pcs.index.embedding import EmbeddingBackend, EmbeddingProviderError, get_embedding_backend
 from pcs.index.models import IndexStatus
 from pcs.index.schema import ensure_index_schema
 from pcs.index.search import (
@@ -24,6 +25,8 @@ from pcs.index.search import (
     resolve_search_scope,
 )
 from pcs.index.semantic import RankedHit, hybrid_rank, semantic_search
+
+logger = logging.getLogger("pcs")
 
 
 @dataclass(frozen=True)
@@ -45,6 +48,18 @@ _NOT_EMBEDDED = (
     "Semantic search is configured but no chunks are embedded yet — run reindex "
     "with the backend enabled."
 )
+_RUNTIME_UNAVAILABLE = (
+    "Semantic query is temporarily unavailable because the embedding provider failed; "
+    "results were returned using keyword search."
+)
+_SAFE_LABEL = re.compile(r"[A-Za-z0-9][A-Za-z0-9._/+:-]{0,199}")
+
+
+def _safe_log_label(value: str) -> str:
+    """Keep model/backend identifiers useful without admitting URLs or credentials."""
+    if "://" in value or "@" in value or _SAFE_LABEL.fullmatch(value) is None:
+        return "<redacted>"
+    return value
 
 
 async def hybrid_search(
@@ -75,7 +90,7 @@ async def hybrid_search(
     )
     keyword_hits = keyword_result.hits
 
-    backend = backend if backend is not None else get_embedding_backend()
+    backend = backend if backend is not None else await get_embedding_backend(session)
     if backend is None:
         ranked = hybrid_rank(keyword_hits, [], limit=limit)
         return HybridResult(
@@ -86,7 +101,9 @@ async def hybrid_search(
         )
 
     status = await session.get(IndexStatus, row.id)
-    embedded = status.embedded_chunk_count if status is not None else 0
+    embedded = (
+        status.embedded_chunk_count if status is not None and not status.reindex_required else 0
+    )
     if not embedded:
         ranked = hybrid_rank(keyword_hits, [], limit=limit)
         return HybridResult(
@@ -105,14 +122,36 @@ async def hybrid_search(
         globs=globs,
         query=query,
     )
-    semantic_hits = await semantic_search(
-        session,
-        project_id=row.id,
-        query=query,
-        backend=backend,
-        clause=clause,
-        limit=max(limit, 20),
-    )
+    try:
+        semantic_hits = await semantic_search(
+            session,
+            project_id=row.id,
+            query=query,
+            backend=backend,
+            clause=clause,
+            limit=max(limit, 20),
+        )
+    except EmbeddingProviderError as exc:
+        # Do not include the exception message/cause: provider errors may carry
+        # request URLs, credentials, or raw response bodies (NFR6, NFR11).
+        logger.warning(
+            "semantic_query_failed",
+            extra={
+                "context": {
+                    "project": row.id,
+                    "model": _safe_log_label(backend.name),
+                    "backend": _safe_log_label(type(backend).__name__),
+                    "error_type": exc.kind,
+                }
+            },
+        )
+        ranked = hybrid_rank(keyword_hits, [], limit=limit)
+        return HybridResult(
+            ranked=ranked,
+            keyword_hits=keyword_hits,
+            semantic_available=False,
+            semantic_note=_RUNTIME_UNAVAILABLE,
+        )
     ranked = hybrid_rank(keyword_hits, semantic_hits, limit=limit)
     return HybridResult(
         ranked=ranked,

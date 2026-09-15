@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 
-import { NAV_ITEMS, projectRoute } from "../routes";
+import { AI_SETTINGS_ROUTE, NAV_ITEMS, projectRoute } from "../routes";
 import { Link } from "../router/router";
 import { PillButton } from "./PillButton";
 import { PillNav, PillNavLink } from "./PillNav";
@@ -12,6 +12,7 @@ interface AppShellProps {
   refresh: () => void;
   isRefreshing: boolean;
   lastRefreshedAt: string | null;
+  refreshEnabled?: boolean;
   children: ReactNode;
 }
 
@@ -22,6 +23,7 @@ export function AppShell({
   refresh,
   isRefreshing,
   lastRefreshedAt,
+  refreshEnabled = project !== null,
   children,
 }: AppShellProps): ReactNode {
   return (
@@ -35,6 +37,9 @@ export function AppShell({
             Project context
           </Link>
           <div className="flex flex-wrap items-center gap-16">
+            <Link className="text-body text-fey-cornflower no-underline" to={AI_SETTINGS_ROUTE}>
+              AI settings
+            </Link>
             <ProjectPicker
               current={project}
               hrefFor={(name) => projectRoute(name, "dashboard")}
@@ -43,7 +48,7 @@ export function AppShell({
               <PillButton
                 size="sm"
                 onClick={refresh}
-                disabled={project === null || isRefreshing}
+                disabled={!refreshEnabled || isRefreshing}
               >
                 {isRefreshing ? "Refreshing…" : "Refresh"}
               </PillButton>

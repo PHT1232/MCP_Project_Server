@@ -80,3 +80,19 @@ Important: `deploy/docker-compose.yml` does not declare `env_file:` and forwards
 | `VITE_API_TARGET` | `http://127.0.0.1:8080` | Vite development-server proxy target for `/api`. |
 
 Production uses same-origin API calls because the Python server serves both UI and API.
+
+### Persisted global AI settings (T20)
+
+`GET /api/admin/ai-settings` resolves the global embedding and summarization providers. `PATCH /api/admin/ai-settings` stores them server-side. A persisted provider takes precedence over environment configuration; environment values are fallback only while no persisted row exists. Updates apply without restart and clear process-local provider caches.
+
+Set `PCS_AI_SETTINGS_MASTER_KEY` to a URL-safe base64 encoding of exactly 32 random bytes before writing API keys. API keys are encrypted with AES-256-GCM before PostgreSQL storage and are write-only: responses expose only `api_key_configured`. Omitting `api_key` retains the stored secret, a non-empty string replaces it, and `null` clears it. When the master key is absent, nonsecret persisted settings remain usable, encrypted persisted secrets cannot be decrypted, environment API keys provide read/runtime fallback, and attempts to persist a new secret return `400` without echoing it.
+
+Generate a key with a secrets-management tool and inject it through the process environment. Do not store the key beside the database or commit it. Losing or rotating this key without first replacing persisted secrets makes existing ciphertext unreadable.
+
+Provider URLs require HTTPS and an exact hostname in `PCS_AI_PROVIDER_ALLOWED_HOSTS`; they reject credentials, queries, and fragments. Before every outbound call, PCS resolves DNS off the event loop and rejects unsafe addresses. `PCS_AI_PROVIDER_ALLOWED_PRIVATE_HOSTS` may additionally name exact trusted hosts that may resolve to private or Tailscale addresses; each must also appear in `PCS_AI_PROVIDER_ALLOWED_HOSTS`. This exception never permits loopback, link-local, reserved, multicast, or unspecified addresses and does not open an entire subnet. The request connects directly to one validated IP while retaining the original hostname for HTTP `Host` and TLS SNI/certificate verification, eliminating a DNS check/use race. HTTP redirects are disabled. `PCS_AI_SETTINGS_ALLOW_HTTP=true` permits HTTP endpoints but does not itself permit private targets.
+
+Changing embedding backend, model, or dimensions marks every semantic index incompatible. Keyword search remains available, but semantic search stays unavailable per project until a full, compatible reindex completes. The global response remains `reindex_required=true` until all indexed projects complete that reindex.
+
+`PATCH` requires `PCS_ADMIN_TOKEN` through `Authorization: Bearer` or `X-PCS-Admin-Token`; missing configuration fails closed. `PCS_AI_SETTINGS_KEY_ID` labels new ciphertext. During rotation, set `PCS_AI_SETTINGS_PREVIOUS_MASTER_KEY` and its distinct `PCS_AI_SETTINGS_PREVIOUS_KEY_ID` so old ciphertext remains readable while replacement writes use the current key. Persisted `embedding.batch_size` controls indexing requests. Compatibility remains required until every project completes a successful full embedding with the active backend, URL, model, and dimensions; incremental or failed embedding runs never clear it.
+
+Persisted limits are: URL 2048 characters, model 200, backend 32, API key 8192, dimensions 65536, batch size 2048, and timeout 300 seconds. NaN and infinity are rejected. These limits are mirrored by PostgreSQL constraints. Previous master keys are decrypt-only; all new secret writes require the current master key and emit `PCS_AI_SETTINGS_KEY_ID`.

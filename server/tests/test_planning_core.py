@@ -28,7 +28,7 @@ import pytest
 from alembic import command
 from alembic.config import Config
 from sqlalchemy import text
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import DBAPIError, IntegrityError
 
 from pcs.context import service as ctx_service
 from pcs.db.base import session_scope
@@ -58,12 +58,14 @@ from pcs.planning import (
     ClaimConflictError,
     DependencyCycleError,
     DependencySpec,
+    InvalidStateTransitionError,
     PlanningValidationError,
     PlanNotActiveError,
     StaleClaimTokenError,
     TaskSpec,
     activate_plan,
     add_plan_task,
+    add_task_dependency,
     archive_plan,
     claim_task,
     complete_plan,
@@ -1115,6 +1117,291 @@ async def test_expired_in_review_tokenless_completion() -> None:
         )
         assert done.status == TASK_STATUS_COMPLETED
         assert done.claimed_by == "reviewer"
+
+
+# ---------------------------------------------------------------------------
+# Finding 1 Regression: Archive / Complete Race with add_plan_task
+# ---------------------------------------------------------------------------
+@pytest.mark.asyncio
+async def test_concurrent_task_insert_and_archive_race() -> None:
+    """Task insert concurrent with plan archive fails with PlanNotActiveError (FR43, D20)."""
+    await _seed_project(PROJECT_A)
+
+    async with session_scope() as session:
+        plan = await create_plan_with_tasks(
+            session,
+            PROJECT_A,
+            "Archive Race Plan",
+            "Goal",
+            [TaskSpec(local_task_id="T01", title="Task 1", objective="Obj 1")],
+        )
+        await activate_plan(session, PROJECT_A, plan.id)
+
+    archive_barrier = asyncio.Event()
+
+    async def _do_archive() -> Exception | None:
+        try:
+            async with session_scope() as s:
+                archive_barrier.set()
+                await archive_plan(s, PROJECT_A, plan.id)
+            return None
+        except Exception as exc:
+            return exc
+
+    async def _do_add_task() -> Exception | None:
+        await archive_barrier.wait()
+        await asyncio.sleep(0.01)
+        try:
+            async with session_scope() as s:
+                await add_plan_task(s, PROJECT_A, plan.id, "T02", "Task 2", "Obj 2")
+            return None
+        except Exception as exc:
+            return exc
+
+    results = await asyncio.gather(_do_archive(), _do_add_task())
+    assert results[0] is None
+    assert isinstance(results[1], PlanNotActiveError)
+
+    async with session_scope() as session:
+        p = await get_plan(session, PROJECT_A, plan.id)
+        assert p.status == PLAN_STATUS_ARCHIVED
+        assert not any(t.local_task_id == "T02" for t in p.tasks)
+
+
+@pytest.mark.asyncio
+async def test_concurrent_task_insert_and_complete_race() -> None:
+    """Task insert concurrent with plan complete fails with PlanNotActiveError (FR43, D20)."""
+    await _seed_project(PROJECT_A)
+
+    async with session_scope() as session:
+        plan = await create_plan_with_tasks(
+            session,
+            PROJECT_A,
+            "Complete Race Plan",
+            "Goal",
+            [TaskSpec(local_task_id="T01", title="Task 1", objective="Obj 1")],
+        )
+        await activate_plan(session, PROJECT_A, plan.id)
+        c = await claim_task(session, PROJECT_A, plan.id, plan.tasks[0].id, "w", 1800)
+        await complete_task(session, PROJECT_A, plan.id, plan.tasks[0].id, c.claim_token)
+
+    complete_barrier = asyncio.Event()
+
+    async def _do_complete() -> Exception | None:
+        try:
+            async with session_scope() as s:
+                complete_barrier.set()
+                await complete_plan(s, PROJECT_A, plan.id)
+            return None
+        except Exception as exc:
+            return exc
+
+    async def _do_add_task() -> Exception | None:
+        await complete_barrier.wait()
+        await asyncio.sleep(0.01)
+        try:
+            async with session_scope() as s:
+                await add_plan_task(s, PROJECT_A, plan.id, "T02", "Task 2", "Obj 2")
+            return None
+        except Exception as exc:
+            return exc
+
+    results = await asyncio.gather(_do_complete(), _do_add_task())
+    assert results[0] is None
+    assert isinstance(results[1], PlanNotActiveError)
+
+    async with session_scope() as session:
+        p = await get_plan(session, PROJECT_A, plan.id)
+        assert p.status == PLAN_STATUS_COMPLETED
+        assert not any(t.local_task_id == "T02" for t in p.tasks)
+
+
+# ---------------------------------------------------------------------------
+# Finding 2 Regression: Concurrent DAG Cycle Serialization
+# ---------------------------------------------------------------------------
+@pytest.mark.asyncio
+async def test_concurrent_dag_cycle_prevention() -> None:
+    """Two concurrent transactions adding A->B and B->A serialize.
+
+    One succeeds and one raises DependencyCycleError (FR45, INV-PLAN-1).
+    """
+    await _seed_project(PROJECT_A)
+
+    tasks = [
+        TaskSpec(local_task_id="T01", title="Task 1", objective="Obj 1"),
+        TaskSpec(local_task_id="T02", title="Task 2", objective="Obj 2"),
+    ]
+    async with session_scope() as session:
+        plan = await create_plan_with_tasks(session, PROJECT_A, "Cycle Plan", "Goal", tasks)
+        await activate_plan(session, PROJECT_A, plan.id)
+
+    t1 = next(t for t in plan.tasks if t.local_task_id == "T01")
+    t2 = next(t for t in plan.tasks if t.local_task_id == "T02")
+
+    async def _add_dep_1_2() -> DependencyCycleError | None:
+        try:
+            async with session_scope() as s:
+                await add_task_dependency(s, PROJECT_A, plan.id, t1.id, t2.id)
+            return None
+        except DependencyCycleError as exc:
+            return exc
+
+    async def _add_dep_2_1() -> DependencyCycleError | None:
+        try:
+            async with session_scope() as s:
+                await add_task_dependency(s, PROJECT_A, plan.id, t2.id, t1.id)
+            return None
+        except DependencyCycleError as exc:
+            return exc
+
+    results = await asyncio.gather(_add_dep_1_2(), _add_dep_2_1())
+
+    successes = [r for r in results if r is None]
+    cycle_errors = [r for r in results if isinstance(r, DependencyCycleError)]
+    assert len(successes) == 1
+    assert len(cycle_errors) == 1
+
+    async with session_scope() as session:
+        deps_res = await session.execute(
+            text("SELECT task_id, depends_on_task_id FROM task_dependencies WHERE plan_id = :pid"),
+            {"pid": plan.id},
+        )
+        edges = list(deps_res.all())
+        assert len(edges) == 1
+
+
+# ---------------------------------------------------------------------------
+# Finding 3 Regression: Active Lease Bypass in add_task_dependency
+# ---------------------------------------------------------------------------
+@pytest.mark.asyncio
+async def test_add_task_dependency_active_lease_enforcement() -> None:
+    """Adding dependency to task with active lease requires valid claim token (INV-PLAN-3, D20)."""
+    await _seed_project(PROJECT_A)
+
+    tasks = [
+        TaskSpec(local_task_id="T01", title="Task 1", objective="Obj 1"),
+        TaskSpec(local_task_id="T02", title="Task 2", objective="Obj 2"),
+    ]
+    async with session_scope() as session:
+        plan = await create_plan_with_tasks(session, PROJECT_A, "Dep Lease Plan", "Goal", tasks)
+        await activate_plan(session, PROJECT_A, plan.id)
+
+    t1 = next(t for t in plan.tasks if t.local_task_id == "T01")
+    t2 = next(t for t in plan.tasks if t.local_task_id == "T02")
+
+    # Claim T01 with active lease
+    async with session_scope() as session:
+        c1 = await claim_task(session, PROJECT_A, plan.id, t1.id, "worker-1", 1800)
+
+    # 1. Attempt adding dependency to T01 without token -> ClaimConflictError
+    with pytest.raises(ClaimConflictError, match="active lease"):
+        async with session_scope() as session:
+            await add_task_dependency(session, PROJECT_A, plan.id, t1.id, t2.id)
+
+    # Verify no dependency or event was added
+    async with session_scope() as session:
+        deps_res = await session.execute(
+            text("SELECT count(*) FROM task_dependencies WHERE task_id = :tid"),
+            {"tid": t1.id},
+        )
+        assert deps_res.scalar_one() == 0
+        events = await get_task_history(session, PROJECT_A, plan.id, t1.id)
+        assert not any(e.event_type == EVENT_DEPENDENCY_ADDED for e in events)
+
+    # 2. Attempt adding dependency with invalid token -> StaleClaimTokenError
+    with pytest.raises(StaleClaimTokenError, match="invalid or stale"):
+        async with session_scope() as session:
+            await add_task_dependency(
+                session, PROJECT_A, plan.id, t1.id, t2.id, claim_token="bad_token"
+            )
+
+    # 3. Adding dependency with valid token -> succeeds
+    async with session_scope() as session:
+        await add_task_dependency(
+            session, PROJECT_A, plan.id, t1.id, t2.id, claim_token=c1.claim_token
+        )
+
+    # Verify dependency exists and event recorded
+    async with session_scope() as session:
+        deps_res = await session.execute(
+            text("SELECT count(*) FROM task_dependencies WHERE task_id = :tid"),
+            {"tid": t1.id},
+        )
+        assert deps_res.scalar_one() == 1
+        events = await get_task_history(session, PROJECT_A, plan.id, t1.id)
+        assert any(e.event_type == EVENT_DEPENDENCY_ADDED for e in events)
+
+
+# ---------------------------------------------------------------------------
+# Finding 4 Regression: Database-Enforced Event Log Immutability
+# ---------------------------------------------------------------------------
+@pytest.mark.asyncio
+async def test_database_immutable_event_log() -> None:
+    """PostgreSQL trigger rejects UPDATE and DELETE on plan_task_events (INV-PLAN-4, FR48, D21)."""
+    await _seed_project(PROJECT_A)
+
+    tasks = [TaskSpec(local_task_id="T01", title="Task 1", objective="Obj 1")]
+    async with session_scope() as session:
+        plan = await create_plan_with_tasks(session, PROJECT_A, "Event Plan", "Goal", tasks)
+
+    # Query event ID
+    async with session_scope() as session:
+        res = await session.execute(
+            text("SELECT id FROM plan_task_events WHERE plan_id = :pid LIMIT 1"),
+            {"pid": plan.id},
+        )
+        event_id = res.scalar_one()
+
+    # Attempt raw SQL UPDATE -> DBAPIError (append-only)
+    with pytest.raises(DBAPIError, match="append-only"):
+        async with session_scope() as session:
+            await session.execute(
+                text("UPDATE plan_task_events SET actor = 'tampered' WHERE id = :id"),
+                {"id": event_id},
+            )
+            await session.flush()
+
+    # Attempt raw SQL DELETE -> DBAPIError (append-only)
+    with pytest.raises(DBAPIError, match="append-only"):
+        async with session_scope() as session:
+            await session.execute(
+                text("DELETE FROM plan_task_events WHERE id = :id"),
+                {"id": event_id},
+            )
+            await session.flush()
+
+    # History remains fully queryable
+    async with session_scope() as session:
+        events = await get_task_history(session, PROJECT_A, plan.id, plan.tasks[0].id)
+        assert len(events) >= 1
+        assert events[0].id == event_id
+
+
+# ---------------------------------------------------------------------------
+# Finding 5 Regression: claim_task on Pending Task Rejected
+# ---------------------------------------------------------------------------
+@pytest.mark.asyncio
+async def test_claim_pending_task_rejected() -> None:
+    """Tasks in 'pending' status cannot be claimed directly; must be ready or expired (FR47)."""
+    await _seed_project(PROJECT_A)
+
+    tasks = [
+        TaskSpec(local_task_id="T01", title="Task 1", objective="Obj 1"),
+        TaskSpec(local_task_id="T02", title="Task 2", objective="Obj 2"),
+    ]
+    deps = [DependencySpec(task_local_id="T02", depends_on_local_id="T01")]
+
+    async with session_scope() as session:
+        plan = await create_plan_with_tasks(session, PROJECT_A, "Pending Plan", "Goal", tasks, deps)
+        activated = await activate_plan(session, PROJECT_A, plan.id)
+
+    t2 = next(t for t in activated.tasks if t.local_task_id == "T02")
+    assert t2.status == TASK_STATUS_PENDING
+
+    # Attempting to claim T02 while pending fails
+    with pytest.raises(InvalidStateTransitionError, match="pending"):
+        async with session_scope() as session:
+            await claim_task(session, PROJECT_A, plan.id, t2.id, "worker-1", 1800)
 
 
 # ---------------------------------------------------------------------------

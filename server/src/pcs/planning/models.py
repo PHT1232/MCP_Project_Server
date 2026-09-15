@@ -257,7 +257,7 @@ class PlanTaskEvent(Base):
         ForeignKeyConstraint(
             ["task_id", "plan_id", "project_id"],
             ["plan_tasks.id", "plan_tasks.plan_id", "plan_tasks.project_id"],
-            ondelete="CASCADE",
+            ondelete="RESTRICT",
             name="fk_plan_task_events_task_plan_project",
         ),
         Index("ix_plan_task_events_task_created", "task_id", "created_at"),

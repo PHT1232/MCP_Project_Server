@@ -249,7 +249,7 @@ def upgrade() -> None:
         sa.ForeignKeyConstraint(
             ["task_id", "plan_id", "project_id"],
             ["plan_tasks.id", "plan_tasks.plan_id", "plan_tasks.project_id"],
-            ondelete="CASCADE",
+            ondelete="RESTRICT",
             name="fk_plan_task_events_task_plan_project",
         ),
     )
@@ -264,8 +264,37 @@ def upgrade() -> None:
         ["plan_id", "created_at"],
     )
 
+    # Immutable event trigger (INV-PLAN-4, FR48, D21)
+    op.execute(
+        sa.text(
+            """
+            CREATE FUNCTION pcs_reject_plan_task_event_mutation()
+            RETURNS trigger
+            LANGUAGE plpgsql
+            AS $$
+            BEGIN
+              RAISE EXCEPTION
+                'plan task events are append-only; mutation rejected';
+            END;
+            $$;
+            """
+        )
+    )
+    op.execute(
+        sa.text(
+            """
+            CREATE TRIGGER trg_plan_task_events_immutable
+            BEFORE UPDATE OR DELETE ON plan_task_events
+            FOR EACH ROW
+            EXECUTE FUNCTION pcs_reject_plan_task_event_mutation();
+            """
+        )
+    )
+
 
 def downgrade() -> None:
+    op.execute(sa.text("DROP TRIGGER IF EXISTS trg_plan_task_events_immutable ON plan_task_events"))
+    op.execute(sa.text("DROP FUNCTION IF EXISTS pcs_reject_plan_task_event_mutation()"))
     op.drop_table("plan_task_events")
     op.drop_table("plan_task_requirements")
     op.drop_table("task_dependencies")

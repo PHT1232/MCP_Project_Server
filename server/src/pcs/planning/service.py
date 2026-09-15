@@ -736,7 +736,7 @@ async def add_plan_task(
     proj = await _resolve_project(session, project)
 
     plan_res = await session.execute(
-        select(Plan).where(Plan.id == plan_id, Plan.project_id == proj.id)
+        select(Plan).where(Plan.id == plan_id, Plan.project_id == proj.id).with_for_update()
     )
     plan = plan_res.scalar_one_or_none()
     if plan is None:
@@ -830,7 +830,7 @@ async def update_plan_task(
     """Update task fields; active leases strictly require valid claim token (FR44, D20)."""
     proj = await _resolve_project(session, project)
     plan_res = await session.execute(
-        select(Plan).where(Plan.id == plan_id, Plan.project_id == proj.id)
+        select(Plan).where(Plan.id == plan_id, Plan.project_id == proj.id).with_for_update()
     )
     plan = plan_res.scalar_one_or_none()
     if plan is None:
@@ -950,17 +950,22 @@ async def add_task_dependency(
     plan_id: str,
     task_id: str,
     depends_on_task_id: str,
+    claim_token: str | None = None,
     actor: str = "agent",
 ) -> None:
-    """Add a prerequisite dependency edge between two tasks in the same plan (FR45, INV-PLAN-1)."""
+    """Add a prerequisite dependency edge between two tasks in the same plan.
+
+    Cites FR45, INV-PLAN-1, INV-PLAN-3.
+    """
     if task_id == depends_on_task_id:
         raise DependencyCycleError(
             f"Self-dependency detected: task {task_id!r} cannot depend on itself."
         )
 
     proj = await _resolve_project(session, project)
+    # Serialize dependency authoring per plan to prevent concurrent cycle race (INV-PLAN-1)
     plan_res = await session.execute(
-        select(Plan).where(Plan.id == plan_id, Plan.project_id == proj.id)
+        select(Plan).where(Plan.id == plan_id, Plan.project_id == proj.id).with_for_update()
     )
     plan = plan_res.scalar_one_or_none()
     if plan is None:
@@ -969,17 +974,41 @@ async def add_task_dependency(
     if plan.status in (PLAN_STATUS_COMPLETED, PLAN_STATUS_ARCHIVED):
         raise PlanNotActiveError(f"Cannot add dependency in plan in status '{plan.status}'.")
 
-    # Verify both tasks exist in the plan and project
+    # Verify target task exists and lock for lease check
     t_res = await session.execute(
-        select(PlanTask).where(
+        select(PlanTask)
+        .where(
             PlanTask.id == task_id,
             PlanTask.plan_id == plan.id,
             PlanTask.project_id == proj.id,
         )
+        .with_for_update()
     )
     task = t_res.scalar_one_or_none()
     if task is None:
         raise TaskNotFoundError(task_id, plan_id, proj.name)
+
+    if task.status in TERMINAL_TASK_STATUSES:
+        raise InvalidStateTransitionError(
+            f"Cannot add dependency to task in terminal status '{task.status}'."
+        )
+
+    now = _now()
+    # Active lease enforcement (INV-PLAN-3, D20): no unauthenticated mutations
+    if (
+        task.lease_expires_at is not None
+        and task.lease_expires_at > now
+        and task.claim_token_hash is not None
+    ):
+        if not claim_token:
+            raise ClaimConflictError(
+                f"Task {task_id!r} has an active lease; "
+                "adding dependency requires a valid claim token."
+            )
+        if _hash_token(claim_token) != task.claim_token_hash:
+            raise StaleClaimTokenError("Provided claim_token is invalid or stale.")
+    elif task.lease_expires_at is not None and task.lease_expires_at <= now and claim_token:
+        raise StaleClaimTokenError("Claim lease has expired.")
 
     dep_res = await session.execute(
         select(PlanTask).where(
@@ -1240,6 +1269,12 @@ async def claim_task(
             "Cannot claim blocked task. It must be set to ready first."
         )
 
+    if task.status == TASK_STATUS_PENDING:
+        raise InvalidStateTransitionError(
+            "Cannot claim task in status 'pending'. "
+            "It must be in 'ready' status or have an expired lease."
+        )
+
     # Check prerequisite dependencies
     deps_res = await session.execute(
         select(TaskDependency.depends_on_task_id).where(
@@ -1275,11 +1310,11 @@ async def claim_task(
         is_reclaim = True
     elif task.status == TASK_STATUS_READY:
         is_reclaim = False
-    elif task.status == TASK_STATUS_PENDING:
-        # Pending task whose prerequisites are completed can be claimed directly
-        is_reclaim = False
     else:
-        raise InvalidStateTransitionError(f"Cannot claim task in status '{task.status}'.")
+        raise InvalidStateTransitionError(
+            f"Cannot claim task in status '{task.status}'. "
+            f"Only tasks in 'ready' status or with expired leases can be claimed."
+        )
 
     # Issue ephemeral token
     raw_token = secrets.token_urlsafe(32)

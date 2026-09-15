@@ -32,7 +32,7 @@ from pcs.ai_settings import (
 from pcs.config import get_settings
 from pcs.db.base import session_scope
 from pcs.index.embedding import OpenAIEmbeddingBackend
-from pcs.web_api.ai_settings_routes import _patch
+from pcs.web_api.ai_settings_routes import _get, _patch
 
 KEY = base64.urlsafe_b64encode(b"k" * 32).decode()
 
@@ -332,6 +332,24 @@ async def test_concurrent_patch_serializes_without_lost_provider_update() -> Non
 
 
 @pytest.mark.usefixtures("clean_db")
+async def test_saving_summary_settings_changes_next_summarizer_without_restart() -> None:
+    """AC-AISET-4: the persisted-settings summarizer built per call (as
+    ``context.service`` builds it for every briefing) must reflect a saved
+    summary backend on the very next call, with no server restart."""
+    from pcs.context.summarizer import Summarizer
+
+    async with session_scope() as session:
+        before = await load_runtime_ai_settings(session)
+    assert Summarizer(before.summary).is_available() is False
+
+    async with session_scope() as session:
+        await update_ai_settings(session, {"summary": summary()})
+        after = await load_runtime_ai_settings(session)
+    assert Summarizer(after.summary).is_available() is True
+    assert after.summary.model == "sum-a"
+
+
+@pytest.mark.usefixtures("clean_db")
 def test_patch_auth_and_malformed_json_are_fail_closed() -> None:
     client = TestClient(
         Starlette(routes=[Route("/api/admin/ai-settings", _patch, methods=["PATCH"])])
@@ -360,6 +378,26 @@ def test_patch_auth_and_malformed_json_are_fail_closed() -> None:
     assert response.status_code == 400
     assert response.json() == {"error": "invalid AI settings request"}
     assert "x" * 201 not in response.text
+
+
+@pytest.mark.usefixtures("clean_db")
+async def test_get_route_reports_key_configured_booleans_never_secrets() -> None:
+    """AC-AISET-1 / AC-AISET-6: GET exposes only api_key_configured, never a secret."""
+    async with session_scope() as session:
+        await update_ai_settings(session, {"embedding": embedding(), "summary": summary()})
+    client = TestClient(
+        Starlette(routes=[Route("/api/admin/ai-settings", _get, methods=["GET"])])
+    )
+    response = client.get("/api/admin/ai-settings")
+    assert response.status_code == 200
+    assert response.headers["cache-control"] == "no-store"
+    body = response.json()
+    assert body["embedding"]["api_key_configured"] is True
+    assert body["summary"]["api_key_configured"] is True
+    assert "secret-value" not in response.text
+    assert "summary-secret" not in response.text
+    assert "api_key" not in body["embedding"]
+    assert "api_key" not in body["summary"]
 
 
 def test_migration_roundtrip(database_url: str) -> None:

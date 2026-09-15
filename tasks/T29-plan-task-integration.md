@@ -116,7 +116,10 @@ Do not add new unsolicited feature endpoints, alter existing requirements contra
 just test
 just check
 cd server && uv run pytest tests/test_planning_integration.py -v
-cd server && uv run alembic downgrade -1 && uv run alembic upgrade head
+# NOTE: a bare `downgrade -1` fails with "Ambiguous walk" from the current
+# head (0024_merge_t20_t23 is a merge revision with two parents — see
+# Handoff). The working equivalent names a branch explicitly:
+cd server && uv run alembic downgrade 0023_plan_task_orchestration && uv run alembic upgrade head
 ```
 
 ## Handoff template
@@ -137,3 +140,124 @@ cd server && uv run alembic downgrade -1 && uv run alembic upgrade head
   - Close gate output: `passed=true`, 0 blockers
 - **Deviations:** None
 ```
+
+## Handoff
+
+- **Branch:** `main` (worked directly, matching every prior task's history on this
+  repo). Three commits: `3dc723c` (T26), `3b430be` (T27+T28), `e2fc985` (T29 —
+  test suite + docs; the final referenced commit for evidence, below).
+- **What was done:**
+  - `server/tests/test_planning_integration.py` (4 tests, all new): one
+    continuous cross-layer lifecycle narrative (manual plan via MCP + an
+    approved-AI-draft plan via HTTP, both driven to completion, D4 checked at
+    the end), cross-*project* HTTP isolation (14 routes checked), a real
+    `alembic downgrade`/`upgrade head` round trip through the T20/T23 merge
+    point, and a secrets-in-logs sweep asserting actual token values never
+    leak. See the file's own module docstring for exactly what it adds on top
+    of the already-exhaustive `test_planning_core.py`/`test_planning_api.py`
+    suites (nearly every other T29 requirement-list line was already covered
+    there — confirmed by reading both files function-by-function before
+    writing anything new).
+  - Migration bootstrap verified twice: continuously via every test run's
+    `migrated_db` fixture (`"Apply every migration from empty (proves just
+    migrate works from zero)"`), and once standalone against a genuinely
+    fresh, throwaway `pgvector/pgvector:pg16` Docker container — `alembic
+    upgrade head` end to end, 16 tables including the full planning schema,
+    landing on `0024_merge_t20_t23`.
+  - Updated `docs/mcp-reference.md` and `docs/http-api.md` with the full
+    planning tool/route set (19 MCP tools, 20 HTTP routes including
+    `generate-draft`), and the `prepare_task`/`prepare-task` rows for T25's
+    `task_id` handoff form (previously undocumented). Updated
+    `docs/architecture.md` with the planning data model (ER diagram),
+    composite-FK isolation mechanics, a lease-lifecycle sequence diagram, DAG
+    resolution, and the AI-draft approval flow. Updated `README.md` with a
+    Plan & task orchestration quick-start, and `ROADMAP.md`'s Phase 4 status
+    table (T23-T28 were still marked "not started" despite being fully
+    handed off).
+  - Recorded PCS evidence for all 13 criteria (`AC-PLAN-1`..`AC-PLAN-13`)
+    against `f5abbe7d-fbe4-438e-a0ac-d2b0e88f9453` under the **`MCP Project
+    server local`** project — see the important note on project identity
+    below.
+- **Verification:**
+  - `test_planning_integration.py`: 4/4 passed. Full `just check`: 406
+    passed, 1 skipped (backend), 76 passed (frontend), clean ruff/mypy/eslint/
+    tsc, both compose files valid, production builds succeed.
+  - Migration: real bootstrap-from-empty confirmed on a throwaway container
+    (see above); `downgrade`/`upgrade head` round trip confirmed in-test —
+    **with one real, reproducible discrepancy from this task's own
+    Verification command**: `uv run alembic downgrade -1` fails with
+    `alembic.util.exc.CommandError: Ambiguous walk` from the current head,
+    confirmed both in the test suite and by running the literal command
+    against the live `pcs` database directly (it aborted cleanly before any
+    write — alembic raises during revision *resolution*, before touching the
+    DB; `alembic_version` was unchanged at `0024_merge_t20_t23` afterward).
+    Root cause: `0024_merge_t20_t23` is a merge revision with two parents
+    (the T20 and T23 branches); a relative "one step back" is genuinely
+    undefined there without naming a branch — this is expected alembic
+    behavior at a merge point, not a migration bug (the merge's own
+    `upgrade()`/`downgrade()` are intentionally no-ops). The working
+    equivalent targets a named revision instead
+    (`alembic downgrade 0023_plan_task_orchestration && alembic upgrade
+    head`), which the new test does and verifies data survives. This is a
+    documentation correction worth making to this task's Verification
+    section and to whoever's runbook assumes a bare `-1` works from head.
+  - `just check`: full green (see above).
+- **Important note on project identity found during evidence recording**:
+  `R-086` and all `INV-PLAN-*`/`AC-PLAN-*` records from T22 live under the
+  PCS project named **`MCP Project server local`** (`root_path:
+  /repos/mcp_server`), *not* the project named `mcp server` (`root_path:
+  /home/phat/Projects/1. Projects/mcp_server`) that this session's other PCS
+  calls had been using — both projects exist in this PCS instance and point
+  at very similar-looking names for what turns out to be the same underlying
+  checkout (confirmed: `MCP Project server local`'s `root_path` bind-mounts
+  to the identical repo, same `HEAD`). Anyone doing further PCS work on this
+  requirement needs `project="MCP Project server local"`, not `"mcp
+  server"`, or every lookup will silently 404 as if R-086 were never
+  created.
+  - Also found and fixed, in the same investigation: `record_requirement_evidence`
+    requires an explicit `worktree_fingerprint` whenever the repo has *any*
+    untracked files, even ones completely unrelated to the referenced commit
+    — it hashes index + unstaged + untracked file *bytes*, not just tracked
+    diffs. The repo had 7 stray untracked files/dirs left over from other
+    tools/sessions (`.continue/`, `cached-whistling-piglet.md`, two
+    `codex-session-*.md` files, `pcs-control-panel-project.zip`, and 3
+    unrelated task docs). Removed them with explicit user confirmation
+    (asked first, since I didn't create them and didn't know their origin)
+    so evidence could be recorded as `verified-at-commit` instead of
+    `provisional`.
+- **Close gate result — genuinely `passed=false`, not transitioned to `done`**:
+  After evidence was `verified-at-commit` for all 13 criteria,
+  `evaluate_close_gate` reports `ac_verified: 1/13`, `missing: []`,
+  `blocking: []`, and `review: "failed"` — the sole remaining blocker across
+  12 of 13 criteria is **`independent review missing`** (or `stale` for
+  AC-PLAN-7/8). This is a real, structural requirement, not evidence I could
+  supply myself: the pre-close sequence documented in `docs/mcp-reference.md`
+  is explicit that "independent-review evidence must use a different author
+  when the criterion requires it," and every evidence record in this session
+  is necessarily authored by the same identity (`claude-code`) because one
+  agent session did both the implementation and the evidence recording. I
+  did not fabricate a second reviewer identity or force `set_requirement_status`
+  to `done` against a gate that says no — `R-086` remains `in-progress`,
+  correctly.
+  - **What actually needs to happen to close `R-086`**: a person, or a
+    separate review pass under a distinct author identity, needs to record
+    `kind="review"` evidence (via `record_requirement_evidence` or the HTTP
+    equivalent) against each of the 12 flagged criteria — realistically this
+    means reviewing the actual delivered code/tests/docs referenced in this
+    and the T26-T28 handoffs and recording agreement (or disagreement) as an
+    independent party. Once that's recorded, re-run `evaluate_close_gate`;
+    if `missing`/`blocking`/`review` all clear, `set_requirement_status(...,
+    status="done")` can proceed.
+- **Deviations:**
+  - `R-086` was **not** transitioned to `done` — the close gate does not
+    pass yet, for the structural independent-review reason above, not
+    because anything in the implementation failed. This is the one explicit
+    T29 checklist line I could not complete myself in a single-agent
+    session, and I'm not going to paper over that.
+  - The literal `uv run alembic downgrade -1` in this task's own
+    Verification section does not work from the current head (see above) —
+    flagging as a spec correction rather than silently substituting a
+    different command without saying so.
+  - Removed 7 stray untracked files/dirs unrelated to any Phase 4 task, with
+    explicit user confirmation first (see above) — needed for evidence to
+    record as `verified-at-commit` rather than `provisional`.

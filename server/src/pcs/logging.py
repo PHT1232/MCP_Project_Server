@@ -63,3 +63,16 @@ def log_tool_call(
             }
         },
     )
+
+
+def estimate_response_tokens(result: object) -> int:
+    """Cheap ~4-chars/token estimate of one tool's JSON response (D13), for NFR6 audit lines.
+
+    Lets real token-delivery totals be computed from the audit log instead of
+    guessed after the fact. Import is deferred to avoid a load-time cycle with
+    ``pcs.context.summarizer`` (see the note in ``pcs.ai_settings``).
+    """
+    from pcs.context.assembly import estimate_tokens
+
+    text = result if isinstance(result, str) else json.dumps(result, default=str)
+    return estimate_tokens(text)

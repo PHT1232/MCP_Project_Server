@@ -9,7 +9,7 @@ from mcp.server.fastmcp import Context
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from pcs.db.base import session_scope
-from pcs.logging import log_tool_call
+from pcs.logging import estimate_response_tokens, log_tool_call
 
 
 def caller(ctx: Context[Any, Any] | None) -> str:
@@ -43,5 +43,11 @@ async def run_tool[T](
     except Exception as exc:
         log_tool_call(tool=tool, project=project, caller=who, outcome=f"error: {exc}")
         raise
-    log_tool_call(tool=tool, project=project, caller=who, outcome="ok")
+    log_tool_call(
+        tool=tool,
+        project=project,
+        caller=who,
+        outcome="ok",
+        response_tokens=estimate_response_tokens(result),
+    )
     return result

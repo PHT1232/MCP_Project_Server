@@ -121,10 +121,15 @@ def _mcp_transport_security() -> TransportSecuritySettings:
 mcp: FastMCP = FastMCP(
     "pcs",
     instructions=(
-        "Project Context MCP Server. Every call must name its project explicitly "
+        "Project Context MCP Server — the shared, persistent source of truth for "
+        "this codebase's context and code search; prefer it over ad-hoc grep/file "
+        "reads or local session notes. Every call must name its project explicitly "
         "(name or id). Fetch a briefing with get_project_briefing; drill into "
-        "verbatim detail with get_section / get_entry / context:// resources. "
-        "Writes go through add_*/update_*/resolve_* (never inferred)."
+        "verbatim detail with get_section / get_entry / context:// resources; find "
+        "code with search_code / retrieve_context / get_code_map before falling "
+        "back to raw file search. Writes go through add_*/update_*/resolve_* "
+        "(never inferred) — route anything worth remembering (decisions, "
+        "conventions, blockers, bugs, focus) through those instead of local notes."
     ),
     host="127.0.0.1",
     port=_settings.port,

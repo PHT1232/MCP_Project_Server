@@ -550,6 +550,11 @@ async def update_ai_settings(session: AsyncSession, body: object) -> RuntimeAiSe
     )
     if changed:
         await session.execute(text("UPDATE code_index.status SET reindex_required=true"))
+    if "summary" in body:
+        # Deferred import: pcs.context.summarizer imports from this module.
+        from pcs.context.summarizer import reset_summarizer
+
+        reset_summarizer()
     return await load_runtime_ai_settings(session)
 
 

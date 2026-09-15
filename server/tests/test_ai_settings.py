@@ -332,6 +332,24 @@ async def test_concurrent_patch_serializes_without_lost_provider_update() -> Non
 
 
 @pytest.mark.usefixtures("clean_db")
+async def test_saving_summary_settings_changes_next_summarizer_without_restart() -> None:
+    """AC-AISET-4: the persisted-settings summarizer built per call (as
+    ``context.service`` builds it for every briefing) must reflect a saved
+    summary backend on the very next call, with no server restart."""
+    from pcs.context.summarizer import Summarizer
+
+    async with session_scope() as session:
+        before = await load_runtime_ai_settings(session)
+    assert Summarizer(before.summary).is_available() is False
+
+    async with session_scope() as session:
+        await update_ai_settings(session, {"summary": summary()})
+        after = await load_runtime_ai_settings(session)
+    assert Summarizer(after.summary).is_available() is True
+    assert after.summary.model == "sum-a"
+
+
+@pytest.mark.usefixtures("clean_db")
 def test_patch_auth_and_malformed_json_are_fail_closed() -> None:
     client = TestClient(
         Starlette(routes=[Route("/api/admin/ai-settings", _patch, methods=["PATCH"])])

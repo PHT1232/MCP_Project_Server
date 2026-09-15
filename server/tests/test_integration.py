@@ -101,6 +101,7 @@ EXPECTED_TOOLS = frozenset(
         "complete_task",
         "complete_plan",
         "get_task_history",
+        "generate_plan_draft",
     }
 )
 

@@ -26,6 +26,7 @@ from pcs.mcp.planning_tools import (
     dependency_specs_from_payload,
     task_specs_from_payload,
 )
+from pcs.planning import generator
 from pcs.planning import service as planning
 from pcs.planning.errors import (
     ClaimConflictError,
@@ -505,6 +506,29 @@ async def _complete_task(request: Request) -> Response:
     return await _handle(request, "complete_task", fn)
 
 
+async def _generate_plan_draft(request: Request) -> Response:
+    async def fn(session: AsyncSession) -> dict[str, object]:
+        body = await _json_object(request)
+        _reject_unknown(body, frozenset({"goal", "constraints", "max_tasks"}))
+        result = await generator.generate_plan_draft(
+            session,
+            project=str(request.path_params["project"]),
+            goal=_required_str(body, "goal"),
+            constraints=_optional_typed(
+                body, "constraints", lambda value: _as_str(value, field="constraints")
+            ),
+            max_tasks=_optional_or_default(
+                body,
+                "max_tasks",
+                lambda value: _as_int(value, field="max_tasks"),
+                generator.MAX_TASKS_DEFAULT,
+            ),
+        )
+        return result.as_dict()
+
+    return await _handle(request, "generate_plan_draft", fn)
+
+
 async def _get_task_history(request: Request) -> Response:
     async def fn(session: AsyncSession) -> list[dict[str, object]]:
         events = await planning.get_task_history(
@@ -523,6 +547,7 @@ def register_planning_routes(mcp: FastMCP) -> None:
     routes: list[tuple[str, list[str], _Handler]] = [
         ("/api/projects/{project}/plans", ["POST"], _create_plan),
         ("/api/projects/{project}/plans/with-tasks", ["POST"], _create_plan_with_tasks),
+        ("/api/projects/{project}/plans/generate-draft", ["POST"], _generate_plan_draft),
         ("/api/projects/{project}/plans", ["GET"], _list_plans),
         ("/api/projects/{project}/plans/{plan_id}", ["GET"], _get_plan),
         ("/api/projects/{project}/plans/{plan_id}", ["PATCH"], _update_plan),

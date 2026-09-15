@@ -18,6 +18,7 @@ from pcs.context import service as context_service
 from pcs.db.base import session_scope
 from pcs.logging import log_tool_call
 from pcs.mcp.support import caller
+from pcs.planning import generator
 from pcs.planning import service as planning
 from pcs.planning.errors import (
     ClaimConflictError,
@@ -611,3 +612,33 @@ def register_planning_tools(mcp: FastMCP) -> None:
             return [event.as_dict() for event in events]
 
         return await _run_logged("get_task_history", project, who, op)
+
+    @mcp.tool()
+    async def generate_plan_draft(
+        project: str,
+        goal: str,
+        constraints: str | None = None,
+        max_tasks: int = generator.MAX_TASKS_DEFAULT,
+        ctx: Context[Any, Any] | None = None,
+    ) -> dict[str, object]:
+        """Advisory, read-only AI plan draft; persists nothing (T26, INV-PLAN-6).
+
+        Uses the project's persisted T20 summary provider. Returns ``ok=False``
+        with a ``warning`` — never an error — when the provider is unconfigured,
+        unreachable, or returns an invalid proposal. Nothing is written to
+        ``plans``/``plan_tasks``/etc. until the caller separately calls
+        ``create_plan_with_tasks`` with data of their own choosing.
+        """
+        who = caller(ctx)
+
+        async def op(session: AsyncSession) -> dict[str, object]:
+            result = await generator.generate_plan_draft(
+                session,
+                project=project or "",
+                goal=goal,
+                constraints=constraints,
+                max_tasks=max_tasks,
+            )
+            return result.as_dict()
+
+        return await _run_logged("generate_plan_draft", project, who, op)

@@ -14,6 +14,7 @@ from pcs.index.ignore import PathTraversalError
 from pcs.index.search import SearchScopeName
 from pcs.index.watch import ensure_watch
 from pcs.logging import log_tool_call
+from pcs.planning.errors import TaskNotFoundError
 
 if TYPE_CHECKING:
     from mcp.server.fastmcp import FastMCP
@@ -28,6 +29,8 @@ def _caller(request: Request) -> str:
 def _error_response(exc: Exception) -> JSONResponse:
     if isinstance(exc, context_service.ProjectNotFoundError):
         return JSONResponse({"error": str(exc), "available": exc.available}, status_code=404)
+    if isinstance(exc, TaskNotFoundError):
+        return JSONResponse({"error": str(exc)}, status_code=404)
     if isinstance(exc, (ValueError, PathTraversalError, FileNotFoundError)):
         return JSONResponse({"error": str(exc)}, status_code=400)
     raise exc
@@ -143,12 +146,15 @@ async def _prepare_task(request: Request) -> Response:
             body = {}
         if not isinstance(body, dict):
             body = {}
-        task = str(body.get("task") or request.query_params.get("task") or "")
+        task_raw = body.get("task") or request.query_params.get("task")
+        task = str(task_raw) if task_raw else None
+        task_id_raw = body.get("task_id") or request.query_params.get("task_id")
+        task_id = str(task_id_raw) if task_id_raw else None
         raw_budget = body.get("max_tokens") or request.query_params.get("max_tokens")
         max_tokens = int(raw_budget) if raw_budget else None
         async with session_scope() as session:
             payload = await retrieval.prepare_task(
-                session, project=project, task=task, max_tokens=max_tokens
+                session, project=project, task=task, task_id=task_id, max_tokens=max_tokens
             )
     except Exception as exc:
         log_tool_call(tool="prepare_task", project=project, caller=caller, outcome=f"error: {exc}")

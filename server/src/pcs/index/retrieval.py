@@ -170,7 +170,8 @@ async def prepare_task(
     session: AsyncSession,
     *,
     project: str,
-    task: str,
+    task: str | None = None,
+    task_id: str | None = None,
     max_tokens: int | None = None,
 ) -> dict[str, object]:
     """Briefing + relevant-code pack in one budgeted response (FR22, FR22a, D13, T11).
@@ -180,9 +181,27 @@ async def prepare_task(
     contract/close-gate allocation is capped at 500 estimated tokens inside the
     same total; unused contract budget spills to code (FR22a). The actual split
     is reported (AC19, AC24).
+
+    Exactly one of ``task`` (free text) or ``task_id`` (a planned task's UUID,
+    T25/INV-PLAN-5) must be given. ``task_id`` delegates to
+    ``pcs.planning.handoff.render_handoff_prompt`` for a bounded, role-neutral
+    Markdown handoff prompt instead of this function's own briefing+code pack.
     """
-    if not task.strip():
-        raise ValueError("task description must not be empty")
+    has_task = bool(task and task.strip())
+    has_task_id = bool(task_id and task_id.strip())
+    if has_task and has_task_id:
+        raise ValueError("exactly one of task or task_id must be provided, not both")
+    if not has_task and not has_task_id:
+        raise ValueError("exactly one of task or task_id must be provided")
+    if has_task_id:
+        from pcs.planning.handoff import render_handoff_prompt
+
+        assert task_id is not None
+        return await render_handoff_prompt(
+            session, project=project, task_id=task_id, max_tokens=max_tokens
+        )
+
+    assert task is not None
     row = await resolve_project(session, project)
     budget = _clamp_prepare_budget(
         max_tokens, row.prepare_task_token_budget or PREPARE_TASK_TOKEN_CAP

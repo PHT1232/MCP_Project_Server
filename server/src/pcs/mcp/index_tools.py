@@ -117,18 +117,27 @@ def register_index_tools(mcp: FastMCP) -> None:
 
     @mcp.tool()
     async def prepare_task(
-        task: str,
+        task: str | None = None,
+        task_id: str | None = None,
         project: str | None = None,
         max_tokens: int | None = None,
         ctx: Context[Any, Any] | None = None,
     ) -> dict[str, object]:
-        """Project briefing + relevant-code pack in one budgeted response (FR22, FR22a, D13, T11).
+        """Project briefing + relevant-code pack, or a planned-task handoff prompt.
 
-        Total defaults to the project's ``prepare_task_token_budget`` (4000).
-        Curated context is capped at 50%; code is floored at 30% when chunks exist;
-        unused context budget spills to code. A contract/close-gate section is
-        capped at 500 estimated tokens inside the same total; unused contract
-        budget spills to code. The actual split is reported.
+        Exactly one of ``task`` (free text) or ``task_id`` (a planned task's UUID
+        from create_plan/add_plan_task, T25) must be given.
+
+        With ``task``: total defaults to the project's ``prepare_task_token_budget``
+        (4000). Curated context is capped at 50%; code is floored at 30% when chunks
+        exist; unused context budget spills to code. A contract/close-gate section is
+        capped at 500 estimated tokens inside the same total; unused contract budget
+        spills to code. The actual split is reported.
+
+        With ``task_id``: returns a bounded, role-neutral Markdown handoff prompt
+        with the task's objective, acceptance criteria, dependency status, and
+        linked requirement contracts — never claim tokens, provider keys, or raw
+        diffs (INV-PLAN-5).
         """
 
         async def op(session: AsyncSession) -> dict[str, object]:
@@ -136,6 +145,7 @@ def register_index_tools(mcp: FastMCP) -> None:
                 session,
                 project=project or "",
                 task=task,
+                task_id=task_id,
                 max_tokens=max_tokens,
             )
 

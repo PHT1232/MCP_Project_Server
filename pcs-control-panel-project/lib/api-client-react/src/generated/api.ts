@@ -22,23 +22,40 @@ import type {
 
 import type {
   AcceptanceCriterion,
+  AddPlanTaskInput,
+  AddTaskDependency200,
+  AddTaskDependencyInput,
   AiSettings,
   AiSettingsInput,
   Briefing,
+  ClaimResult,
+  ClaimTaskInput,
   CodeMap,
+  CompleteTaskInput,
   CreateCriterionInput,
   CreateInvariantInput,
+  CreatePlanInput,
+  CreatePlanWithTasksInput,
   EntryInput,
   EntryWriteResponse,
   ErrorBody,
+  GeneratePlanDraftInput,
+  GeneratePlanDraftResult,
   GetCodeMapParams,
   GetSectionParams,
   GetSourceParams,
   Health,
+  HeartbeatTaskInput,
   IndexStatus,
+  ListPlansParams,
+  Plan,
+  PlanTask,
+  PreparePlanTaskPrompt200,
+  PreparePlanTaskPromptBody,
   Project,
   RegisterProjectInput,
   ReindexInput,
+  ReleaseTaskInput,
   RequirementComplianceResponse,
   RequirementContract,
   RequirementEvidenceResponse,
@@ -49,10 +66,14 @@ import type {
   SearchResponse,
   SectionResponse,
   SetFocusInput,
+  SetTaskStatusInput,
   SourceFile,
   SyncReport,
+  TaskEvent,
   UpdateCriterionInput,
-  UpdateInvariantInput
+  UpdateInvariantInput,
+  UpdatePlanInput,
+  UpdatePlanTaskInput
 } from './api.schemas';
 
 import { customFetch } from '../custom-fetch';
@@ -2352,6 +2373,1838 @@ export function useSearchCode<TData = Awaited<ReturnType<typeof searchCode>>, TE
  ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
 
   const queryOptions = getSearchCodeQueryOptions(project,params,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getGeneratePlanDraftUrl = (project: string,) => {
+
+
+
+
+  return `/api/projects/${project}/plans/generate-draft`
+}
+
+/**
+ * @summary Advisory, strictly read-only AI plan draft proposal (T26, INV-PLAN-6)
+ */
+export const generatePlanDraft = async (project: string,
+    generatePlanDraftInput: GeneratePlanDraftInput, options?: Parameters<typeof customFetch>[1]): Promise<GeneratePlanDraftResult> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return customFetch<GeneratePlanDraftResult>(getGeneratePlanDraftUrl(project),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(generatePlanDraftInput)
+  }
+);}
+
+
+
+
+
+export const getGeneratePlanDraftMutationKey = () => ['generatePlanDraft'] as const;
+
+export const getGeneratePlanDraftMutationOptions = <TError = ErrorType<ErrorBody>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof generatePlanDraft>>, TError,GeneratePlanDraftMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof generatePlanDraft>>, TError,GeneratePlanDraftMutationVariables, TContext> => {
+
+const mutationKey = getGeneratePlanDraftMutationKey();
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof generatePlanDraft>>, GeneratePlanDraftMutationVariables> = (props) => {
+          const {project,data} = props ?? {};
+
+          return  generatePlanDraft(project,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type GeneratePlanDraftMutationResult = NonNullable<Awaited<ReturnType<typeof generatePlanDraft>>>
+    export type GeneratePlanDraftMutationBody = BodyType<GeneratePlanDraftInput>
+    export type GeneratePlanDraftMutationError = ErrorType<ErrorBody>
+    export type GeneratePlanDraftMutationVariables = {project: string;data: BodyType<GeneratePlanDraftInput>}
+
+    /**
+ * @summary Advisory, strictly read-only AI plan draft proposal (T26, INV-PLAN-6)
+ */
+export const useGeneratePlanDraft = <TError = ErrorType<ErrorBody>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof generatePlanDraft>>, TError,GeneratePlanDraftMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof generatePlanDraft>>,
+        TError,
+        GeneratePlanDraftMutationVariables,
+        TContext
+      > => {
+      return useMutation(getGeneratePlanDraftMutationOptions(options));
+    }
+
+export const getListPlansUrl = (project: string,
+    params?: ListPlansParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/projects/${project}/plans?${stringifiedParams}` : `/api/projects/${project}/plans`
+}
+
+/**
+ * @summary List plans in a project (FR43)
+ */
+export const listPlans = async (project: string,
+    params?: ListPlansParams, options?: Parameters<typeof customFetch>[1]): Promise<Plan[]> => {
+
+  return customFetch<Plan[]>(getListPlansUrl(project,params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getListPlansQueryKey = (project: string,
+    params?: ListPlansParams,) => {
+    return [
+    `/api/projects/${project}/plans`, ...(params ? [params] : [])
+    ] as const;
+    }
+
+
+export const getListPlansQueryOptions = <TData = Awaited<ReturnType<typeof listPlans>>, TError = ErrorType<ErrorBody>>(project: string,
+    params?: ListPlansParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listPlans>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListPlansQueryKey(project,params);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listPlans>>> = ({ signal }) => listPlans(project,params, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: project !== null && project !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listPlans>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type ListPlansQueryResult = NonNullable<Awaited<ReturnType<typeof listPlans>>>
+export type ListPlansQueryError = ErrorType<ErrorBody>
+
+
+/**
+ * @summary List plans in a project (FR43)
+ */
+
+export function useListPlans<TData = Awaited<ReturnType<typeof listPlans>>, TError = ErrorType<ErrorBody>>(
+ project: string,
+    params?: ListPlansParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listPlans>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getListPlansQueryOptions(project,params,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getCreatePlanUrl = (project: string,) => {
+
+
+
+
+  return `/api/projects/${project}/plans`
+}
+
+/**
+ * @summary Create a plan (FR43)
+ */
+export const createPlan = async (project: string,
+    createPlanInput: CreatePlanInput, options?: Parameters<typeof customFetch>[1]): Promise<Plan> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return customFetch<Plan>(getCreatePlanUrl(project),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(createPlanInput)
+  }
+);}
+
+
+
+
+
+export const getCreatePlanMutationKey = () => ['createPlan'] as const;
+
+export const getCreatePlanMutationOptions = <TError = ErrorType<ErrorBody>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createPlan>>, TError,CreatePlanMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof createPlan>>, TError,CreatePlanMutationVariables, TContext> => {
+
+const mutationKey = getCreatePlanMutationKey();
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof createPlan>>, CreatePlanMutationVariables> = (props) => {
+          const {project,data} = props ?? {};
+
+          return  createPlan(project,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type CreatePlanMutationResult = NonNullable<Awaited<ReturnType<typeof createPlan>>>
+    export type CreatePlanMutationBody = BodyType<CreatePlanInput>
+    export type CreatePlanMutationError = ErrorType<ErrorBody>
+    export type CreatePlanMutationVariables = {project: string;data: BodyType<CreatePlanInput>}
+
+    /**
+ * @summary Create a plan (FR43)
+ */
+export const useCreatePlan = <TError = ErrorType<ErrorBody>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createPlan>>, TError,CreatePlanMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof createPlan>>,
+        TError,
+        CreatePlanMutationVariables,
+        TContext
+      > => {
+      return useMutation(getCreatePlanMutationOptions(options));
+    }
+
+export const getCreatePlanWithTasksUrl = (project: string,) => {
+
+
+
+
+  return `/api/projects/${project}/plans/with-tasks`
+}
+
+/**
+ * @summary Atomically create a plan with its initial tasks and dependencies (FR43, INV-PLAN-6)
+ */
+export const createPlanWithTasks = async (project: string,
+    createPlanWithTasksInput: CreatePlanWithTasksInput, options?: Parameters<typeof customFetch>[1]): Promise<Plan> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return customFetch<Plan>(getCreatePlanWithTasksUrl(project),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(createPlanWithTasksInput)
+  }
+);}
+
+
+
+
+
+export const getCreatePlanWithTasksMutationKey = () => ['createPlanWithTasks'] as const;
+
+export const getCreatePlanWithTasksMutationOptions = <TError = ErrorType<ErrorBody>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createPlanWithTasks>>, TError,CreatePlanWithTasksMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof createPlanWithTasks>>, TError,CreatePlanWithTasksMutationVariables, TContext> => {
+
+const mutationKey = getCreatePlanWithTasksMutationKey();
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof createPlanWithTasks>>, CreatePlanWithTasksMutationVariables> = (props) => {
+          const {project,data} = props ?? {};
+
+          return  createPlanWithTasks(project,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type CreatePlanWithTasksMutationResult = NonNullable<Awaited<ReturnType<typeof createPlanWithTasks>>>
+    export type CreatePlanWithTasksMutationBody = BodyType<CreatePlanWithTasksInput>
+    export type CreatePlanWithTasksMutationError = ErrorType<ErrorBody>
+    export type CreatePlanWithTasksMutationVariables = {project: string;data: BodyType<CreatePlanWithTasksInput>}
+
+    /**
+ * @summary Atomically create a plan with its initial tasks and dependencies (FR43, INV-PLAN-6)
+ */
+export const useCreatePlanWithTasks = <TError = ErrorType<ErrorBody>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createPlanWithTasks>>, TError,CreatePlanWithTasksMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof createPlanWithTasks>>,
+        TError,
+        CreatePlanWithTasksMutationVariables,
+        TContext
+      > => {
+      return useMutation(getCreatePlanWithTasksMutationOptions(options));
+    }
+
+export const getGetPlanUrl = (project: string,
+    planId: string,) => {
+
+
+
+
+  return `/api/projects/${project}/plans/${planId}`
+}
+
+/**
+ * @summary Get one plan with its tasks (FR43)
+ */
+export const getPlan = async (project: string,
+    planId: string, options?: Parameters<typeof customFetch>[1]): Promise<Plan> => {
+
+  return customFetch<Plan>(getGetPlanUrl(project,planId),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetPlanQueryKey = (project: string,
+    planId: string,) => {
+    return [
+    `/api/projects/${project}/plans/${planId}`
+    ] as const;
+    }
+
+
+export const getGetPlanQueryOptions = <TData = Awaited<ReturnType<typeof getPlan>>, TError = ErrorType<ErrorBody>>(project: string,
+    planId: string, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getPlan>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetPlanQueryKey(project,planId);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getPlan>>> = ({ signal }) => getPlan(project,planId, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: project !== null && project !== undefined && planId !== null && planId !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getPlan>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetPlanQueryResult = NonNullable<Awaited<ReturnType<typeof getPlan>>>
+export type GetPlanQueryError = ErrorType<ErrorBody>
+
+
+/**
+ * @summary Get one plan with its tasks (FR43)
+ */
+
+export function useGetPlan<TData = Awaited<ReturnType<typeof getPlan>>, TError = ErrorType<ErrorBody>>(
+ project: string,
+    planId: string, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getPlan>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetPlanQueryOptions(project,planId,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getUpdatePlanUrl = (project: string,
+    planId: string,) => {
+
+
+
+
+  return `/api/projects/${project}/plans/${planId}`
+}
+
+/**
+ * @summary Merge-update a plan's title/goal (FR43)
+ */
+export const updatePlan = async (project: string,
+    planId: string,
+    updatePlanInput: UpdatePlanInput, options?: Parameters<typeof customFetch>[1]): Promise<Plan> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return customFetch<Plan>(getUpdatePlanUrl(project,planId),
+  {
+    ...options,
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(updatePlanInput)
+  }
+);}
+
+
+
+
+
+export const getUpdatePlanMutationKey = () => ['updatePlan'] as const;
+
+export const getUpdatePlanMutationOptions = <TError = ErrorType<ErrorBody>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updatePlan>>, TError,UpdatePlanMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof updatePlan>>, TError,UpdatePlanMutationVariables, TContext> => {
+
+const mutationKey = getUpdatePlanMutationKey();
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof updatePlan>>, UpdatePlanMutationVariables> = (props) => {
+          const {project,planId,data} = props ?? {};
+
+          return  updatePlan(project,planId,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type UpdatePlanMutationResult = NonNullable<Awaited<ReturnType<typeof updatePlan>>>
+    export type UpdatePlanMutationBody = BodyType<UpdatePlanInput>
+    export type UpdatePlanMutationError = ErrorType<ErrorBody>
+    export type UpdatePlanMutationVariables = {project: string;planId: string;data: BodyType<UpdatePlanInput>}
+
+    /**
+ * @summary Merge-update a plan's title/goal (FR43)
+ */
+export const useUpdatePlan = <TError = ErrorType<ErrorBody>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updatePlan>>, TError,UpdatePlanMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof updatePlan>>,
+        TError,
+        UpdatePlanMutationVariables,
+        TContext
+      > => {
+      return useMutation(getUpdatePlanMutationOptions(options));
+    }
+
+export const getArchivePlanUrl = (project: string,
+    planId: string,) => {
+
+
+
+
+  return `/api/projects/${project}/plans/${planId}/archive`
+}
+
+/**
+ * @summary Archive a plan and revoke active leases (FR43, D18)
+ */
+export const archivePlan = async (project: string,
+    planId: string, options?: Parameters<typeof customFetch>[1]): Promise<Plan> => {
+
+  return customFetch<Plan>(getArchivePlanUrl(project,planId),
+  {
+    ...options,
+    method: 'POST'
+
+
+  }
+);}
+
+
+
+
+
+export const getArchivePlanMutationKey = () => ['archivePlan'] as const;
+
+export const getArchivePlanMutationOptions = <TError = ErrorType<ErrorBody>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof archivePlan>>, TError,ArchivePlanMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof archivePlan>>, TError,ArchivePlanMutationVariables, TContext> => {
+
+const mutationKey = getArchivePlanMutationKey();
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof archivePlan>>, ArchivePlanMutationVariables> = (props) => {
+          const {project,planId} = props ?? {};
+
+          return  archivePlan(project,planId,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type ArchivePlanMutationResult = NonNullable<Awaited<ReturnType<typeof archivePlan>>>
+
+    export type ArchivePlanMutationError = ErrorType<ErrorBody>
+    export type ArchivePlanMutationVariables = {project: string;planId: string}
+
+    /**
+ * @summary Archive a plan and revoke active leases (FR43, D18)
+ */
+export const useArchivePlan = <TError = ErrorType<ErrorBody>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof archivePlan>>, TError,ArchivePlanMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof archivePlan>>,
+        TError,
+        ArchivePlanMutationVariables,
+        TContext
+      > => {
+      return useMutation(getArchivePlanMutationOptions(options));
+    }
+
+export const getActivatePlanUrl = (project: string,
+    planId: string,) => {
+
+
+
+
+  return `/api/projects/${project}/plans/${planId}/activate`
+}
+
+/**
+ * @summary Transition a plan from draft to active (FR43, D18)
+ */
+export const activatePlan = async (project: string,
+    planId: string, options?: Parameters<typeof customFetch>[1]): Promise<Plan> => {
+
+  return customFetch<Plan>(getActivatePlanUrl(project,planId),
+  {
+    ...options,
+    method: 'POST'
+
+
+  }
+);}
+
+
+
+
+
+export const getActivatePlanMutationKey = () => ['activatePlan'] as const;
+
+export const getActivatePlanMutationOptions = <TError = ErrorType<ErrorBody>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof activatePlan>>, TError,ActivatePlanMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof activatePlan>>, TError,ActivatePlanMutationVariables, TContext> => {
+
+const mutationKey = getActivatePlanMutationKey();
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof activatePlan>>, ActivatePlanMutationVariables> = (props) => {
+          const {project,planId} = props ?? {};
+
+          return  activatePlan(project,planId,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type ActivatePlanMutationResult = NonNullable<Awaited<ReturnType<typeof activatePlan>>>
+
+    export type ActivatePlanMutationError = ErrorType<ErrorBody>
+    export type ActivatePlanMutationVariables = {project: string;planId: string}
+
+    /**
+ * @summary Transition a plan from draft to active (FR43, D18)
+ */
+export const useActivatePlan = <TError = ErrorType<ErrorBody>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof activatePlan>>, TError,ActivatePlanMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof activatePlan>>,
+        TError,
+        ActivatePlanMutationVariables,
+        TContext
+      > => {
+      return useMutation(getActivatePlanMutationOptions(options));
+    }
+
+export const getCompletePlanUrl = (project: string,
+    planId: string,) => {
+
+
+
+
+  return `/api/projects/${project}/plans/${planId}/complete`
+}
+
+/**
+ * @summary Transition a plan from active to completed (FR43, D18)
+ */
+export const completePlan = async (project: string,
+    planId: string, options?: Parameters<typeof customFetch>[1]): Promise<Plan> => {
+
+  return customFetch<Plan>(getCompletePlanUrl(project,planId),
+  {
+    ...options,
+    method: 'POST'
+
+
+  }
+);}
+
+
+
+
+
+export const getCompletePlanMutationKey = () => ['completePlan'] as const;
+
+export const getCompletePlanMutationOptions = <TError = ErrorType<ErrorBody>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof completePlan>>, TError,CompletePlanMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof completePlan>>, TError,CompletePlanMutationVariables, TContext> => {
+
+const mutationKey = getCompletePlanMutationKey();
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof completePlan>>, CompletePlanMutationVariables> = (props) => {
+          const {project,planId} = props ?? {};
+
+          return  completePlan(project,planId,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type CompletePlanMutationResult = NonNullable<Awaited<ReturnType<typeof completePlan>>>
+
+    export type CompletePlanMutationError = ErrorType<ErrorBody>
+    export type CompletePlanMutationVariables = {project: string;planId: string}
+
+    /**
+ * @summary Transition a plan from active to completed (FR43, D18)
+ */
+export const useCompletePlan = <TError = ErrorType<ErrorBody>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof completePlan>>, TError,CompletePlanMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof completePlan>>,
+        TError,
+        CompletePlanMutationVariables,
+        TContext
+      > => {
+      return useMutation(getCompletePlanMutationOptions(options));
+    }
+
+export const getAddPlanTaskUrl = (project: string,
+    planId: string,) => {
+
+
+
+
+  return `/api/projects/${project}/plans/${planId}/tasks`
+}
+
+/**
+ * @summary Add a task to a plan (FR44)
+ */
+export const addPlanTask = async (project: string,
+    planId: string,
+    addPlanTaskInput: AddPlanTaskInput, options?: Parameters<typeof customFetch>[1]): Promise<PlanTask> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return customFetch<PlanTask>(getAddPlanTaskUrl(project,planId),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(addPlanTaskInput)
+  }
+);}
+
+
+
+
+
+export const getAddPlanTaskMutationKey = () => ['addPlanTask'] as const;
+
+export const getAddPlanTaskMutationOptions = <TError = ErrorType<ErrorBody>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof addPlanTask>>, TError,AddPlanTaskMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof addPlanTask>>, TError,AddPlanTaskMutationVariables, TContext> => {
+
+const mutationKey = getAddPlanTaskMutationKey();
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof addPlanTask>>, AddPlanTaskMutationVariables> = (props) => {
+          const {project,planId,data} = props ?? {};
+
+          return  addPlanTask(project,planId,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type AddPlanTaskMutationResult = NonNullable<Awaited<ReturnType<typeof addPlanTask>>>
+    export type AddPlanTaskMutationBody = BodyType<AddPlanTaskInput>
+    export type AddPlanTaskMutationError = ErrorType<ErrorBody>
+    export type AddPlanTaskMutationVariables = {project: string;planId: string;data: BodyType<AddPlanTaskInput>}
+
+    /**
+ * @summary Add a task to a plan (FR44)
+ */
+export const useAddPlanTask = <TError = ErrorType<ErrorBody>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof addPlanTask>>, TError,AddPlanTaskMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof addPlanTask>>,
+        TError,
+        AddPlanTaskMutationVariables,
+        TContext
+      > => {
+      return useMutation(getAddPlanTaskMutationOptions(options));
+    }
+
+export const getUpdatePlanTaskUrl = (project: string,
+    planId: string,
+    taskId: string,) => {
+
+
+
+
+  return `/api/projects/${project}/plans/${planId}/tasks/${taskId}`
+}
+
+/**
+ * @summary Merge-update a task's fields (FR44, FR47)
+ */
+export const updatePlanTask = async (project: string,
+    planId: string,
+    taskId: string,
+    updatePlanTaskInput: UpdatePlanTaskInput, options?: Parameters<typeof customFetch>[1]): Promise<PlanTask> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return customFetch<PlanTask>(getUpdatePlanTaskUrl(project,planId,taskId),
+  {
+    ...options,
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(updatePlanTaskInput)
+  }
+);}
+
+
+
+
+
+export const getUpdatePlanTaskMutationKey = () => ['updatePlanTask'] as const;
+
+export const getUpdatePlanTaskMutationOptions = <TError = ErrorType<ErrorBody>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updatePlanTask>>, TError,UpdatePlanTaskMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof updatePlanTask>>, TError,UpdatePlanTaskMutationVariables, TContext> => {
+
+const mutationKey = getUpdatePlanTaskMutationKey();
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof updatePlanTask>>, UpdatePlanTaskMutationVariables> = (props) => {
+          const {project,planId,taskId,data} = props ?? {};
+
+          return  updatePlanTask(project,planId,taskId,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type UpdatePlanTaskMutationResult = NonNullable<Awaited<ReturnType<typeof updatePlanTask>>>
+    export type UpdatePlanTaskMutationBody = BodyType<UpdatePlanTaskInput>
+    export type UpdatePlanTaskMutationError = ErrorType<ErrorBody>
+    export type UpdatePlanTaskMutationVariables = {project: string;planId: string;taskId: string;data: BodyType<UpdatePlanTaskInput>}
+
+    /**
+ * @summary Merge-update a task's fields (FR44, FR47)
+ */
+export const useUpdatePlanTask = <TError = ErrorType<ErrorBody>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updatePlanTask>>, TError,UpdatePlanTaskMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof updatePlanTask>>,
+        TError,
+        UpdatePlanTaskMutationVariables,
+        TContext
+      > => {
+      return useMutation(getUpdatePlanTaskMutationOptions(options));
+    }
+
+export const getAddTaskDependencyUrl = (project: string,
+    planId: string,) => {
+
+
+
+
+  return `/api/projects/${project}/plans/${planId}/dependencies`
+}
+
+/**
+ * @summary Add a prerequisite dependency between two tasks in the same plan (FR45, D19)
+ */
+export const addTaskDependency = async (project: string,
+    planId: string,
+    addTaskDependencyInput: AddTaskDependencyInput, options?: Parameters<typeof customFetch>[1]): Promise<AddTaskDependency200> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return customFetch<AddTaskDependency200>(getAddTaskDependencyUrl(project,planId),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(addTaskDependencyInput)
+  }
+);}
+
+
+
+
+
+export const getAddTaskDependencyMutationKey = () => ['addTaskDependency'] as const;
+
+export const getAddTaskDependencyMutationOptions = <TError = ErrorType<ErrorBody>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof addTaskDependency>>, TError,AddTaskDependencyMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof addTaskDependency>>, TError,AddTaskDependencyMutationVariables, TContext> => {
+
+const mutationKey = getAddTaskDependencyMutationKey();
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof addTaskDependency>>, AddTaskDependencyMutationVariables> = (props) => {
+          const {project,planId,data} = props ?? {};
+
+          return  addTaskDependency(project,planId,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type AddTaskDependencyMutationResult = NonNullable<Awaited<ReturnType<typeof addTaskDependency>>>
+    export type AddTaskDependencyMutationBody = BodyType<AddTaskDependencyInput>
+    export type AddTaskDependencyMutationError = ErrorType<ErrorBody>
+    export type AddTaskDependencyMutationVariables = {project: string;planId: string;data: BodyType<AddTaskDependencyInput>}
+
+    /**
+ * @summary Add a prerequisite dependency between two tasks in the same plan (FR45, D19)
+ */
+export const useAddTaskDependency = <TError = ErrorType<ErrorBody>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof addTaskDependency>>, TError,AddTaskDependencyMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof addTaskDependency>>,
+        TError,
+        AddTaskDependencyMutationVariables,
+        TContext
+      > => {
+      return useMutation(getAddTaskDependencyMutationOptions(options));
+    }
+
+export const getListReadyTasksUrl = (project: string,) => {
+
+
+
+
+  return `/api/projects/${project}/ready-tasks`
+}
+
+/**
+ * @summary List tasks ready to claim across all active plans in a project (FR46)
+ */
+export const listReadyTasks = async (project: string, options?: Parameters<typeof customFetch>[1]): Promise<PlanTask[]> => {
+
+  return customFetch<PlanTask[]>(getListReadyTasksUrl(project),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getListReadyTasksQueryKey = (project: string,) => {
+    return [
+    `/api/projects/${project}/ready-tasks`
+    ] as const;
+    }
+
+
+export const getListReadyTasksQueryOptions = <TData = Awaited<ReturnType<typeof listReadyTasks>>, TError = ErrorType<ErrorBody>>(project: string, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listReadyTasks>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListReadyTasksQueryKey(project);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listReadyTasks>>> = ({ signal }) => listReadyTasks(project, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: project !== null && project !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listReadyTasks>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type ListReadyTasksQueryResult = NonNullable<Awaited<ReturnType<typeof listReadyTasks>>>
+export type ListReadyTasksQueryError = ErrorType<ErrorBody>
+
+
+/**
+ * @summary List tasks ready to claim across all active plans in a project (FR46)
+ */
+
+export function useListReadyTasks<TData = Awaited<ReturnType<typeof listReadyTasks>>, TError = ErrorType<ErrorBody>>(
+ project: string, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listReadyTasks>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getListReadyTasksQueryOptions(project,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getListPlanReadyTasksUrl = (project: string,
+    planId: string,) => {
+
+
+
+
+  return `/api/projects/${project}/plans/${planId}/ready-tasks`
+}
+
+/**
+ * @summary List tasks ready to claim within one plan (FR46)
+ */
+export const listPlanReadyTasks = async (project: string,
+    planId: string, options?: Parameters<typeof customFetch>[1]): Promise<PlanTask[]> => {
+
+  return customFetch<PlanTask[]>(getListPlanReadyTasksUrl(project,planId),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getListPlanReadyTasksQueryKey = (project: string,
+    planId: string,) => {
+    return [
+    `/api/projects/${project}/plans/${planId}/ready-tasks`
+    ] as const;
+    }
+
+
+export const getListPlanReadyTasksQueryOptions = <TData = Awaited<ReturnType<typeof listPlanReadyTasks>>, TError = ErrorType<ErrorBody>>(project: string,
+    planId: string, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listPlanReadyTasks>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListPlanReadyTasksQueryKey(project,planId);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listPlanReadyTasks>>> = ({ signal }) => listPlanReadyTasks(project,planId, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: project !== null && project !== undefined && planId !== null && planId !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listPlanReadyTasks>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type ListPlanReadyTasksQueryResult = NonNullable<Awaited<ReturnType<typeof listPlanReadyTasks>>>
+export type ListPlanReadyTasksQueryError = ErrorType<ErrorBody>
+
+
+/**
+ * @summary List tasks ready to claim within one plan (FR46)
+ */
+
+export function useListPlanReadyTasks<TData = Awaited<ReturnType<typeof listPlanReadyTasks>>, TError = ErrorType<ErrorBody>>(
+ project: string,
+    planId: string, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listPlanReadyTasks>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getListPlanReadyTasksQueryOptions(project,planId,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getClaimTaskUrl = (project: string,
+    planId: string,
+    taskId: string,) => {
+
+
+
+
+  return `/api/projects/${project}/plans/${planId}/tasks/${taskId}/claim`
+}
+
+/**
+ * @summary Atomically claim a ready (or expired-lease) task (FR47, INV-PLAN-3)
+ */
+export const claimTask = async (project: string,
+    planId: string,
+    taskId: string,
+    claimTaskInput: ClaimTaskInput, options?: Parameters<typeof customFetch>[1]): Promise<ClaimResult> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return customFetch<ClaimResult>(getClaimTaskUrl(project,planId,taskId),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(claimTaskInput)
+  }
+);}
+
+
+
+
+
+export const getClaimTaskMutationKey = () => ['claimTask'] as const;
+
+export const getClaimTaskMutationOptions = <TError = ErrorType<ErrorBody>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof claimTask>>, TError,ClaimTaskMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof claimTask>>, TError,ClaimTaskMutationVariables, TContext> => {
+
+const mutationKey = getClaimTaskMutationKey();
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof claimTask>>, ClaimTaskMutationVariables> = (props) => {
+          const {project,planId,taskId,data} = props ?? {};
+
+          return  claimTask(project,planId,taskId,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type ClaimTaskMutationResult = NonNullable<Awaited<ReturnType<typeof claimTask>>>
+    export type ClaimTaskMutationBody = BodyType<ClaimTaskInput>
+    export type ClaimTaskMutationError = ErrorType<ErrorBody>
+    export type ClaimTaskMutationVariables = {project: string;planId: string;taskId: string;data: BodyType<ClaimTaskInput>}
+
+    /**
+ * @summary Atomically claim a ready (or expired-lease) task (FR47, INV-PLAN-3)
+ */
+export const useClaimTask = <TError = ErrorType<ErrorBody>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof claimTask>>, TError,ClaimTaskMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof claimTask>>,
+        TError,
+        ClaimTaskMutationVariables,
+        TContext
+      > => {
+      return useMutation(getClaimTaskMutationOptions(options));
+    }
+
+export const getHeartbeatTaskUrl = (project: string,
+    planId: string,
+    taskId: string,) => {
+
+
+
+
+  return `/api/projects/${project}/plans/${planId}/tasks/${taskId}/heartbeat`
+}
+
+/**
+ * @summary Extend the active lease while preserving task status (FR47)
+ */
+export const heartbeatTask = async (project: string,
+    planId: string,
+    taskId: string,
+    heartbeatTaskInput: HeartbeatTaskInput, options?: Parameters<typeof customFetch>[1]): Promise<PlanTask> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return customFetch<PlanTask>(getHeartbeatTaskUrl(project,planId,taskId),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(heartbeatTaskInput)
+  }
+);}
+
+
+
+
+
+export const getHeartbeatTaskMutationKey = () => ['heartbeatTask'] as const;
+
+export const getHeartbeatTaskMutationOptions = <TError = ErrorType<ErrorBody>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof heartbeatTask>>, TError,HeartbeatTaskMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof heartbeatTask>>, TError,HeartbeatTaskMutationVariables, TContext> => {
+
+const mutationKey = getHeartbeatTaskMutationKey();
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof heartbeatTask>>, HeartbeatTaskMutationVariables> = (props) => {
+          const {project,planId,taskId,data} = props ?? {};
+
+          return  heartbeatTask(project,planId,taskId,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type HeartbeatTaskMutationResult = NonNullable<Awaited<ReturnType<typeof heartbeatTask>>>
+    export type HeartbeatTaskMutationBody = BodyType<HeartbeatTaskInput>
+    export type HeartbeatTaskMutationError = ErrorType<ErrorBody>
+    export type HeartbeatTaskMutationVariables = {project: string;planId: string;taskId: string;data: BodyType<HeartbeatTaskInput>}
+
+    /**
+ * @summary Extend the active lease while preserving task status (FR47)
+ */
+export const useHeartbeatTask = <TError = ErrorType<ErrorBody>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof heartbeatTask>>, TError,HeartbeatTaskMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof heartbeatTask>>,
+        TError,
+        HeartbeatTaskMutationVariables,
+        TContext
+      > => {
+      return useMutation(getHeartbeatTaskMutationOptions(options));
+    }
+
+export const getReleaseTaskUrl = (project: string,
+    planId: string,
+    taskId: string,) => {
+
+
+
+
+  return `/api/projects/${project}/plans/${planId}/tasks/${taskId}/release`
+}
+
+/**
+ * @summary Relinquish an active claim lease back to ready (FR47)
+ */
+export const releaseTask = async (project: string,
+    planId: string,
+    taskId: string,
+    releaseTaskInput: ReleaseTaskInput, options?: Parameters<typeof customFetch>[1]): Promise<PlanTask> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return customFetch<PlanTask>(getReleaseTaskUrl(project,planId,taskId),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(releaseTaskInput)
+  }
+);}
+
+
+
+
+
+export const getReleaseTaskMutationKey = () => ['releaseTask'] as const;
+
+export const getReleaseTaskMutationOptions = <TError = ErrorType<ErrorBody>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof releaseTask>>, TError,ReleaseTaskMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof releaseTask>>, TError,ReleaseTaskMutationVariables, TContext> => {
+
+const mutationKey = getReleaseTaskMutationKey();
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof releaseTask>>, ReleaseTaskMutationVariables> = (props) => {
+          const {project,planId,taskId,data} = props ?? {};
+
+          return  releaseTask(project,planId,taskId,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type ReleaseTaskMutationResult = NonNullable<Awaited<ReturnType<typeof releaseTask>>>
+    export type ReleaseTaskMutationBody = BodyType<ReleaseTaskInput>
+    export type ReleaseTaskMutationError = ErrorType<ErrorBody>
+    export type ReleaseTaskMutationVariables = {project: string;planId: string;taskId: string;data: BodyType<ReleaseTaskInput>}
+
+    /**
+ * @summary Relinquish an active claim lease back to ready (FR47)
+ */
+export const useReleaseTask = <TError = ErrorType<ErrorBody>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof releaseTask>>, TError,ReleaseTaskMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof releaseTask>>,
+        TError,
+        ReleaseTaskMutationVariables,
+        TContext
+      > => {
+      return useMutation(getReleaseTaskMutationOptions(options));
+    }
+
+export const getSetTaskStatusUrl = (project: string,
+    planId: string,
+    taskId: string,) => {
+
+
+
+
+  return `/api/projects/${project}/plans/${planId}/tasks/${taskId}/status`
+}
+
+/**
+ * @summary Transition a task's status (FR44, FR47)
+ */
+export const setTaskStatus = async (project: string,
+    planId: string,
+    taskId: string,
+    setTaskStatusInput: SetTaskStatusInput, options?: Parameters<typeof customFetch>[1]): Promise<PlanTask> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return customFetch<PlanTask>(getSetTaskStatusUrl(project,planId,taskId),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(setTaskStatusInput)
+  }
+);}
+
+
+
+
+
+export const getSetTaskStatusMutationKey = () => ['setTaskStatus'] as const;
+
+export const getSetTaskStatusMutationOptions = <TError = ErrorType<ErrorBody>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof setTaskStatus>>, TError,SetTaskStatusMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof setTaskStatus>>, TError,SetTaskStatusMutationVariables, TContext> => {
+
+const mutationKey = getSetTaskStatusMutationKey();
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof setTaskStatus>>, SetTaskStatusMutationVariables> = (props) => {
+          const {project,planId,taskId,data} = props ?? {};
+
+          return  setTaskStatus(project,planId,taskId,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type SetTaskStatusMutationResult = NonNullable<Awaited<ReturnType<typeof setTaskStatus>>>
+    export type SetTaskStatusMutationBody = BodyType<SetTaskStatusInput>
+    export type SetTaskStatusMutationError = ErrorType<ErrorBody>
+    export type SetTaskStatusMutationVariables = {project: string;planId: string;taskId: string;data: BodyType<SetTaskStatusInput>}
+
+    /**
+ * @summary Transition a task's status (FR44, FR47)
+ */
+export const useSetTaskStatus = <TError = ErrorType<ErrorBody>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof setTaskStatus>>, TError,SetTaskStatusMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof setTaskStatus>>,
+        TError,
+        SetTaskStatusMutationVariables,
+        TContext
+      > => {
+      return useMutation(getSetTaskStatusMutationOptions(options));
+    }
+
+export const getCompleteTaskUrl = (project: string,
+    planId: string,
+    taskId: string,) => {
+
+
+
+
+  return `/api/projects/${project}/plans/${planId}/tasks/${taskId}/complete`
+}
+
+/**
+ * @summary Transition a task to completed (FR44, FR47)
+ */
+export const completeTask = async (project: string,
+    planId: string,
+    taskId: string,
+    completeTaskInput?: CompleteTaskInput, options?: Parameters<typeof customFetch>[1]): Promise<PlanTask> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return customFetch<PlanTask>(getCompleteTaskUrl(project,planId,taskId),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(completeTaskInput)
+  }
+);}
+
+
+
+
+
+export const getCompleteTaskMutationKey = () => ['completeTask'] as const;
+
+export const getCompleteTaskMutationOptions = <TError = ErrorType<ErrorBody>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof completeTask>>, TError,CompleteTaskMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof completeTask>>, TError,CompleteTaskMutationVariables, TContext> => {
+
+const mutationKey = getCompleteTaskMutationKey();
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof completeTask>>, CompleteTaskMutationVariables> = (props) => {
+          const {project,planId,taskId,data} = props ?? {};
+
+          return  completeTask(project,planId,taskId,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type CompleteTaskMutationResult = NonNullable<Awaited<ReturnType<typeof completeTask>>>
+    export type CompleteTaskMutationBody = BodyType<CompleteTaskInput> | undefined
+    export type CompleteTaskMutationError = ErrorType<ErrorBody>
+    export type CompleteTaskMutationVariables = {project: string;planId: string;taskId: string;data?: BodyType<CompleteTaskInput>}
+
+    /**
+ * @summary Transition a task to completed (FR44, FR47)
+ */
+export const useCompleteTask = <TError = ErrorType<ErrorBody>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof completeTask>>, TError,CompleteTaskMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof completeTask>>,
+        TError,
+        CompleteTaskMutationVariables,
+        TContext
+      > => {
+      return useMutation(getCompleteTaskMutationOptions(options));
+    }
+
+export const getPreparePlanTaskPromptUrl = (project: string,) => {
+
+
+
+
+  return `/api/projects/${project}/prepare-task`
+}
+
+/**
+ * @summary Bounded agent handoff prompt for one planned task (T25, INV-PLAN-5)
+ */
+export const preparePlanTaskPrompt = async (project: string,
+    preparePlanTaskPromptBody: PreparePlanTaskPromptBody, options?: Parameters<typeof customFetch>[1]): Promise<PreparePlanTaskPrompt200> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return customFetch<PreparePlanTaskPrompt200>(getPreparePlanTaskPromptUrl(project),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(preparePlanTaskPromptBody)
+  }
+);}
+
+
+
+
+
+export const getPreparePlanTaskPromptMutationKey = () => ['preparePlanTaskPrompt'] as const;
+
+export const getPreparePlanTaskPromptMutationOptions = <TError = ErrorType<ErrorBody>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof preparePlanTaskPrompt>>, TError,PreparePlanTaskPromptMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof preparePlanTaskPrompt>>, TError,PreparePlanTaskPromptMutationVariables, TContext> => {
+
+const mutationKey = getPreparePlanTaskPromptMutationKey();
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof preparePlanTaskPrompt>>, PreparePlanTaskPromptMutationVariables> = (props) => {
+          const {project,data} = props ?? {};
+
+          return  preparePlanTaskPrompt(project,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type PreparePlanTaskPromptMutationResult = NonNullable<Awaited<ReturnType<typeof preparePlanTaskPrompt>>>
+    export type PreparePlanTaskPromptMutationBody = BodyType<PreparePlanTaskPromptBody>
+    export type PreparePlanTaskPromptMutationError = ErrorType<ErrorBody>
+    export type PreparePlanTaskPromptMutationVariables = {project: string;data: BodyType<PreparePlanTaskPromptBody>}
+
+    /**
+ * @summary Bounded agent handoff prompt for one planned task (T25, INV-PLAN-5)
+ */
+export const usePreparePlanTaskPrompt = <TError = ErrorType<ErrorBody>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof preparePlanTaskPrompt>>, TError,PreparePlanTaskPromptMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof preparePlanTaskPrompt>>,
+        TError,
+        PreparePlanTaskPromptMutationVariables,
+        TContext
+      > => {
+      return useMutation(getPreparePlanTaskPromptMutationOptions(options));
+    }
+
+export const getGetTaskHistoryUrl = (project: string,
+    planId: string,
+    taskId: string,) => {
+
+
+
+
+  return `/api/projects/${project}/plans/${planId}/tasks/${taskId}/history`
+}
+
+/**
+ * @summary Append-only audit history for one task (FR48, D21, INV-PLAN-4)
+ */
+export const getTaskHistory = async (project: string,
+    planId: string,
+    taskId: string, options?: Parameters<typeof customFetch>[1]): Promise<TaskEvent[]> => {
+
+  return customFetch<TaskEvent[]>(getGetTaskHistoryUrl(project,planId,taskId),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetTaskHistoryQueryKey = (project: string,
+    planId: string,
+    taskId: string,) => {
+    return [
+    `/api/projects/${project}/plans/${planId}/tasks/${taskId}/history`
+    ] as const;
+    }
+
+
+export const getGetTaskHistoryQueryOptions = <TData = Awaited<ReturnType<typeof getTaskHistory>>, TError = ErrorType<ErrorBody>>(project: string,
+    planId: string,
+    taskId: string, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getTaskHistory>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetTaskHistoryQueryKey(project,planId,taskId);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getTaskHistory>>> = ({ signal }) => getTaskHistory(project,planId,taskId, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: project !== null && project !== undefined && planId !== null && planId !== undefined && taskId !== null && taskId !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getTaskHistory>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetTaskHistoryQueryResult = NonNullable<Awaited<ReturnType<typeof getTaskHistory>>>
+export type GetTaskHistoryQueryError = ErrorType<ErrorBody>
+
+
+/**
+ * @summary Append-only audit history for one task (FR48, D21, INV-PLAN-4)
+ */
+
+export function useGetTaskHistory<TData = Awaited<ReturnType<typeof getTaskHistory>>, TError = ErrorType<ErrorBody>>(
+ project: string,
+    planId: string,
+    taskId: string, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getTaskHistory>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetTaskHistoryQueryOptions(project,planId,taskId,options)
 
   const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
 

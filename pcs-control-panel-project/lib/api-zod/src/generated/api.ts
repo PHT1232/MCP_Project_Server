@@ -895,3 +895,745 @@ export const SearchCodeResponse = zod.object({
 })
 
 
+/**
+ * @summary Advisory, strictly read-only AI plan draft proposal (T26, INV-PLAN-6)
+ */
+export const GeneratePlanDraftParams = zod.object({
+  "project": zod.coerce.string().describe('Project name or id (URL-encoded by the client)')
+})
+
+export const GeneratePlanDraftBody = zod.object({
+  "goal": zod.string(),
+  "constraints": zod.string().optional(),
+  "max_tasks": zod.number().optional()
+})
+
+export const GeneratePlanDraftResponse = zod.object({
+  "ok": zod.boolean(),
+  "draft": zod.object({
+  "title": zod.string(),
+  "goal": zod.string(),
+  "tasks": zod.array(zod.object({
+  "local_task_id": zod.string(),
+  "title": zod.string(),
+  "objective": zod.string(),
+  "acceptance_criteria": zod.array(zod.string()),
+  "linked_files": zod.array(zod.string()),
+  "requirement_ids": zod.array(zod.string())
+})),
+  "dependencies": zod.array(zod.object({
+  "task_local_id": zod.string(),
+  "depends_on_local_id": zod.string()
+})),
+  "notes": zod.string().nullable()
+}).nullable(),
+  "provider": zod.string(),
+  "model": zod.string(),
+  "warning": zod.string().nullable()
+})
+
+
+/**
+ * @summary List plans in a project (FR43)
+ */
+export const ListPlansParams = zod.object({
+  "project": zod.coerce.string().describe('Project name or id (URL-encoded by the client)')
+})
+
+export const ListPlansQueryParams = zod.object({
+  "status": zod.enum(['draft', 'active', 'completed', 'archived']).optional()
+})
+
+export const ListPlansResponseItem = zod.object({
+  "id": zod.string(),
+  "project_id": zod.string(),
+  "title": zod.string(),
+  "goal": zod.string(),
+  "status": zod.enum(['draft', 'active', 'completed', 'archived']),
+  "author": zod.string(),
+  "created_at": zod.coerce.date(),
+  "updated_at": zod.coerce.date(),
+  "tasks": zod.array(zod.object({
+  "id": zod.string(),
+  "plan_id": zod.string(),
+  "project_id": zod.string(),
+  "local_task_id": zod.string(),
+  "title": zod.string(),
+  "objective": zod.string(),
+  "acceptance_criteria": zod.array(zod.string()),
+  "linked_files": zod.array(zod.string()),
+  "priority": zod.number(),
+  "status": zod.enum(['pending', 'ready', 'claimed', 'in_progress', 'blocked', 'in_review', 'completed', 'cancelled']),
+  "claimed_by": zod.string().nullable(),
+  "lease_expires_at": zod.coerce.date().nullable(),
+  "created_at": zod.coerce.date(),
+  "updated_at": zod.coerce.date(),
+  "dependencies": zod.array(zod.string()),
+  "requirement_ids": zod.array(zod.string())
+}))
+})
+export const ListPlansResponse = zod.array(ListPlansResponseItem)
+
+
+/**
+ * @summary Create a plan (FR43)
+ */
+export const CreatePlanParams = zod.object({
+  "project": zod.coerce.string().describe('Project name or id (URL-encoded by the client)')
+})
+
+export const CreatePlanBody = zod.object({
+  "title": zod.string(),
+  "goal": zod.string()
+})
+
+export const CreatePlanResponse = zod.object({
+  "id": zod.string(),
+  "project_id": zod.string(),
+  "title": zod.string(),
+  "goal": zod.string(),
+  "status": zod.enum(['draft', 'active', 'completed', 'archived']),
+  "author": zod.string(),
+  "created_at": zod.coerce.date(),
+  "updated_at": zod.coerce.date(),
+  "tasks": zod.array(zod.object({
+  "id": zod.string(),
+  "plan_id": zod.string(),
+  "project_id": zod.string(),
+  "local_task_id": zod.string(),
+  "title": zod.string(),
+  "objective": zod.string(),
+  "acceptance_criteria": zod.array(zod.string()),
+  "linked_files": zod.array(zod.string()),
+  "priority": zod.number(),
+  "status": zod.enum(['pending', 'ready', 'claimed', 'in_progress', 'blocked', 'in_review', 'completed', 'cancelled']),
+  "claimed_by": zod.string().nullable(),
+  "lease_expires_at": zod.coerce.date().nullable(),
+  "created_at": zod.coerce.date(),
+  "updated_at": zod.coerce.date(),
+  "dependencies": zod.array(zod.string()),
+  "requirement_ids": zod.array(zod.string())
+}))
+})
+
+
+/**
+ * @summary Atomically create a plan with its initial tasks and dependencies (FR43, INV-PLAN-6)
+ */
+export const CreatePlanWithTasksParams = zod.object({
+  "project": zod.coerce.string().describe('Project name or id (URL-encoded by the client)')
+})
+
+export const CreatePlanWithTasksBody = zod.object({
+  "title": zod.string(),
+  "goal": zod.string(),
+  "tasks": zod.array(zod.object({
+  "local_task_id": zod.string(),
+  "title": zod.string(),
+  "objective": zod.string(),
+  "acceptance_criteria": zod.array(zod.string()).optional(),
+  "linked_files": zod.array(zod.string()).optional(),
+  "requirement_ids": zod.array(zod.string()).optional(),
+  "priority": zod.number().optional()
+})),
+  "dependencies": zod.array(zod.object({
+  "task_local_id": zod.string(),
+  "depends_on_local_id": zod.string()
+})).optional()
+})
+
+export const CreatePlanWithTasksResponse = zod.object({
+  "id": zod.string(),
+  "project_id": zod.string(),
+  "title": zod.string(),
+  "goal": zod.string(),
+  "status": zod.enum(['draft', 'active', 'completed', 'archived']),
+  "author": zod.string(),
+  "created_at": zod.coerce.date(),
+  "updated_at": zod.coerce.date(),
+  "tasks": zod.array(zod.object({
+  "id": zod.string(),
+  "plan_id": zod.string(),
+  "project_id": zod.string(),
+  "local_task_id": zod.string(),
+  "title": zod.string(),
+  "objective": zod.string(),
+  "acceptance_criteria": zod.array(zod.string()),
+  "linked_files": zod.array(zod.string()),
+  "priority": zod.number(),
+  "status": zod.enum(['pending', 'ready', 'claimed', 'in_progress', 'blocked', 'in_review', 'completed', 'cancelled']),
+  "claimed_by": zod.string().nullable(),
+  "lease_expires_at": zod.coerce.date().nullable(),
+  "created_at": zod.coerce.date(),
+  "updated_at": zod.coerce.date(),
+  "dependencies": zod.array(zod.string()),
+  "requirement_ids": zod.array(zod.string())
+}))
+})
+
+
+/**
+ * @summary Get one plan with its tasks (FR43)
+ */
+export const GetPlanParams = zod.object({
+  "project": zod.coerce.string().describe('Project name or id (URL-encoded by the client)'),
+  "plan_id": zod.coerce.string()
+})
+
+export const GetPlanResponse = zod.object({
+  "id": zod.string(),
+  "project_id": zod.string(),
+  "title": zod.string(),
+  "goal": zod.string(),
+  "status": zod.enum(['draft', 'active', 'completed', 'archived']),
+  "author": zod.string(),
+  "created_at": zod.coerce.date(),
+  "updated_at": zod.coerce.date(),
+  "tasks": zod.array(zod.object({
+  "id": zod.string(),
+  "plan_id": zod.string(),
+  "project_id": zod.string(),
+  "local_task_id": zod.string(),
+  "title": zod.string(),
+  "objective": zod.string(),
+  "acceptance_criteria": zod.array(zod.string()),
+  "linked_files": zod.array(zod.string()),
+  "priority": zod.number(),
+  "status": zod.enum(['pending', 'ready', 'claimed', 'in_progress', 'blocked', 'in_review', 'completed', 'cancelled']),
+  "claimed_by": zod.string().nullable(),
+  "lease_expires_at": zod.coerce.date().nullable(),
+  "created_at": zod.coerce.date(),
+  "updated_at": zod.coerce.date(),
+  "dependencies": zod.array(zod.string()),
+  "requirement_ids": zod.array(zod.string())
+}))
+})
+
+
+/**
+ * @summary Merge-update a plan's title/goal (FR43)
+ */
+export const UpdatePlanParams = zod.object({
+  "project": zod.coerce.string().describe('Project name or id (URL-encoded by the client)'),
+  "plan_id": zod.coerce.string()
+})
+
+export const UpdatePlanBody = zod.object({
+  "title": zod.string().optional(),
+  "goal": zod.string().optional()
+})
+
+export const UpdatePlanResponse = zod.object({
+  "id": zod.string(),
+  "project_id": zod.string(),
+  "title": zod.string(),
+  "goal": zod.string(),
+  "status": zod.enum(['draft', 'active', 'completed', 'archived']),
+  "author": zod.string(),
+  "created_at": zod.coerce.date(),
+  "updated_at": zod.coerce.date(),
+  "tasks": zod.array(zod.object({
+  "id": zod.string(),
+  "plan_id": zod.string(),
+  "project_id": zod.string(),
+  "local_task_id": zod.string(),
+  "title": zod.string(),
+  "objective": zod.string(),
+  "acceptance_criteria": zod.array(zod.string()),
+  "linked_files": zod.array(zod.string()),
+  "priority": zod.number(),
+  "status": zod.enum(['pending', 'ready', 'claimed', 'in_progress', 'blocked', 'in_review', 'completed', 'cancelled']),
+  "claimed_by": zod.string().nullable(),
+  "lease_expires_at": zod.coerce.date().nullable(),
+  "created_at": zod.coerce.date(),
+  "updated_at": zod.coerce.date(),
+  "dependencies": zod.array(zod.string()),
+  "requirement_ids": zod.array(zod.string())
+}))
+})
+
+
+/**
+ * @summary Archive a plan and revoke active leases (FR43, D18)
+ */
+export const ArchivePlanParams = zod.object({
+  "project": zod.coerce.string().describe('Project name or id (URL-encoded by the client)'),
+  "plan_id": zod.coerce.string()
+})
+
+export const ArchivePlanResponse = zod.object({
+  "id": zod.string(),
+  "project_id": zod.string(),
+  "title": zod.string(),
+  "goal": zod.string(),
+  "status": zod.enum(['draft', 'active', 'completed', 'archived']),
+  "author": zod.string(),
+  "created_at": zod.coerce.date(),
+  "updated_at": zod.coerce.date(),
+  "tasks": zod.array(zod.object({
+  "id": zod.string(),
+  "plan_id": zod.string(),
+  "project_id": zod.string(),
+  "local_task_id": zod.string(),
+  "title": zod.string(),
+  "objective": zod.string(),
+  "acceptance_criteria": zod.array(zod.string()),
+  "linked_files": zod.array(zod.string()),
+  "priority": zod.number(),
+  "status": zod.enum(['pending', 'ready', 'claimed', 'in_progress', 'blocked', 'in_review', 'completed', 'cancelled']),
+  "claimed_by": zod.string().nullable(),
+  "lease_expires_at": zod.coerce.date().nullable(),
+  "created_at": zod.coerce.date(),
+  "updated_at": zod.coerce.date(),
+  "dependencies": zod.array(zod.string()),
+  "requirement_ids": zod.array(zod.string())
+}))
+})
+
+
+/**
+ * @summary Transition a plan from draft to active (FR43, D18)
+ */
+export const ActivatePlanParams = zod.object({
+  "project": zod.coerce.string().describe('Project name or id (URL-encoded by the client)'),
+  "plan_id": zod.coerce.string()
+})
+
+export const ActivatePlanResponse = zod.object({
+  "id": zod.string(),
+  "project_id": zod.string(),
+  "title": zod.string(),
+  "goal": zod.string(),
+  "status": zod.enum(['draft', 'active', 'completed', 'archived']),
+  "author": zod.string(),
+  "created_at": zod.coerce.date(),
+  "updated_at": zod.coerce.date(),
+  "tasks": zod.array(zod.object({
+  "id": zod.string(),
+  "plan_id": zod.string(),
+  "project_id": zod.string(),
+  "local_task_id": zod.string(),
+  "title": zod.string(),
+  "objective": zod.string(),
+  "acceptance_criteria": zod.array(zod.string()),
+  "linked_files": zod.array(zod.string()),
+  "priority": zod.number(),
+  "status": zod.enum(['pending', 'ready', 'claimed', 'in_progress', 'blocked', 'in_review', 'completed', 'cancelled']),
+  "claimed_by": zod.string().nullable(),
+  "lease_expires_at": zod.coerce.date().nullable(),
+  "created_at": zod.coerce.date(),
+  "updated_at": zod.coerce.date(),
+  "dependencies": zod.array(zod.string()),
+  "requirement_ids": zod.array(zod.string())
+}))
+})
+
+
+/**
+ * @summary Transition a plan from active to completed (FR43, D18)
+ */
+export const CompletePlanParams = zod.object({
+  "project": zod.coerce.string().describe('Project name or id (URL-encoded by the client)'),
+  "plan_id": zod.coerce.string()
+})
+
+export const CompletePlanResponse = zod.object({
+  "id": zod.string(),
+  "project_id": zod.string(),
+  "title": zod.string(),
+  "goal": zod.string(),
+  "status": zod.enum(['draft', 'active', 'completed', 'archived']),
+  "author": zod.string(),
+  "created_at": zod.coerce.date(),
+  "updated_at": zod.coerce.date(),
+  "tasks": zod.array(zod.object({
+  "id": zod.string(),
+  "plan_id": zod.string(),
+  "project_id": zod.string(),
+  "local_task_id": zod.string(),
+  "title": zod.string(),
+  "objective": zod.string(),
+  "acceptance_criteria": zod.array(zod.string()),
+  "linked_files": zod.array(zod.string()),
+  "priority": zod.number(),
+  "status": zod.enum(['pending', 'ready', 'claimed', 'in_progress', 'blocked', 'in_review', 'completed', 'cancelled']),
+  "claimed_by": zod.string().nullable(),
+  "lease_expires_at": zod.coerce.date().nullable(),
+  "created_at": zod.coerce.date(),
+  "updated_at": zod.coerce.date(),
+  "dependencies": zod.array(zod.string()),
+  "requirement_ids": zod.array(zod.string())
+}))
+})
+
+
+/**
+ * @summary Add a task to a plan (FR44)
+ */
+export const AddPlanTaskParams = zod.object({
+  "project": zod.coerce.string().describe('Project name or id (URL-encoded by the client)'),
+  "plan_id": zod.coerce.string()
+})
+
+export const AddPlanTaskBody = zod.object({
+  "local_task_id": zod.string(),
+  "title": zod.string(),
+  "objective": zod.string(),
+  "acceptance_criteria": zod.array(zod.string()).optional(),
+  "linked_files": zod.array(zod.string()).optional(),
+  "requirement_ids": zod.array(zod.string()).optional(),
+  "priority": zod.number().optional()
+})
+
+export const AddPlanTaskResponse = zod.object({
+  "id": zod.string(),
+  "plan_id": zod.string(),
+  "project_id": zod.string(),
+  "local_task_id": zod.string(),
+  "title": zod.string(),
+  "objective": zod.string(),
+  "acceptance_criteria": zod.array(zod.string()),
+  "linked_files": zod.array(zod.string()),
+  "priority": zod.number(),
+  "status": zod.enum(['pending', 'ready', 'claimed', 'in_progress', 'blocked', 'in_review', 'completed', 'cancelled']),
+  "claimed_by": zod.string().nullable(),
+  "lease_expires_at": zod.coerce.date().nullable(),
+  "created_at": zod.coerce.date(),
+  "updated_at": zod.coerce.date(),
+  "dependencies": zod.array(zod.string()),
+  "requirement_ids": zod.array(zod.string())
+})
+
+
+/**
+ * @summary Merge-update a task's fields (FR44, FR47)
+ */
+export const UpdatePlanTaskParams = zod.object({
+  "project": zod.coerce.string().describe('Project name or id (URL-encoded by the client)'),
+  "plan_id": zod.coerce.string(),
+  "task_id": zod.coerce.string()
+})
+
+export const UpdatePlanTaskBody = zod.object({
+  "title": zod.string().optional(),
+  "objective": zod.string().optional(),
+  "acceptance_criteria": zod.array(zod.string()).optional(),
+  "linked_files": zod.array(zod.string()).optional(),
+  "requirement_ids": zod.array(zod.string()).optional(),
+  "priority": zod.number().optional(),
+  "claim_token": zod.string().optional()
+})
+
+export const UpdatePlanTaskResponse = zod.object({
+  "id": zod.string(),
+  "plan_id": zod.string(),
+  "project_id": zod.string(),
+  "local_task_id": zod.string(),
+  "title": zod.string(),
+  "objective": zod.string(),
+  "acceptance_criteria": zod.array(zod.string()),
+  "linked_files": zod.array(zod.string()),
+  "priority": zod.number(),
+  "status": zod.enum(['pending', 'ready', 'claimed', 'in_progress', 'blocked', 'in_review', 'completed', 'cancelled']),
+  "claimed_by": zod.string().nullable(),
+  "lease_expires_at": zod.coerce.date().nullable(),
+  "created_at": zod.coerce.date(),
+  "updated_at": zod.coerce.date(),
+  "dependencies": zod.array(zod.string()),
+  "requirement_ids": zod.array(zod.string())
+})
+
+
+/**
+ * @summary Add a prerequisite dependency between two tasks in the same plan (FR45, D19)
+ */
+export const AddTaskDependencyParams = zod.object({
+  "project": zod.coerce.string().describe('Project name or id (URL-encoded by the client)'),
+  "plan_id": zod.coerce.string()
+})
+
+export const AddTaskDependencyBody = zod.object({
+  "task_id": zod.string(),
+  "depends_on_task_id": zod.string()
+})
+
+export const AddTaskDependencyResponse = zod.object({
+  "task_id": zod.string(),
+  "depends_on_task_id": zod.string()
+})
+
+
+/**
+ * @summary List tasks ready to claim across all active plans in a project (FR46)
+ */
+export const ListReadyTasksParams = zod.object({
+  "project": zod.coerce.string().describe('Project name or id (URL-encoded by the client)')
+})
+
+export const ListReadyTasksResponseItem = zod.object({
+  "id": zod.string(),
+  "plan_id": zod.string(),
+  "project_id": zod.string(),
+  "local_task_id": zod.string(),
+  "title": zod.string(),
+  "objective": zod.string(),
+  "acceptance_criteria": zod.array(zod.string()),
+  "linked_files": zod.array(zod.string()),
+  "priority": zod.number(),
+  "status": zod.enum(['pending', 'ready', 'claimed', 'in_progress', 'blocked', 'in_review', 'completed', 'cancelled']),
+  "claimed_by": zod.string().nullable(),
+  "lease_expires_at": zod.coerce.date().nullable(),
+  "created_at": zod.coerce.date(),
+  "updated_at": zod.coerce.date(),
+  "dependencies": zod.array(zod.string()),
+  "requirement_ids": zod.array(zod.string())
+})
+export const ListReadyTasksResponse = zod.array(ListReadyTasksResponseItem)
+
+
+/**
+ * @summary List tasks ready to claim within one plan (FR46)
+ */
+export const ListPlanReadyTasksParams = zod.object({
+  "project": zod.coerce.string().describe('Project name or id (URL-encoded by the client)'),
+  "plan_id": zod.coerce.string()
+})
+
+export const ListPlanReadyTasksResponseItem = zod.object({
+  "id": zod.string(),
+  "plan_id": zod.string(),
+  "project_id": zod.string(),
+  "local_task_id": zod.string(),
+  "title": zod.string(),
+  "objective": zod.string(),
+  "acceptance_criteria": zod.array(zod.string()),
+  "linked_files": zod.array(zod.string()),
+  "priority": zod.number(),
+  "status": zod.enum(['pending', 'ready', 'claimed', 'in_progress', 'blocked', 'in_review', 'completed', 'cancelled']),
+  "claimed_by": zod.string().nullable(),
+  "lease_expires_at": zod.coerce.date().nullable(),
+  "created_at": zod.coerce.date(),
+  "updated_at": zod.coerce.date(),
+  "dependencies": zod.array(zod.string()),
+  "requirement_ids": zod.array(zod.string())
+})
+export const ListPlanReadyTasksResponse = zod.array(ListPlanReadyTasksResponseItem)
+
+
+/**
+ * @summary Atomically claim a ready (or expired-lease) task (FR47, INV-PLAN-3)
+ */
+export const ClaimTaskParams = zod.object({
+  "project": zod.coerce.string().describe('Project name or id (URL-encoded by the client)'),
+  "plan_id": zod.coerce.string(),
+  "task_id": zod.coerce.string()
+})
+
+export const ClaimTaskBody = zod.object({
+  "claimed_by": zod.string(),
+  "lease_seconds": zod.number().optional()
+})
+
+export const ClaimTaskResponse = zod.object({
+  "task": zod.object({
+  "id": zod.string(),
+  "plan_id": zod.string(),
+  "project_id": zod.string(),
+  "local_task_id": zod.string(),
+  "title": zod.string(),
+  "objective": zod.string(),
+  "acceptance_criteria": zod.array(zod.string()),
+  "linked_files": zod.array(zod.string()),
+  "priority": zod.number(),
+  "status": zod.enum(['pending', 'ready', 'claimed', 'in_progress', 'blocked', 'in_review', 'completed', 'cancelled']),
+  "claimed_by": zod.string().nullable(),
+  "lease_expires_at": zod.coerce.date().nullable(),
+  "created_at": zod.coerce.date(),
+  "updated_at": zod.coerce.date(),
+  "dependencies": zod.array(zod.string()),
+  "requirement_ids": zod.array(zod.string())
+}),
+  "claim_token": zod.string()
+})
+
+
+/**
+ * @summary Extend the active lease while preserving task status (FR47)
+ */
+export const HeartbeatTaskParams = zod.object({
+  "project": zod.coerce.string().describe('Project name or id (URL-encoded by the client)'),
+  "plan_id": zod.coerce.string(),
+  "task_id": zod.coerce.string()
+})
+
+export const HeartbeatTaskBody = zod.object({
+  "claim_token": zod.string(),
+  "lease_seconds": zod.number().optional()
+})
+
+export const HeartbeatTaskResponse = zod.object({
+  "id": zod.string(),
+  "plan_id": zod.string(),
+  "project_id": zod.string(),
+  "local_task_id": zod.string(),
+  "title": zod.string(),
+  "objective": zod.string(),
+  "acceptance_criteria": zod.array(zod.string()),
+  "linked_files": zod.array(zod.string()),
+  "priority": zod.number(),
+  "status": zod.enum(['pending', 'ready', 'claimed', 'in_progress', 'blocked', 'in_review', 'completed', 'cancelled']),
+  "claimed_by": zod.string().nullable(),
+  "lease_expires_at": zod.coerce.date().nullable(),
+  "created_at": zod.coerce.date(),
+  "updated_at": zod.coerce.date(),
+  "dependencies": zod.array(zod.string()),
+  "requirement_ids": zod.array(zod.string())
+})
+
+
+/**
+ * @summary Relinquish an active claim lease back to ready (FR47)
+ */
+export const ReleaseTaskParams = zod.object({
+  "project": zod.coerce.string().describe('Project name or id (URL-encoded by the client)'),
+  "plan_id": zod.coerce.string(),
+  "task_id": zod.coerce.string()
+})
+
+export const ReleaseTaskBody = zod.object({
+  "claim_token": zod.string()
+})
+
+export const ReleaseTaskResponse = zod.object({
+  "id": zod.string(),
+  "plan_id": zod.string(),
+  "project_id": zod.string(),
+  "local_task_id": zod.string(),
+  "title": zod.string(),
+  "objective": zod.string(),
+  "acceptance_criteria": zod.array(zod.string()),
+  "linked_files": zod.array(zod.string()),
+  "priority": zod.number(),
+  "status": zod.enum(['pending', 'ready', 'claimed', 'in_progress', 'blocked', 'in_review', 'completed', 'cancelled']),
+  "claimed_by": zod.string().nullable(),
+  "lease_expires_at": zod.coerce.date().nullable(),
+  "created_at": zod.coerce.date(),
+  "updated_at": zod.coerce.date(),
+  "dependencies": zod.array(zod.string()),
+  "requirement_ids": zod.array(zod.string())
+})
+
+
+/**
+ * @summary Transition a task's status (FR44, FR47)
+ */
+export const SetTaskStatusParams = zod.object({
+  "project": zod.coerce.string().describe('Project name or id (URL-encoded by the client)'),
+  "plan_id": zod.coerce.string(),
+  "task_id": zod.coerce.string()
+})
+
+export const SetTaskStatusBody = zod.object({
+  "status": zod.enum(['pending', 'ready', 'claimed', 'in_progress', 'blocked', 'in_review', 'completed', 'cancelled']),
+  "claim_token": zod.string().optional(),
+  "reason": zod.string().optional()
+})
+
+export const SetTaskStatusResponse = zod.object({
+  "id": zod.string(),
+  "plan_id": zod.string(),
+  "project_id": zod.string(),
+  "local_task_id": zod.string(),
+  "title": zod.string(),
+  "objective": zod.string(),
+  "acceptance_criteria": zod.array(zod.string()),
+  "linked_files": zod.array(zod.string()),
+  "priority": zod.number(),
+  "status": zod.enum(['pending', 'ready', 'claimed', 'in_progress', 'blocked', 'in_review', 'completed', 'cancelled']),
+  "claimed_by": zod.string().nullable(),
+  "lease_expires_at": zod.coerce.date().nullable(),
+  "created_at": zod.coerce.date(),
+  "updated_at": zod.coerce.date(),
+  "dependencies": zod.array(zod.string()),
+  "requirement_ids": zod.array(zod.string())
+})
+
+
+/**
+ * @summary Transition a task to completed (FR44, FR47)
+ */
+export const CompleteTaskParams = zod.object({
+  "project": zod.coerce.string().describe('Project name or id (URL-encoded by the client)'),
+  "plan_id": zod.coerce.string(),
+  "task_id": zod.coerce.string()
+})
+
+export const CompleteTaskBody = zod.object({
+  "claim_token": zod.string().optional()
+})
+
+export const CompleteTaskResponse = zod.object({
+  "id": zod.string(),
+  "plan_id": zod.string(),
+  "project_id": zod.string(),
+  "local_task_id": zod.string(),
+  "title": zod.string(),
+  "objective": zod.string(),
+  "acceptance_criteria": zod.array(zod.string()),
+  "linked_files": zod.array(zod.string()),
+  "priority": zod.number(),
+  "status": zod.enum(['pending', 'ready', 'claimed', 'in_progress', 'blocked', 'in_review', 'completed', 'cancelled']),
+  "claimed_by": zod.string().nullable(),
+  "lease_expires_at": zod.coerce.date().nullable(),
+  "created_at": zod.coerce.date(),
+  "updated_at": zod.coerce.date(),
+  "dependencies": zod.array(zod.string()),
+  "requirement_ids": zod.array(zod.string())
+})
+
+
+/**
+ * @summary Bounded agent handoff prompt for one planned task (T25, INV-PLAN-5)
+ */
+export const PreparePlanTaskPromptParams = zod.object({
+  "project": zod.coerce.string().describe('Project name or id (URL-encoded by the client)')
+})
+
+export const PreparePlanTaskPromptBody = zod.object({
+  "task_id": zod.string(),
+  "max_tokens": zod.number().optional()
+})
+
+export const PreparePlanTaskPromptResponse = zod.object({
+  "project": zod.string(),
+  "task_id": zod.string(),
+  "plan_id": zod.string(),
+  "local_task_id": zod.string(),
+  "prompt": zod.string()
+})
+
+
+/**
+ * @summary Append-only audit history for one task (FR48, D21, INV-PLAN-4)
+ */
+export const GetTaskHistoryParams = zod.object({
+  "project": zod.coerce.string().describe('Project name or id (URL-encoded by the client)'),
+  "plan_id": zod.coerce.string(),
+  "task_id": zod.coerce.string()
+})
+
+export const GetTaskHistoryResponseItem = zod.object({
+  "id": zod.string(),
+  "project_id": zod.string(),
+  "plan_id": zod.string(),
+  "task_id": zod.string(),
+  "event_type": zod.enum(['created', 'updated', 'dependency_added', 'claimed', 'reclaimed', 'heartbeat', 'released', 'status_changed', 'completed', 'cancelled']),
+  "actor": zod.string(),
+  "old_status": zod.string().nullable(),
+  "new_status": zod.string().nullable(),
+  "payload": zod.record(zod.string(), zod.unknown()),
+  "created_at": zod.coerce.date()
+})
+export const GetTaskHistoryResponse = zod.array(GetTaskHistoryResponseItem)
+
+

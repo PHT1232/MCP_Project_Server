@@ -253,7 +253,13 @@ class ValidatedEndpoint:
 
     @property
     def request_extensions(self) -> dict[str, object]:
-        return {"sni_hostname": self.host.encode("ascii")}
+        # httpcore forwards this straight through as the TLS `server_hostname`
+        # (str | None everywhere it's typed — see httpcore's connection
+        # backends and anyio.streams.tls.TLSStream.wrap). A bytes value only
+        # happened to work on httpx's sync/stdlib-ssl transport; on the async
+        # (anyio) transport it crashes inside idna2008_resolve, which expects
+        # a str and encodes it itself.
+        return {"sni_hostname": self.host}
 
 
 async def resolve_provider_endpoint(

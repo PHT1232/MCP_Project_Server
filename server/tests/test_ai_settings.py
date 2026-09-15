@@ -288,7 +288,7 @@ async def test_embedding_connection_is_pinned_against_dns_rebinding() -> None:
     request = captured[0]
     assert request.url.host == "93.184.216.34"
     assert request.headers["host"] == "example.com"
-    assert request.extensions["sni_hostname"] == b"example.com"
+    assert request.extensions["sni_hostname"] == "example.com"
     assert dns_answers == ["127.0.0.1"]
 
 

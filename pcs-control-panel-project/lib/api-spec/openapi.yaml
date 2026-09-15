@@ -18,6 +18,7 @@ tags:
   - name: requirements
   - name: index
   - name: codemap
+  - name: plans
 
 paths:
   /health:
@@ -604,6 +605,710 @@ paths:
               schema:
                 $ref: "#/components/schemas/SearchResponse"
 
+  /projects/{project}/plans/generate-draft:
+    post:
+      operationId: generatePlanDraft
+      tags: [plans]
+      summary: Advisory, strictly read-only AI plan draft proposal (T26, INV-PLAN-6)
+      parameters:
+        - $ref: "#/components/parameters/ProjectRef"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/GeneratePlanDraftInput"
+      responses:
+        "200":
+          description: >
+            Draft generation outcome. `ok: false` (unconfigured/unreachable
+            provider, or an invalid provider response) is a normal response,
+            not an error — `draft` is null and `warning` explains why.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GeneratePlanDraftResult"
+        "400":
+          description: Invalid goal or max_tasks
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorBody"
+        "404":
+          description: Unknown project
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorBody"
+
+  /projects/{project}/plans:
+    get:
+      operationId: listPlans
+      tags: [plans]
+      summary: List plans in a project (FR43)
+      parameters:
+        - $ref: "#/components/parameters/ProjectRef"
+        - name: status
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/PlanStatus"
+      responses:
+        "200":
+          description: Plans
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Plan"
+        "404":
+          description: Unknown project
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorBody"
+    post:
+      operationId: createPlan
+      tags: [plans]
+      summary: Create a plan (FR43)
+      parameters:
+        - $ref: "#/components/parameters/ProjectRef"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreatePlanInput"
+      responses:
+        "201":
+          description: Created plan
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Plan"
+        "400":
+          description: Invalid input
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorBody"
+        "404":
+          description: Unknown project
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorBody"
+
+  /projects/{project}/plans/with-tasks:
+    post:
+      operationId: createPlanWithTasks
+      tags: [plans]
+      summary: Atomically create a plan with its initial tasks and dependencies (FR43, INV-PLAN-6)
+      parameters:
+        - $ref: "#/components/parameters/ProjectRef"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreatePlanWithTasksInput"
+      responses:
+        "201":
+          description: Created plan with tasks
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Plan"
+        "400":
+          description: Invalid input
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorBody"
+        "404":
+          description: Unknown project
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorBody"
+
+  /projects/{project}/plans/{plan_id}:
+    get:
+      operationId: getPlan
+      tags: [plans]
+      summary: Get one plan with its tasks (FR43)
+      parameters:
+        - $ref: "#/components/parameters/ProjectRef"
+        - $ref: "#/components/parameters/PlanId"
+      responses:
+        "200":
+          description: Plan
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Plan"
+        "404":
+          description: Unknown project or plan
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorBody"
+    patch:
+      operationId: updatePlan
+      tags: [plans]
+      summary: Merge-update a plan's title/goal (FR43)
+      parameters:
+        - $ref: "#/components/parameters/ProjectRef"
+        - $ref: "#/components/parameters/PlanId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdatePlanInput"
+      responses:
+        "200":
+          description: Updated plan
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Plan"
+        "400":
+          description: Invalid input, empty patch, or unknown fields
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorBody"
+        "404":
+          description: Unknown project or plan
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorBody"
+
+  /projects/{project}/plans/{plan_id}/archive:
+    post:
+      operationId: archivePlan
+      tags: [plans]
+      summary: Archive a plan and revoke active leases (FR43, D18)
+      parameters:
+        - $ref: "#/components/parameters/ProjectRef"
+        - $ref: "#/components/parameters/PlanId"
+      responses:
+        "200":
+          description: Archived plan
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Plan"
+        "404":
+          description: Unknown project or plan
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorBody"
+
+  /projects/{project}/plans/{plan_id}/activate:
+    post:
+      operationId: activatePlan
+      tags: [plans]
+      summary: Transition a plan from draft to active (FR43, D18)
+      parameters:
+        - $ref: "#/components/parameters/ProjectRef"
+        - $ref: "#/components/parameters/PlanId"
+      responses:
+        "200":
+          description: Activated plan
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Plan"
+        "400":
+          description: Invalid state transition
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorBody"
+        "404":
+          description: Unknown project or plan
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorBody"
+
+  /projects/{project}/plans/{plan_id}/complete:
+    post:
+      operationId: completePlan
+      tags: [plans]
+      summary: Transition a plan from active to completed (FR43, D18)
+      parameters:
+        - $ref: "#/components/parameters/ProjectRef"
+        - $ref: "#/components/parameters/PlanId"
+      responses:
+        "200":
+          description: Completed plan
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Plan"
+        "400":
+          description: Invalid state transition
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorBody"
+        "404":
+          description: Unknown project or plan
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorBody"
+
+  /projects/{project}/plans/{plan_id}/tasks:
+    post:
+      operationId: addPlanTask
+      tags: [plans]
+      summary: Add a task to a plan (FR44)
+      parameters:
+        - $ref: "#/components/parameters/ProjectRef"
+        - $ref: "#/components/parameters/PlanId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AddPlanTaskInput"
+      responses:
+        "201":
+          description: Created task
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PlanTask"
+        "400":
+          description: Invalid input
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorBody"
+        "404":
+          description: Unknown project or plan
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorBody"
+
+  /projects/{project}/plans/{plan_id}/tasks/{task_id}:
+    patch:
+      operationId: updatePlanTask
+      tags: [plans]
+      summary: Merge-update a task's fields (FR44, FR47)
+      parameters:
+        - $ref: "#/components/parameters/ProjectRef"
+        - $ref: "#/components/parameters/PlanId"
+        - $ref: "#/components/parameters/TaskId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdatePlanTaskInput"
+      responses:
+        "200":
+          description: Updated task
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PlanTask"
+        "400":
+          description: Invalid input, empty patch, or unknown fields
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorBody"
+        "404":
+          description: Unknown project, plan, or task
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorBody"
+        "409":
+          description: Active lease requires a valid claim token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorBody"
+
+  /projects/{project}/plans/{plan_id}/dependencies:
+    post:
+      operationId: addTaskDependency
+      tags: [plans]
+      summary: Add a prerequisite dependency between two tasks in the same plan (FR45, D19)
+      parameters:
+        - $ref: "#/components/parameters/ProjectRef"
+        - $ref: "#/components/parameters/PlanId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AddTaskDependencyInput"
+      responses:
+        "200":
+          description: Dependency created
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [task_id, depends_on_task_id]
+                properties:
+                  task_id:
+                    type: string
+                  depends_on_task_id:
+                    type: string
+        "400":
+          description: Invalid input or dependency cycle
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorBody"
+        "404":
+          description: Unknown project, plan, or task
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorBody"
+
+  /projects/{project}/ready-tasks:
+    get:
+      operationId: listReadyTasks
+      tags: [plans]
+      summary: List tasks ready to claim across all active plans in a project (FR46)
+      parameters:
+        - $ref: "#/components/parameters/ProjectRef"
+      responses:
+        "200":
+          description: Ready tasks
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/PlanTask"
+        "404":
+          description: Unknown project
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorBody"
+
+  /projects/{project}/plans/{plan_id}/ready-tasks:
+    get:
+      operationId: listPlanReadyTasks
+      tags: [plans]
+      summary: List tasks ready to claim within one plan (FR46)
+      parameters:
+        - $ref: "#/components/parameters/ProjectRef"
+        - $ref: "#/components/parameters/PlanId"
+      responses:
+        "200":
+          description: Ready tasks
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/PlanTask"
+        "404":
+          description: Unknown project or plan
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorBody"
+
+  /projects/{project}/plans/{plan_id}/tasks/{task_id}/claim:
+    post:
+      operationId: claimTask
+      tags: [plans]
+      summary: Atomically claim a ready (or expired-lease) task (FR47, INV-PLAN-3)
+      parameters:
+        - $ref: "#/components/parameters/ProjectRef"
+        - $ref: "#/components/parameters/PlanId"
+        - $ref: "#/components/parameters/TaskId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ClaimTaskInput"
+      responses:
+        "200":
+          description: Claimed task, with the one-time claim token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ClaimResult"
+        "400":
+          description: Invalid input
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorBody"
+        "404":
+          description: Unknown project, plan, or task
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorBody"
+        "409":
+          description: Task already claimed with an unexpired lease
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorBody"
+
+  /projects/{project}/plans/{plan_id}/tasks/{task_id}/heartbeat:
+    post:
+      operationId: heartbeatTask
+      tags: [plans]
+      summary: Extend the active lease while preserving task status (FR47)
+      parameters:
+        - $ref: "#/components/parameters/ProjectRef"
+        - $ref: "#/components/parameters/PlanId"
+        - $ref: "#/components/parameters/TaskId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/HeartbeatTaskInput"
+      responses:
+        "200":
+          description: Task with extended lease
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PlanTask"
+        "400":
+          description: Invalid input
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorBody"
+        "404":
+          description: Unknown project, plan, or task
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorBody"
+        "409":
+          description: Stale or missing claim token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorBody"
+
+  /projects/{project}/plans/{plan_id}/tasks/{task_id}/release:
+    post:
+      operationId: releaseTask
+      tags: [plans]
+      summary: Relinquish an active claim lease back to ready (FR47)
+      parameters:
+        - $ref: "#/components/parameters/ProjectRef"
+        - $ref: "#/components/parameters/PlanId"
+        - $ref: "#/components/parameters/TaskId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ReleaseTaskInput"
+      responses:
+        "200":
+          description: Released task
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PlanTask"
+        "400":
+          description: Invalid input
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorBody"
+        "404":
+          description: Unknown project, plan, or task
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorBody"
+        "409":
+          description: Stale or missing claim token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorBody"
+
+  /projects/{project}/plans/{plan_id}/tasks/{task_id}/status:
+    post:
+      operationId: setTaskStatus
+      tags: [plans]
+      summary: Transition a task's status (FR44, FR47)
+      parameters:
+        - $ref: "#/components/parameters/ProjectRef"
+        - $ref: "#/components/parameters/PlanId"
+        - $ref: "#/components/parameters/TaskId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SetTaskStatusInput"
+      responses:
+        "200":
+          description: Task with new status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PlanTask"
+        "400":
+          description: Invalid input or state transition
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorBody"
+        "404":
+          description: Unknown project, plan, or task
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorBody"
+        "409":
+          description: Stale or missing claim token on an active lease
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorBody"
+
+  /projects/{project}/plans/{plan_id}/tasks/{task_id}/complete:
+    post:
+      operationId: completeTask
+      tags: [plans]
+      summary: Transition a task to completed (FR44, FR47)
+      parameters:
+        - $ref: "#/components/parameters/ProjectRef"
+        - $ref: "#/components/parameters/PlanId"
+        - $ref: "#/components/parameters/TaskId"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CompleteTaskInput"
+      responses:
+        "200":
+          description: Completed task
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PlanTask"
+        "400":
+          description: Invalid input or state transition
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorBody"
+        "404":
+          description: Unknown project, plan, or task
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorBody"
+        "409":
+          description: Stale or missing claim token on an active lease
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorBody"
+
+  /projects/{project}/prepare-task:
+    post:
+      operationId: preparePlanTaskPrompt
+      tags: [plans]
+      summary: Bounded agent handoff prompt for one planned task (T25, INV-PLAN-5)
+      parameters:
+        - $ref: "#/components/parameters/ProjectRef"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [task_id]
+              properties:
+                task_id:
+                  type: string
+                max_tokens:
+                  type: number
+      responses:
+        "200":
+          description: Rendered handoff prompt
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [project, task_id, plan_id, local_task_id, prompt]
+                properties:
+                  project:
+                    type: string
+                  task_id:
+                    type: string
+                  plan_id:
+                    type: string
+                  local_task_id:
+                    type: string
+                  prompt:
+                    type: string
+                additionalProperties: true
+        "400":
+          description: Invalid input
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorBody"
+        "404":
+          description: Unknown project, plan, or task
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorBody"
+
+  /projects/{project}/plans/{plan_id}/tasks/{task_id}/history:
+    get:
+      operationId: getTaskHistory
+      tags: [plans]
+      summary: Append-only audit history for one task (FR48, D21, INV-PLAN-4)
+      parameters:
+        - $ref: "#/components/parameters/ProjectRef"
+        - $ref: "#/components/parameters/PlanId"
+        - $ref: "#/components/parameters/TaskId"
+      responses:
+        "200":
+          description: Task events, chronologically ordered
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/TaskEvent"
+        "404":
+          description: Unknown project, plan, or task
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorBody"
+
 components:
   parameters:
     ProjectRef:
@@ -633,6 +1338,18 @@ components:
         type: string
     CriterionId:
       name: criterionId
+      in: path
+      required: true
+      schema:
+        type: string
+    PlanId:
+      name: plan_id
+      in: path
+      required: true
+      schema:
+        type: string
+    TaskId:
+      name: task_id
       in: path
       required: true
       schema:
@@ -1812,3 +2529,432 @@ components:
               type: number
             violations:
               type: number
+
+    PlanStatus:
+      type: string
+      enum: [draft, active, completed, archived]
+
+    TaskStatus:
+      type: string
+      enum:
+        - pending
+        - ready
+        - claimed
+        - in_progress
+        - blocked
+        - in_review
+        - completed
+        - cancelled
+
+    TaskEventType:
+      type: string
+      enum:
+        - created
+        - updated
+        - dependency_added
+        - claimed
+        - reclaimed
+        - heartbeat
+        - released
+        - status_changed
+        - completed
+        - cancelled
+
+    PlanTask:
+      type: object
+      required:
+        - id
+        - plan_id
+        - project_id
+        - local_task_id
+        - title
+        - objective
+        - acceptance_criteria
+        - linked_files
+        - priority
+        - status
+        - claimed_by
+        - lease_expires_at
+        - created_at
+        - updated_at
+        - dependencies
+        - requirement_ids
+      properties:
+        id:
+          type: string
+        plan_id:
+          type: string
+        project_id:
+          type: string
+        local_task_id:
+          type: string
+        title:
+          type: string
+        objective:
+          type: string
+        acceptance_criteria:
+          type: array
+          items:
+            type: string
+        linked_files:
+          type: array
+          items:
+            type: string
+        priority:
+          type: number
+        status:
+          $ref: "#/components/schemas/TaskStatus"
+        claimed_by:
+          type: string
+          nullable: true
+        lease_expires_at:
+          type: string
+          format: date-time
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        dependencies:
+          type: array
+          items:
+            type: string
+        requirement_ids:
+          type: array
+          items:
+            type: string
+
+    Plan:
+      type: object
+      required:
+        - id
+        - project_id
+        - title
+        - goal
+        - status
+        - author
+        - created_at
+        - updated_at
+        - tasks
+      properties:
+        id:
+          type: string
+        project_id:
+          type: string
+        title:
+          type: string
+        goal:
+          type: string
+        status:
+          $ref: "#/components/schemas/PlanStatus"
+        author:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        tasks:
+          type: array
+          items:
+            $ref: "#/components/schemas/PlanTask"
+
+    ClaimResult:
+      type: object
+      required: [task, claim_token]
+      properties:
+        task:
+          $ref: "#/components/schemas/PlanTask"
+        claim_token:
+          type: string
+
+    TaskEvent:
+      type: object
+      required:
+        - id
+        - project_id
+        - plan_id
+        - task_id
+        - event_type
+        - actor
+        - old_status
+        - new_status
+        - payload
+        - created_at
+      properties:
+        id:
+          type: string
+        project_id:
+          type: string
+        plan_id:
+          type: string
+        task_id:
+          type: string
+        event_type:
+          $ref: "#/components/schemas/TaskEventType"
+        actor:
+          type: string
+        old_status:
+          type: string
+          nullable: true
+        new_status:
+          type: string
+          nullable: true
+        payload:
+          type: object
+          additionalProperties: true
+        created_at:
+          type: string
+          format: date-time
+
+    CreatePlanInput:
+      type: object
+      required: [title, goal]
+      properties:
+        title:
+          type: string
+        goal:
+          type: string
+
+    TaskSpecInput:
+      type: object
+      required: [local_task_id, title, objective]
+      properties:
+        local_task_id:
+          type: string
+        title:
+          type: string
+        objective:
+          type: string
+        acceptance_criteria:
+          type: array
+          items:
+            type: string
+        linked_files:
+          type: array
+          items:
+            type: string
+        requirement_ids:
+          type: array
+          items:
+            type: string
+        priority:
+          type: number
+
+    DependencySpecInput:
+      type: object
+      required: [task_local_id, depends_on_local_id]
+      properties:
+        task_local_id:
+          type: string
+        depends_on_local_id:
+          type: string
+
+    CreatePlanWithTasksInput:
+      type: object
+      required: [title, goal, tasks]
+      properties:
+        title:
+          type: string
+        goal:
+          type: string
+        tasks:
+          type: array
+          items:
+            $ref: "#/components/schemas/TaskSpecInput"
+        dependencies:
+          type: array
+          items:
+            $ref: "#/components/schemas/DependencySpecInput"
+
+    UpdatePlanInput:
+      type: object
+      properties:
+        title:
+          type: string
+        goal:
+          type: string
+
+    AddPlanTaskInput:
+      type: object
+      required: [local_task_id, title, objective]
+      properties:
+        local_task_id:
+          type: string
+        title:
+          type: string
+        objective:
+          type: string
+        acceptance_criteria:
+          type: array
+          items:
+            type: string
+        linked_files:
+          type: array
+          items:
+            type: string
+        requirement_ids:
+          type: array
+          items:
+            type: string
+        priority:
+          type: number
+
+    UpdatePlanTaskInput:
+      type: object
+      properties:
+        title:
+          type: string
+        objective:
+          type: string
+        acceptance_criteria:
+          type: array
+          items:
+            type: string
+        linked_files:
+          type: array
+          items:
+            type: string
+        requirement_ids:
+          type: array
+          items:
+            type: string
+        priority:
+          type: number
+        claim_token:
+          type: string
+
+    AddTaskDependencyInput:
+      type: object
+      required: [task_id, depends_on_task_id]
+      properties:
+        task_id:
+          type: string
+        depends_on_task_id:
+          type: string
+
+    ClaimTaskInput:
+      type: object
+      required: [claimed_by]
+      properties:
+        claimed_by:
+          type: string
+        lease_seconds:
+          type: number
+
+    HeartbeatTaskInput:
+      type: object
+      required: [claim_token]
+      properties:
+        claim_token:
+          type: string
+        lease_seconds:
+          type: number
+
+    ReleaseTaskInput:
+      type: object
+      required: [claim_token]
+      properties:
+        claim_token:
+          type: string
+
+    SetTaskStatusInput:
+      type: object
+      required: [status]
+      properties:
+        status:
+          $ref: "#/components/schemas/TaskStatus"
+        claim_token:
+          type: string
+        reason:
+          type: string
+
+    CompleteTaskInput:
+      type: object
+      properties:
+        claim_token:
+          type: string
+
+    GeneratePlanDraftInput:
+      type: object
+      required: [goal]
+      properties:
+        goal:
+          type: string
+        constraints:
+          type: string
+        max_tasks:
+          type: number
+
+    PlanDraftTask:
+      type: object
+      required: [local_task_id, title, objective, acceptance_criteria, linked_files, requirement_ids]
+      properties:
+        local_task_id:
+          type: string
+        title:
+          type: string
+        objective:
+          type: string
+        acceptance_criteria:
+          type: array
+          items:
+            type: string
+        linked_files:
+          type: array
+          items:
+            type: string
+        requirement_ids:
+          type: array
+          items:
+            type: string
+
+    PlanDraftDependency:
+      type: object
+      required: [task_local_id, depends_on_local_id]
+      properties:
+        task_local_id:
+          type: string
+        depends_on_local_id:
+          type: string
+
+    PlanDraft:
+      type: object
+      required: [title, goal, tasks, dependencies, notes]
+      properties:
+        title:
+          type: string
+        goal:
+          type: string
+        tasks:
+          type: array
+          items:
+            $ref: "#/components/schemas/PlanDraftTask"
+        dependencies:
+          type: array
+          items:
+            $ref: "#/components/schemas/PlanDraftDependency"
+        notes:
+          type: string
+          nullable: true
+
+    GeneratePlanDraftResult:
+      type: object
+      required: [ok, draft, provider, model, warning]
+      properties:
+        ok:
+          type: boolean
+        draft:
+          allOf:
+            - $ref: "#/components/schemas/PlanDraft"
+          nullable: true
+        provider:
+          type: string
+        model:
+          type: string
+        warning:
+          type: string
+          nullable: true

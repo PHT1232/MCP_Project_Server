@@ -89,22 +89,22 @@ Do not touch AI plan draft generation (owned by T28), backend server code (owned
 
 ## Acceptance checklist
 
-- [ ] `AC-PLAN-11` (`98f519b5-6bed-491c-b2a7-ed4150118c91`): Plans UI provides manual creation, DAG visualization, ready-task filter, claim/heartbeat/release controls, and conflict feedback.
-- [ ] `AC-PLAN-12` (`5187dff3-9823-49c8-9307-669b99b24976`): Frontend mutations only update state upon server confirmation and invalidate project queries without stale state.
-- [ ] Navigation link to `/projects/:project/plans` renders correctly in the sidebar.
-- [ ] Plan list and detail views render correctly with progress counters, edit plan modal, and archive action.
-- [ ] All task mutations use nested `/plans/{plan_id}/tasks/{task_id}/...` endpoints.
-- [ ] Ready-task filter (in `lib/planTasks.ts`) accurately filters tasks whose dependencies are satisfied, including expired `in_review` tasks (`lease_expires_at <= now()`).
-- [ ] Expired lease display alerts user that task is available for reclamation ("Expired - Reclaimable") across `claimed`, `in_progress`, and `in_review` states when `lease_expires_at <= now()`.
-- [ ] Exact boundary condition `lease_expires_at == now()` is rendered as expired ("Expired - Reclaimable") and included in the ready-tasks filter.
-- [ ] Task claim modal captures lease duration, stores the token, and updates UI to claimed state upon server confirmation.
-- [ ] Reclaim of expired `in_review` task transitions UI to `claimed` with a fresh lease.
-- [ ] Heartbeat extends the active lease while preserving exact task status (`claimed` stays `claimed`, `in_progress` stays `in_progress`).
-- [ ] Mutations on tasks with active leases (`lease_expires_at > now()`) strictly require the active claim token; missing or invalid token shows a conflict banner.
-- [ ] 409 Conflict / StaleClaimToken error shows a clear conflict banner and clears the stale local token.
-- [ ] Task event history drawer displays chronologically ordered audit events with structured payload data across all event types.
-- [ ] Independent UI review confirms the new pages are visually and behaviorally consistent with the rest of `pcs-control-panel-project` (per "Design conventions" above) and are reachable end-to-end through the actual deployed Docker container, not just `pnpm dev`.
-- [ ] `just check` passes cleanly for the server portion; `pnpm --filter @workspace/pcs-control-panel run typecheck` and `pnpm exec vitest run` and a production `vite build` all pass cleanly for the frontend portion (there is no top-level `just check` step for `pcs-control-panel-project` yet).
+- [x] `AC-PLAN-11` (`98f519b5-6bed-491c-b2a7-ed4150118c91`): Plans UI provides manual creation, DAG visualization, ready-task filter, claim/heartbeat/release controls, and conflict feedback.
+- [x] `AC-PLAN-12` (`5187dff3-9823-49c8-9307-669b99b24976`): Frontend mutations only update state upon server confirmation and invalidate project queries without stale state.
+- [x] Navigation link to `/projects/:project/plans` renders correctly in the sidebar.
+- [x] Plan list and detail views render correctly with progress counters, edit plan modal, and archive action.
+- [x] All task mutations use nested `/plans/{plan_id}/tasks/{task_id}/...` endpoints.
+- [x] Ready-task filter (in `lib/planTasks.ts`) accurately filters tasks whose dependencies are satisfied, including expired `in_review` tasks (`lease_expires_at <= now()`).
+- [x] Expired lease display alerts user that task is available for reclamation ("Expired - Reclaimable") across `claimed`, `in_progress`, and `in_review` states when `lease_expires_at <= now()`.
+- [x] Exact boundary condition `lease_expires_at == now()` is rendered as expired ("Expired - Reclaimable") and included in the ready-tasks filter.
+- [x] Task claim modal captures lease duration, stores the token, and updates UI to claimed state upon server confirmation.
+- [x] Reclaim of expired `in_review` task transitions UI to `claimed` with a fresh lease.
+- [x] Heartbeat extends the active lease while preserving exact task status (`claimed` stays `claimed`, `in_progress` stays `in_progress`).
+- [x] Mutations on tasks with active leases (`lease_expires_at > now()`) strictly require the active claim token; missing or invalid token shows a conflict banner.
+- [x] 409 Conflict / StaleClaimToken error shows a clear conflict banner and clears the stale local token.
+- [x] Task event history drawer displays chronologically ordered audit events with structured payload data across all event types.
+- [x] Independent UI review confirms the new pages are visually and behaviorally consistent with the rest of `pcs-control-panel-project` (per "Design conventions" above) and are reachable end-to-end through the actual deployed Docker container, not just `pnpm dev`.
+- [x] `just check` passes cleanly for the server portion; `pnpm --filter @workspace/pcs-control-panel run typecheck` and `pnpm exec vitest run` and a production `vite build` all pass cleanly for the frontend portion (there is no top-level `just check` step for `pcs-control-panel-project` yet).
 
 ## Required evidence
 
@@ -145,3 +145,158 @@ cd ../../.. && just check   # server side is unaffected but must stay green
   - `just check` (server) green result
 - **Deviations:** Retargeted from `web/` to `pcs-control-panel-project`; `DESIGN.md` compliance dropped per explicit user decision (see note at top of this file). No component-testing framework (jsdom/RTL) was added — coverage is via `lib/planTasks.ts` unit tests plus a real Docker smoke test instead.
 ```
+
+## Handoff
+
+- **Branch:** `main` (worked directly; no separate task branch was created for this session)
+- **What was done:**
+  - `lib/api-spec/openapi.yaml`: added the 19 T24 planning routes (all under
+    `tags: [plans]`) plus `POST /projects/{project}/prepare-task` (T25's
+    `prepare_task(task_id=)`, needed for the "Copy agent prompt" button), a
+    `PlanId`/`TaskId` path-parameter pair, and 19 request/response schemas
+    (`Plan`, `PlanTask`, `ClaimResult`, `TaskEvent`, `PlanStatus`/`TaskStatus`/
+    `TaskEventType` enums, and one input schema per mutating endpoint) derived
+    directly from `pcs.planning.types.PlanView/PlanTaskView/ClaimResult/
+    TaskEventView.as_dict()` and `pcs.web_api.planning_routes.py`'s body
+    parsing — confirmed field-for-field against the live server (see
+    Verification).
+  - Regenerated `lib/api-client-react` and `lib/api-zod` via `orval` (`pnpm
+    --filter @workspace/api-spec run codegen`), producing 19 typed
+    react-query hooks (`useListPlans`, `useCreatePlan`, `useClaimTask`, …) plus
+    `usePreparePlanTaskPrompt`. Also exported `ApiError` from
+    `lib/api-client-react/src/index.ts` (previously internal to
+    `custom-fetch.ts`) — needed to distinguish 409 conflicts from other
+    mutation failures without an `any`/duck-typed check.
+  - `artifacts/pcs-control-panel/src/lib/planTasks.ts` +
+    `planTasks.test.ts` (27 tests): pure, DOM-free `isLeaseExpired` (inclusive
+    `lease_expires_at <= now()` boundary), `isReclaimable`/`leaseState`,
+    `isTaskReady`/`filterReadyTasks` (mirrors the server's canonical
+    `list_ready_tasks` predicate: active plan, non-terminal status, every
+    `task.dependencies` entry `completed`, and `ready` OR expired-lease), and
+    `layoutDag` (longest-prerequisite-chain layering for the DAG visualizer,
+    with defensive handling of dangling/cyclic references even though the
+    server rejects those on write).
+  - `artifacts/pcs-control-panel/src/components/plans/`: `TaskCard.tsx`
+    (status/lease badges, the full claim → start → review/block →
+    heartbeat/release → complete action set, gated on `hasToken` + lease
+    state), `DagView.tsx` (layered dependency chips, no new graph library),
+    `ClaimModal.tsx` (`claimed_by` + lease-seconds form), `HistoryDrawer.tsx`
+    (chronological `plan_task_events` with formatted `payload` JSON).
+  - `artifacts/pcs-control-panel/src/pages/Plans.tsx`: master-detail page —
+    plan list (status-filtered) on the left, selected plan's full detail
+    (lifecycle actions, edit modal, add-task/add-dependency forms, ready-only
+    toggle, task cards, DAG section) on the right. Plan *list* rows use
+    `useListPlans` (task `dependencies`/`requirement_ids` are always empty
+    there per `service.list_plans`'s own `_as_task_view(t)` call — confirmed
+    by reading `service.py`), but the *selected* plan's tasks come from
+    `useGetPlan`, which does populate real dependencies — required for both
+    the ready filter and the DAG view to be correct, not just the progress
+    counter.
+  - Claim tokens are stored in `localStorage` under
+    `pcs-claim-token:<taskId>`, namespaced per task like the existing admin
+    token. `invalidatePlanningQueries(project)` invalidates every cached
+    query whose key starts with `/api/projects/<project>/plans` or equals
+    `/api/projects/<project>/ready-tasks` after every mutation (INV-PLAN-7,
+    AC-PLAN-12) — a plain `startsWith` filter rather than TanStack's default
+    prefix-array matching, because `getGetPlanQueryKey`/`getGetTaskHistoryQueryKey`
+    embed the full path as one string element, which prefix-array matching
+    against a shorter `/plans` key would not catch.
+  - `handlePlanningError` clears the stored token and shows a conflict-toned
+    toast on any `ApiError` with `status === 409` (`ClaimConflictError`,
+    `StaleClaimTokenError`, `PlanNotActiveError`), matching the "no operator
+    bypass" requirement — the UI also preemptively disables management
+    buttons when `lease_expires_at > now()` and no local token exists, so the
+    409 path only fires on races (another claimant, a token issued before a
+    reclaim) rather than the common case.
+  - `App.tsx`: added `export` to the 14 shared UI primitives Plans.tsx reuses
+    (`Button`, `Badge`, `Stat`, `PageHeader`, `ProjectTabs`, `ErrorBanner`,
+    `Field`, `cx`, `Tone`, `toneStyles`, `notify`, `notifyError`,
+    `combineQueryErrors`, `queryClient`) — no behavior change, just visibility
+    — plus a `Plans` nav entry (`Workflow` icon), a `plans` tab in
+    `ProjectTabs`, and the `/projects/:project/plans` route.
+- **Design conventions review:**
+  - Every new component reuses the existing off-white "paper" palette and the
+    shared `Button`/`Badge`/`Field`/`PageHeader`/`ProjectTabs`/`ErrorBanner`
+    primitives and `data-testid` convention rather than introducing new
+    styling — confirmed visually via a real headless-Chromium screenshot of
+    the live page (see Verification), not just by code inspection.
+  - Accessibility: all inputs are labeled via the shared `Field` component;
+    `ClaimModal` and `HistoryDrawer` use `role="dialog"`/`aria-modal`/
+    `aria-labelledby` and a visible close button; every interactive element
+    has a `data-testid` and is a real `<button>`/`<label>`/`<select>`, not a
+    div with a click handler.
+  - No `DESIGN.md` audit performed (out of scope per the 2026-09-15 retarget
+    note at the top of this file); no new component-testing framework
+    (jsdom/RTL) was added.
+- **Verification:**
+  - `pnpm --filter @workspace/pcs-control-panel run typecheck` (`tsc -p
+    tsconfig.json --noEmit`) — clean, 0 errors. (Required rebuilding
+    `lib/api-client-react`'s declaration output once via `tsc --build`, since
+    it's a composite TS project reference and `--noEmit` alone doesn't refresh
+    the `.d.ts` files the app project reads.)
+  - `pnpm exec vitest run` — 2 files, 55 tests passed (27 new in
+    `planTasks.test.ts`, 28 pre-existing in `codemap.test.ts`).
+  - `PORT=5173 BASE_PATH=/ pnpm exec vite build` — succeeded (448 KB / 135 KB
+    gzip JS bundle).
+  - `cd server && just check` — unaffected, still fully green: ruff, mypy
+    (115 files), backend pytest (402 passed, 1 skipped), `web/` eslint +
+    vitest (76 passed) + build, `docker compose config` for both compose
+    files.
+  - Real Docker end-to-end smoke test against the live `pcs-server-1`
+    container (rebuilt via `docker compose --env-file .env -f
+    deploy/docker-compose.yml build server && ... up -d server`, the same
+    method used for prior sessions' verifications): registered a throwaway
+    `t27-smoke-test` project via the HTTP API, created a plan with two tasks
+    and a dependency, activated the plan, claimed task `t1` with a 30s lease,
+    confirmed a second claim attempt returned `409`, heartbeated (extended
+    the lease), transitioned `t1` to `in_progress`, and read back
+    `GET .../history` — all 6 events (`created`, `status_changed` ×2,
+    `claimed`, `heartbeat` ×2) had the expected `old_status`/`new_status`/
+    `payload` shape. Confirmed `get_plan` populates real `dependencies`
+    (`list_plans` does not — see above). Took a real headless-Chromium
+    screenshot (`chromium --headless --screenshot`) of
+    `/projects/t27-smoke-test/plans` served by the rebuilt container: the
+    Plans nav entry, tab, plan list/detail, task cards (including the "Active
+    lease held by smoke-agent — this browser has no valid claim token."
+    conflict notice, correct since the claim was made via `curl`, not this
+    browser), and the DAG visualizer (`t1` in "No prerequisites", `t2` in
+    "Depth 1" showing "→ t1 (blocked)") all rendered correctly against the
+    real served bundle — confirmed the built JS contains the new UI strings
+    (`"Ready tasks only"`, `"dag-view"`, `"Copy agent prompt"`, etc.) via
+    `docker exec … grep`. Archived the smoke-test plan afterward (also
+    confirmed `archive_plan` revokes active leases — `t1`'s claim was cleared
+    to `cancelled`/`claimed_by: null`). This was a real API + rendered-DOM
+    review, not an interactive click-through — no automated click/form-fill
+    pass was run against the live container.
+  - Not cleaned up: the `t27-smoke-test` project itself is still registered
+    on the live instance — there is no project-delete HTTP route in this
+    codebase to remove it with. Harmless (points at a nonexistent
+    `/tmp/t27-smoke-test` root, not indexed), but flagging it since it's new
+    clutter in `GET /api/projects`.
+- **Deviations:**
+  - Retargeted from `web/` to `pcs-control-panel-project`; `DESIGN.md`
+    compliance dropped per explicit user decision (see note at top of this
+    file).
+  - No component-testing framework (jsdom/RTL) was added — coverage is via
+    `lib/planTasks.ts` unit tests plus the real Docker smoke test above.
+  - Skipped `update_plan_task` (task field editing) and `create_plan_with_tasks`
+    entirely: neither appears in the Requirements/Acceptance-checklist list
+    above, `create_plan_with_tasks` is T28's atomic AI-draft-approval path
+    (explicitly out of scope — see Non-goals), and a standalone task-edit form
+    wasn't asked for, so it was left out rather than added speculatively.
+  - `pnpm --filter @workspace/api-spec run codegen`'s chained
+    `pnpm -w run typecheck:libs` step fails with 6 `TS2308` "already exported"
+    ambiguity errors in `lib/api-zod/src/index.ts` — confirmed **pre-existing**
+    or the original `openapi.yaml` before this task added any planning routes
+    (5 of the 6 errors reproduce with zero changes: `GetCodeMapParams`,
+    `GetSectionParams`, `GetSourceParams`, `ReviewRequirementComplianceParams`,
+    `SearchCodeParams` — every existing GET route with query params hits it).
+    This task's `ListPlansParams` (for `GET /plans?status=`) adds a 6th
+    instance of the same pre-existing pattern. `orval`'s own codegen step
+    still succeeds and writes both packages' output correctly before the
+    chained typecheck runs, and `pcs-control-panel` depends only on
+    `@workspace/api-client-react` (confirmed via its `package.json`), which
+    typechecks clean in isolation — so this pre-existing `api-zod` bug does
+    not block anything T27 owns or any of its own gates. Left unfixed as
+    out-of-scope (T27 does not own `lib/api-zod`); worth a follow-up task if
+    `api-zod`'s barrel export ever needs to actually work.

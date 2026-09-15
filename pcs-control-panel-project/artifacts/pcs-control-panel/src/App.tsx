@@ -8,7 +8,7 @@ import {
   Activity, AlertCircle, ArrowRight, Boxes, Check, CheckCircle2, ChevronDown, ChevronRight,
   Circle, CircleDot, Code2, Copy, Database, FileCode2, FileText, Folder, GitBranch,
   Layers3, LayoutDashboard, ListChecks, Loader2, Menu, Plus, RefreshCw, Search, Settings2,
-  Sparkles, Terminal, Trash2, X, Zap,
+  Sparkles, Terminal, Trash2, Workflow, X, Zap,
 } from 'lucide-react';
 import { Link, Route, Switch, useLocation, useParams, Router as WouterRouter } from 'wouter';
 
@@ -24,8 +24,9 @@ import {
   type CodeMap as CodeMapResponse, type Entry, type SyncReport,
 } from '@workspace/api-client-react';
 import { emptyGraph, mergeCodeMap, overlayTone, locateHit, relatedEntries, type CodeGraph, type MergedNode } from './lib/codemap';
+import Plans from './pages/Plans';
 
-const queryClient = new QueryClient();
+export const queryClient = new QueryClient();
 
 // Single shared admin token, entered once on the AI Settings page and kept in
 // this browser's localStorage. customFetch calls this getter on every
@@ -44,7 +45,7 @@ setAdminTokenGetter(readAdminToken);
 
 // Every mutation in this app should route failures through here instead of
 // failing silently — react-query's onError is easy to forget one at a time.
-function notifyError(action: string, err: unknown) {
+export function notifyError(action: string, err: unknown) {
   toast({
     variant: 'destructive',
     title: `${action} failed`,
@@ -52,13 +53,13 @@ function notifyError(action: string, err: unknown) {
   });
 }
 
-function notify(title: string, description?: string) {
+export function notify(title: string, description?: string) {
   toast({ title, description });
 }
 
-type Tone = 'blue' | 'amber' | 'mint' | 'red' | 'ink';
+export type Tone = 'blue' | 'amber' | 'mint' | 'red' | 'ink';
 
-const toneStyles: Record<Tone, string> = {
+export const toneStyles: Record<Tone, string> = {
   blue: 'bg-[#e5e9ff] text-[#3047a8] border-[#c8d0ff]',
   amber: 'bg-[#f8edcf] text-[#856115] border-[#e8d397]',
   mint: 'bg-[#dcefe7] text-[#246a5a] border-[#b9dfd1]',
@@ -66,9 +67,9 @@ const toneStyles: Record<Tone, string> = {
   ink: 'bg-[#e3e7e8] text-[#33454b] border-[#cbd4d5]',
 };
 
-function cx(...values: Array<string | false | null | undefined>) { return values.filter(Boolean).join(' '); }
+export function cx(...values: Array<string | false | null | undefined>) { return values.filter(Boolean).join(' '); }
 
-function Button({ children, onClick, variant = 'primary', size = 'md', className, type = 'button', disabled = false, testId }: {
+export function Button({ children, onClick, variant = 'primary', size = 'md', className, type = 'button', disabled = false, testId }: {
   children: ReactNode; onClick?: () => void; variant?: 'primary' | 'secondary' | 'quiet' | 'danger'; size?: 'sm' | 'md'; className?: string; type?: 'button' | 'submit'; disabled?: boolean; testId: string;
 }) {
   const variants = {
@@ -80,11 +81,11 @@ function Button({ children, onClick, variant = 'primary', size = 'md', className
   return <button data-testid={testId} type={type} onClick={onClick} disabled={disabled} className={cx('inline-flex items-center justify-center gap-2 rounded-md border font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50', variants[variant], size === 'sm' ? 'h-8 px-2.5 text-xs' : 'h-9 px-3.5 text-sm', className)}>{children}</button>;
 }
 
-function Badge({ children, tone = 'ink', dot = false, testId }: { children: ReactNode; tone?: Tone; dot?: boolean; testId?: string }) {
+export function Badge({ children, tone = 'ink', dot = false, testId }: { children: ReactNode; tone?: Tone; dot?: boolean; testId?: string }) {
   return <span data-testid={testId} className={cx('inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-[11px] font-semibold tracking-wide', toneStyles[tone])}>{dot && <span className="h-1.5 w-1.5 rounded-full bg-current" />}{children}</span>;
 }
 
-function Stat({ label, value, sub, accent = 'blue', icon: Icon }: { label: string; value: string; sub?: string; accent?: Tone; icon?: typeof Activity }) {
+export function Stat({ label, value, sub, accent = 'blue', icon: Icon }: { label: string; value: string; sub?: string; accent?: Tone; icon?: typeof Activity }) {
   return <div data-testid={`stat-${label.toLowerCase().replace(/\s+/g, '-')}`} className="rounded-lg border border-[#d9dcd5] bg-[#faf9f4] p-4 shadow-[0_1px_0_rgba(31,43,45,.04)]">
     <div className="flex items-start justify-between"><p className="text-[11px] font-semibold uppercase tracking-[.12em] text-[#758188]">{label}</p>{Icon && <span className={cx('rounded p-1.5', toneStyles[accent])}><Icon size={14} /></span>}</div>
     <div className="mt-2 flex items-baseline gap-2"><strong className="font-mono text-2xl font-medium tracking-tight text-[#1e3036]">{value}</strong>{sub && <span className="text-xs text-[#78868b]">{sub}</span>}</div>
@@ -95,7 +96,7 @@ function Stat({ label, value, sub, accent = 'blue', icon: Icon }: { label: strin
 // — this makes "it's broken" visibly different from "it's loading" or "it's empty".
 type QueryLike = { isError: boolean; error: unknown; refetch: () => void };
 
-function combineQueryErrors(...queries: QueryLike[]): { isError: boolean; message: string; retry: () => void } {
+export function combineQueryErrors(...queries: QueryLike[]): { isError: boolean; message: string; retry: () => void } {
   const failed = queries.filter((q) => q.isError);
   const messages = [...new Set(failed.map((q) => (q.error instanceof Error ? q.error.message : 'Request failed.')))];
   return {
@@ -105,7 +106,7 @@ function combineQueryErrors(...queries: QueryLike[]): { isError: boolean; messag
   };
 }
 
-function ErrorBanner({ message, onRetry, testId = 'banner-load-error' }: { message: string; onRetry: () => void; testId?: string }) {
+export function ErrorBanner({ message, onRetry, testId = 'banner-load-error' }: { message: string; onRetry: () => void; testId?: string }) {
   return <div data-testid={testId} className="mb-5 flex items-center gap-3 rounded-md border border-[#e9c1bc] bg-[#f7e1dd] px-4 py-3 text-sm text-[#97433d]">
     <AlertCircle size={17} className="shrink-0" />
     <span className="flex-1">{message}</span>
@@ -151,6 +152,7 @@ function AppShell({ children }: { children: ReactNode }) {
   const nav = [
     { href: `${projectRoot}/dashboard`, label: 'Dashboard', icon: LayoutDashboard },
     { href: `${projectRoot}/requirements`, label: 'Requirements', icon: ListChecks },
+    { href: `${projectRoot}/plans`, label: 'Plans', icon: Workflow },
     { href: `${projectRoot}/index`, label: 'Code index', icon: Database },
     { href: `${projectRoot}/code-map`, label: 'Code map', icon: Folder },
   ];
@@ -193,13 +195,13 @@ function AppShell({ children }: { children: ReactNode }) {
   </div>;
 }
 
-function PageHeader({ eyebrow, title, description, actions }: { eyebrow: string; title: string; description?: string; actions?: ReactNode }) {
+export function PageHeader({ eyebrow, title, description, actions }: { eyebrow: string; title: string; description?: string; actions?: ReactNode }) {
   return <div className="mb-6 flex flex-col justify-between gap-4 border-b border-[#d9dcd5] pb-6 lg:flex-row lg:items-end"><div><div className="mb-2 flex items-center gap-2 font-mono text-[10px] font-medium uppercase tracking-[.17em] text-[#3155d8]"><span className="h-1.5 w-1.5 rounded-full bg-[#3155d8]" />{eyebrow}</div><h1 className="text-3xl font-bold tracking-[-.045em] text-[#1d3036] md:text-[38px]">{title}</h1>{description && <p className="mt-2 max-w-2xl text-sm leading-6 text-[#69777c]">{description}</p>}</div>{actions && <div className="flex flex-wrap items-center gap-2">{actions}</div>}</div>;
 }
 
-function ProjectTabs({ active }: { active: string }) {
+export function ProjectTabs({ active }: { active: string }) {
   const project = decodeURIComponent(useParams<{ project: string }>().project ?? '');
-  const tabs = [['dashboard', 'Overview'], ['requirements', 'Requirements'], ['index', 'Code index'], ['code-map', 'Code map']];
+  const tabs = [['dashboard', 'Overview'], ['requirements', 'Requirements'], ['plans', 'Plans'], ['index', 'Code index'], ['code-map', 'Code map']];
   return <div className="mb-6 flex gap-1 overflow-x-auto rounded-lg border border-[#d7dbd4] bg-[#e7e9e2] p-1">{tabs.map(([id, label]) => <Link key={id} href={`/projects/${encodeURIComponent(project)}/${id}`} data-testid={`tab-project-${id}`} className={cx('whitespace-nowrap rounded-md px-3 py-2 text-xs font-semibold transition-colors md:px-4', active === id ? 'bg-[#faf9f4] text-[#1e3036] shadow-[0_1px_2px_rgba(31,43,45,.08)]' : 'text-[#758187] hover:text-[#34464c]')}>{label}</Link>)}</div>;
 }
 
@@ -625,7 +627,7 @@ function CodeMap() {
   </>;
 }
 
-function Field({ label, value, onChange, placeholder, type = 'text', hint, testId }: { label: string; value: string; onChange: (value: string) => void; placeholder?: string; type?: string; hint?: string; testId?: string }) {
+export function Field({ label, value, onChange, placeholder, type = 'text', hint, testId }: { label: string; value: string; onChange: (value: string) => void; placeholder?: string; type?: string; hint?: string; testId?: string }) {
   return <label className="block text-xs font-semibold text-[#53646a]">{label}<input data-testid={testId ?? `input-${label.toLowerCase().replace(/\s+/g, '-')}`} type={type} value={value} onChange={(event) => onChange(event.target.value)} placeholder={placeholder} className="mt-2 h-10 w-full rounded-md border border-[#ccd4d1] bg-[#f1efe8] px-3 text-sm font-normal text-[#203238] outline-none placeholder:text-[#a0aaa8] focus:border-[#3155d8] focus:ring-2 focus:ring-[#3155d8]/10" />{hint && <span className="mt-1.5 block text-[10px] font-normal text-[#889498]">{hint}</span>}</label>;
 }
 
@@ -723,7 +725,7 @@ function NotFound() { return <div className="flex min-h-[100dvh] items-center ju
 
 function RoutedErrorBoundary({ children }: { children: ReactNode }) { const [location] = useLocation(); return <ErrorBoundary resetKey={location}>{children}</ErrorBoundary>; }
 function Router() {
-  return <RoutedErrorBoundary><Switch><Route path="/" component={HomePicker} /><Route path="/settings/ai"><AppShell><AISettings /></AppShell></Route><Route path="/projects/:project/dashboard"><AppShell><Dashboard /></AppShell></Route><Route path="/projects/:project/requirements"><AppShell><Requirements /></AppShell></Route><Route path="/projects/:project/index"><AppShell><CodeIndex /></AppShell></Route><Route path="/projects/:project/code-map"><AppShell><CodeMap /></AppShell></Route><Route component={NotFound} /></Switch></RoutedErrorBoundary>;
+  return <RoutedErrorBoundary><Switch><Route path="/" component={HomePicker} /><Route path="/settings/ai"><AppShell><AISettings /></AppShell></Route><Route path="/projects/:project/dashboard"><AppShell><Dashboard /></AppShell></Route><Route path="/projects/:project/requirements"><AppShell><Requirements /></AppShell></Route><Route path="/projects/:project/plans"><AppShell><Plans /></AppShell></Route><Route path="/projects/:project/index"><AppShell><CodeIndex /></AppShell></Route><Route path="/projects/:project/code-map"><AppShell><CodeMap /></AppShell></Route><Route component={NotFound} /></Switch></RoutedErrorBoundary>;
 }
 function App() { return <QueryClientProvider client={queryClient}><TooltipProvider><WouterRouter base={import.meta.env.BASE_URL.replace(/\/$/, '')}><Router /></WouterRouter><Toaster /></TooltipProvider></QueryClientProvider>; }
 export default App;

@@ -587,6 +587,214 @@ export interface RequirementEvidenceResponse {
   limits: RequirementEvidenceResponseLimits;
 }
 
+export type PlanStatus = typeof PlanStatus[keyof typeof PlanStatus];
+
+
+export const PlanStatus = {
+  draft: 'draft',
+  active: 'active',
+  completed: 'completed',
+  archived: 'archived',
+} as const;
+
+export type TaskStatus = typeof TaskStatus[keyof typeof TaskStatus];
+
+
+export const TaskStatus = {
+  pending: 'pending',
+  ready: 'ready',
+  claimed: 'claimed',
+  in_progress: 'in_progress',
+  blocked: 'blocked',
+  in_review: 'in_review',
+  completed: 'completed',
+  cancelled: 'cancelled',
+} as const;
+
+export type TaskEventType = typeof TaskEventType[keyof typeof TaskEventType];
+
+
+export const TaskEventType = {
+  created: 'created',
+  updated: 'updated',
+  dependency_added: 'dependency_added',
+  claimed: 'claimed',
+  reclaimed: 'reclaimed',
+  heartbeat: 'heartbeat',
+  released: 'released',
+  status_changed: 'status_changed',
+  completed: 'completed',
+  cancelled: 'cancelled',
+} as const;
+
+export interface PlanTask {
+  id: string;
+  plan_id: string;
+  project_id: string;
+  local_task_id: string;
+  title: string;
+  objective: string;
+  acceptance_criteria: string[];
+  linked_files: string[];
+  priority: number;
+  status: TaskStatus;
+  claimed_by: string | null;
+  lease_expires_at: string | null;
+  created_at: string;
+  updated_at: string;
+  dependencies: string[];
+  requirement_ids: string[];
+}
+
+export interface Plan {
+  id: string;
+  project_id: string;
+  title: string;
+  goal: string;
+  status: PlanStatus;
+  author: string;
+  created_at: string;
+  updated_at: string;
+  tasks: PlanTask[];
+}
+
+export interface ClaimResult {
+  task: PlanTask;
+  claim_token: string;
+}
+
+export type TaskEventPayload = { [key: string]: unknown };
+
+export interface TaskEvent {
+  id: string;
+  project_id: string;
+  plan_id: string;
+  task_id: string;
+  event_type: TaskEventType;
+  actor: string;
+  old_status: string | null;
+  new_status: string | null;
+  payload: TaskEventPayload;
+  created_at: string;
+}
+
+export interface CreatePlanInput {
+  title: string;
+  goal: string;
+}
+
+export interface TaskSpecInput {
+  local_task_id: string;
+  title: string;
+  objective: string;
+  acceptance_criteria?: string[];
+  linked_files?: string[];
+  requirement_ids?: string[];
+  priority?: number;
+}
+
+export interface DependencySpecInput {
+  task_local_id: string;
+  depends_on_local_id: string;
+}
+
+export interface CreatePlanWithTasksInput {
+  title: string;
+  goal: string;
+  tasks: TaskSpecInput[];
+  dependencies?: DependencySpecInput[];
+}
+
+export interface UpdatePlanInput {
+  title?: string;
+  goal?: string;
+}
+
+export interface AddPlanTaskInput {
+  local_task_id: string;
+  title: string;
+  objective: string;
+  acceptance_criteria?: string[];
+  linked_files?: string[];
+  requirement_ids?: string[];
+  priority?: number;
+}
+
+export interface UpdatePlanTaskInput {
+  title?: string;
+  objective?: string;
+  acceptance_criteria?: string[];
+  linked_files?: string[];
+  requirement_ids?: string[];
+  priority?: number;
+  claim_token?: string;
+}
+
+export interface AddTaskDependencyInput {
+  task_id: string;
+  depends_on_task_id: string;
+}
+
+export interface ClaimTaskInput {
+  claimed_by: string;
+  lease_seconds?: number;
+}
+
+export interface HeartbeatTaskInput {
+  claim_token: string;
+  lease_seconds?: number;
+}
+
+export interface ReleaseTaskInput {
+  claim_token: string;
+}
+
+export interface SetTaskStatusInput {
+  status: TaskStatus;
+  claim_token?: string;
+  reason?: string;
+}
+
+export interface CompleteTaskInput {
+  claim_token?: string;
+}
+
+export interface GeneratePlanDraftInput {
+  goal: string;
+  constraints?: string;
+  max_tasks?: number;
+}
+
+export interface PlanDraftTask {
+  local_task_id: string;
+  title: string;
+  objective: string;
+  acceptance_criteria: string[];
+  linked_files: string[];
+  requirement_ids: string[];
+}
+
+export interface PlanDraftDependency {
+  task_local_id: string;
+  depends_on_local_id: string;
+}
+
+export interface PlanDraft {
+  title: string;
+  goal: string;
+  tasks: PlanDraftTask[];
+  dependencies: PlanDraftDependency[];
+  notes: string | null;
+}
+
+export interface GeneratePlanDraftResult {
+  ok: boolean;
+  draft: PlanDraft | null;
+  provider: string;
+  model: string;
+  warning: string | null;
+}
+
 /**
  * Admin token for mutating AI settings
  */
@@ -628,4 +836,27 @@ export const SearchCodeScope = {
   files: 'files',
   focus: 'focus',
 } as const;
+
+export type ListPlansParams = {
+status?: PlanStatus;
+};
+
+export type AddTaskDependency200 = {
+  task_id: string;
+  depends_on_task_id: string;
+};
+
+export type PreparePlanTaskPromptBody = {
+  task_id: string;
+  max_tokens?: number;
+};
+
+export type PreparePlanTaskPrompt200 = {
+  project: string;
+  task_id: string;
+  plan_id: string;
+  local_task_id: string;
+  prompt: string;
+  [key: string]: unknown;
+ };
 

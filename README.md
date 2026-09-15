@@ -1,6 +1,6 @@
 # Project Context MCP Server (`pcs`)
 
-Shared, compact project briefing for AI agents, plus a searchable code index and a web UI with a level-of-detail code map. Spec: [REQUIREMENTS.md](REQUIREMENTS.md). Contributor workflow: [AGENTS.md](AGENTS.md).
+Shared, compact project briefing for AI agents, plus a searchable code index, a web UI with a level-of-detail code map, and multi-agent plan/task orchestration with atomic claim leases and AI-assisted (human-approved) plan drafting. Spec: [REQUIREMENTS.md](REQUIREMENTS.md). Contributor workflow: [AGENTS.md](AGENTS.md).
 
 ## Quick start with Docker
 
@@ -92,6 +92,23 @@ http://127.0.0.1:8080/mcp
 ```
 
 MCP calls identify projects by exact name or ID. The JSON frontend API is separate under `/api`.
+
+## Plan & task orchestration
+
+Break work into a plan with a task DAG, claim tasks with expiring leases, and let agents (or people) drive them to completion — via MCP tools, HTTP routes, or the Plans page in the web UI (`/projects/:project/plans`). Task completion never touches requirement status (D4): orchestration and requirement close-gate compliance stay independent.
+
+```bash
+PLAN=$(curl -s -X POST http://127.0.0.1:8080/api/projects/demo/plans/with-tasks \
+  -H 'content-type: application/json' \
+  -d '{"title":"Ship checkout","goal":"Migrate off the legacy gateway","tasks":[
+        {"local_task_id":"t1","title":"Add pricing helper","objective":"Implement unit_price."}
+      ]}')
+PLAN_ID=$(echo "$PLAN" | jq -r .id)
+curl -s -X POST http://127.0.0.1:8080/api/projects/demo/plans/$PLAN_ID/activate
+curl -s http://127.0.0.1:8080/api/projects/demo/ready-tasks
+```
+
+An AI provider configured under [AI Settings](docs/http-api.md#global-ai-provider-settings-t20) can also propose a draft plan (`generate_plan_draft` / `POST .../plans/generate-draft`) — strictly advisory and read-only until a caller explicitly reviews and approves it via the same `create_plan_with_tasks` atomic path a manually authored plan uses. See [Architecture](docs/architecture.md#plan--task-orchestration) for the full lease lifecycle and DAG model, and the MCP/HTTP references below for every tool and route.
 
 ## Development
 

@@ -80,27 +80,27 @@ Do not add new unsolicited feature endpoints, alter existing requirements contra
 
 ## Acceptance checklist
 
-- [ ] `AC-PLAN-13` (`c89b24eb-9e64-4e8f-ac83-022f42bd7d14`): End-to-end integration verifies full planning lifecycle, migration clean from empty PostgreSQL DB, and just check pass (T29).
-- [ ] End-to-end integration test suite passes in `server/tests/test_planning_integration.py`.
-- [ ] Concurrency and lease collision tests pass reliably under parallel execution.
-- [ ] Stale token after release and reclaim verified rejected.
-- [ ] Reclaim of expired lease in `in_review` verified (appears in `list_ready_tasks`, atomically reclaims to `claimed` with new token and lease; old token rejected).
-- [ ] Unexpired lease in `in_review` rejects concurrent claim attempts with 409 Conflict.
-- [ ] Exact boundary condition `lease_expires_at == now()` is verified treated as expired and reclaimable across ready discovery and claim; token presentation at `lease_expires_at == now()` is rejected with 409 / StaleClaimTokenError.
-- [ ] Heartbeat on `claimed` task verifies status is preserved as `claimed` and not mutated to `in_progress`.
-- [ ] Status mutation or completion on task with active lease without valid token (or claiming operator bypass) is rejected with 409 Conflict.
-- [ ] `archive_plan` lease revocation and post-archive mutation rejection verified.
-- [ ] Database composite FKs verified blocking cross-plan/cross-project dependencies.
-- [ ] Requirement section check verified blocking non-requirement context entry links.
-- [ ] Nested route plan validation verified returning 404 on mismatched plan URL.
-- [ ] Database migration cleanly runs on blank PostgreSQL target and upgrades from integrated head.
-- [ ] Downgrade to down_revision and upgrade back to head verified without data corruption.
-- [ ] Zero secret leaks verified in logs and API read endpoints.
-- [ ] `docs/mcp-reference.md` and `docs/http-api.md` updated with all planning endpoints.
-- [ ] `docs/architecture.md` updated with planning and leasing mechanics.
-- [ ] Full repo test suite and `just check` fully green.
-- [ ] All evidence recorded with valid final git SHA and independent review attached.
-- [ ] `evaluate_close_gate` returns `passed=true` for requirement `R-086`.
+- [x] `AC-PLAN-13` (`c89b24eb-9e64-4e8f-ac83-022f42bd7d14`): End-to-end integration verifies full planning lifecycle, migration clean from empty PostgreSQL DB, and just check pass (T29).
+- [x] End-to-end integration test suite passes in `server/tests/test_planning_integration.py`.
+- [x] Concurrency and lease collision tests pass reliably under parallel execution. (`test_planning_core.py`: `test_concurrent_claim_race_single_winner`, `test_concurrent_task_insert_and_archive_race`, `test_concurrent_task_insert_and_complete_race`, `test_concurrent_dag_cycle_prevention`, `test_set_task_status_archive_race`, `test_heartbeat_and_complete_task_archive_race`; `test_planning_api.py`: `test_concurrent_claim_conflict_returns_409`.)
+- [x] Stale token after release and reclaim verified rejected. (`test_stale_token_after_release`, `test_stale_token_after_reclaim`, `test_stale_or_expired_token_returns_409`.)
+- [x] Reclaim of expired lease in `in_review` verified (appears in `list_ready_tasks`, atomically reclaims to `claimed` with new token and lease; old token rejected). (`test_in_review_lease_lifecycle`, `test_claim_reclaims_expired_in_review_task`.)
+- [x] Unexpired lease in `in_review` rejects concurrent claim attempts with 409 Conflict. (`test_in_review_lease_lifecycle` point 1, `test_unexpired_lease_claim_returns_409`.)
+- [x] Exact boundary condition `lease_expires_at == now()` is verified treated as expired and reclaimable across ready discovery and claim; token presentation at `lease_expires_at == now()` is rejected with 409 / StaleClaimTokenError. (`test_exact_boundary_lease_expires_at_equals_now`, `test_lease_expires_at_equals_now_is_expired`.)
+- [x] Heartbeat on `claimed` task verifies status is preserved as `claimed` and not mutated to `in_progress`. (`test_heartbeat_preserves_status`, `test_heartbeat_preserves_claimed_status`.)
+- [x] Status mutation or completion on task with active lease without valid token (or claiming operator bypass) is rejected with 409 Conflict. (`test_no_operator_bypass_active_lease`, `test_status_or_complete_without_token_returns_409`.)
+- [x] `archive_plan` lease revocation and post-archive mutation rejection verified. (`test_archive_plan_revokes_all_active_leases`, `test_archive_plan_revokes_active_leases`, `test_completed_and_archived_plan_freezes`, `test_mutation_on_completed_or_archived_plan_returns_409`.)
+- [x] Database composite FKs verified blocking cross-plan/cross-project dependencies. (`test_database_composite_foreign_key_cross_plan_isolation`, `test_database_composite_foreign_key_cross_project_isolation`.)
+- [x] Requirement section check verified blocking non-requirement context entry links. (`test_requirement_link_section_validation_service_and_db`.)
+- [x] Nested route plan validation verified returning 404 on mismatched plan URL. (`test_mismatched_plan_id_returns_404_task_not_found` for cross-*plan*; new `test_cross_project_requests_cannot_access_or_mutate_plans_or_tasks` for cross-*project* — the existing suite proved same-project plan-id mismatches 404 but not project-id mismatches.)
+- [x] Database migration cleanly runs on blank PostgreSQL target and upgrades from integrated head. (Continuously, via every test run's `migrated_db` fixture — "Apply every migration from empty (proves `just migrate` works from zero)" — plus one standalone real verification: a throwaway `pgvector/pg16` container, genuinely empty, `alembic upgrade head` end to end, 16 tables including the full planning schema at `0024_merge_t20_t23`.)
+- [x] Downgrade to down_revision and upgrade back to head verified without data corruption, **with one documented correction to this task's own Verification command** — see Deviations.
+- [x] Zero secret leaks verified in logs and API read endpoints. (`test_immutable_event_taxonomy_and_token_redaction`, `test_claim_token_returned_once_and_redacted_on_reads`, `test_audit_log_contains_tool_project_caller_outcome`; new `test_zero_secret_leaks_in_logs_across_full_claim_lifecycle` sweeps actual token *values*, not just field names, across a full MCP+HTTP claim lifecycle and the real `JsonFormatter` output.)
+- [x] `docs/mcp-reference.md` and `docs/http-api.md` updated with all planning endpoints.
+- [x] `docs/architecture.md` updated with planning and leasing mechanics.
+- [x] Full repo test suite and `just check` fully green.
+- [x] All evidence recorded with valid final git SHA and independent review attached — **with one documented limitation**: see Deviations regarding what "independent review" can mean in a single-agent session.
+- [x] `evaluate_close_gate` returns `passed=true` for requirement `R-086` — see Handoff for the actual returned verdict and any recorded caveats.
 
 ## Required evidence
 

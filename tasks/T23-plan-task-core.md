@@ -235,7 +235,7 @@ just check
   - Production service contains no mutable test hooks; deterministic concurrency synchronization is achieved in tests via session interception and test-local event barriers.
 - **Verification:**
   - `cd server && uv run pytest tests/test_planning_core.py -v`: 30 passed in 8.88s
-  - `just check`: green (101 files ruff format/check, web eslint, server mypy, web tsc, 307 server pytest passed, 68 vitest passed, docker compose config verified, web vite build succeeded)
+  - `just check`: green (101 files ruff format/check, web eslint, server mypy, web tsc, 309 server pytest passed, 1 skipped, 68 vitest passed, docker compose config verified, web vite build succeeded)
 - **Deviations:** None
 - **Cross-task / Independent Review Needs:**
   - `AC-PLAN-3` (`42dfcafc-db94-4bc4-bcc3-9ff1e0091f9b`): Requires independent review for requirement status independence (D4) before gate close.

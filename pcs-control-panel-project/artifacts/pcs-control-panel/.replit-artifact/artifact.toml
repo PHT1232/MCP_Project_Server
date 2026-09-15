@@ -1,0 +1,28 @@
+kind = "web"
+previewPath = "/"
+title = "PCS Control Panel"
+description = "A dense, professional project context hub for software engineers and AI coding agents to inspect project health, requirements, code index, code map, and provider settings."
+version = "1.0.0"
+id = "artifacts/pcs-control-panel"
+router = "path"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 22172
+
+[services.development]
+run = "pnpm --filter @workspace/pcs-control-panel run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/pcs-control-panel", "run", "build" ]
+serve = "static"
+publicDir = "artifacts/pcs-control-panel/dist/public"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "22172"
+BASE_PATH = "/"

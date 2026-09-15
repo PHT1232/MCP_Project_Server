@@ -24,15 +24,18 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+from typing import Any
 
 import pytest
 from alembic import command
 from alembic.config import Config
-from sqlalchemy import text
+from sqlalchemy import Select, select, text
 from sqlalchemy.exc import DBAPIError, IntegrityError
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from pcs.context import service as ctx_service
 from pcs.db.base import session_scope
+from pcs.db.models import Plan
 from pcs.planning import (
     EVENT_CANCELLED,
     EVENT_CLAIMED,
@@ -83,7 +86,6 @@ from pcs.planning import (
     update_plan,
     update_plan_task,
 )
-from pcs.planning import service as planning_service
 
 pytestmark = pytest.mark.usefixtures("clean_db")
 PROJECT_A = "proj-alpha"
@@ -1142,41 +1144,36 @@ async def test_concurrent_task_insert_and_archive_race() -> None:
     add_task_paused = asyncio.Event()
     resume_add_task = asyncio.Event()
 
-    async def _pause_hook() -> None:
-        add_task_paused.set()
-        await resume_add_task.wait()
-
-    planning_service._test_add_task_pause_hook = _pause_hook
-
     async def _do_add_task() -> Exception | None:
         try:
             async with session_scope() as s:
+                # 1. Plain read of plan while active in this session (identity-maps active plan)
+                await s.execute(select(Plan).where(Plan.id == plan.id))
+                add_task_paused.set()
+                await resume_add_task.wait()
                 await add_plan_task(s, PROJECT_A, plan.id, "T02", "Task 2", "Obj 2")
             return None
         except Exception as exc:
             return exc
 
-    try:
-        add_task_future = asyncio.create_task(_do_add_task())
-        # Wait until add_plan_task has read plan (active) and paused before row lock
-        await add_task_paused.wait()
+    add_task_future = asyncio.create_task(_do_add_task())
+    # Wait until add_plan_task session has read active plan into identity map
+    await add_task_paused.wait()
 
-        # Commit archive_plan while add_plan_task is paused
-        async with session_scope() as s:
-            await archive_plan(s, PROJECT_A, plan.id)
+    # Commit archive_plan while add_plan_task is paused
+    async with session_scope() as s:
+        await archive_plan(s, PROJECT_A, plan.id)
 
-        # Release add_plan_task to attempt taking lock and continuing mutation
-        resume_add_task.set()
-        add_result = await add_task_future
+    # Release add_plan_task to take row lock and verify status refresh
+    resume_add_task.set()
+    add_result = await add_task_future
 
-        assert isinstance(add_result, PlanNotActiveError)
+    assert isinstance(add_result, PlanNotActiveError)
 
-        async with session_scope() as session:
-            p = await get_plan(session, PROJECT_A, plan.id)
-            assert p.status == PLAN_STATUS_ARCHIVED
-            assert not any(t.local_task_id == "T02" for t in p.tasks)
-    finally:
-        planning_service._test_add_task_pause_hook = None
+    async with session_scope() as session:
+        p = await get_plan(session, PROJECT_A, plan.id)
+        assert p.status == PLAN_STATUS_ARCHIVED
+        assert not any(t.local_task_id == "T02" for t in p.tasks)
 
 
 @pytest.mark.asyncio
@@ -1199,48 +1196,43 @@ async def test_concurrent_task_insert_and_complete_race() -> None:
     add_task_paused = asyncio.Event()
     resume_add_task = asyncio.Event()
 
-    async def _pause_hook() -> None:
-        add_task_paused.set()
-        await resume_add_task.wait()
-
-    planning_service._test_add_task_pause_hook = _pause_hook
-
     async def _do_add_task() -> Exception | None:
         try:
             async with session_scope() as s:
+                # 1. Plain read of plan while active in this session (identity-maps active plan)
+                await s.execute(select(Plan).where(Plan.id == plan.id))
+                add_task_paused.set()
+                await resume_add_task.wait()
                 await add_plan_task(s, PROJECT_A, plan.id, "T02", "Task 2", "Obj 2")
             return None
         except Exception as exc:
             return exc
 
-    try:
-        add_task_future = asyncio.create_task(_do_add_task())
-        # Wait until add_plan_task has read plan (active) and paused before row lock
-        await add_task_paused.wait()
+    add_task_future = asyncio.create_task(_do_add_task())
+    # Wait until add_plan_task session has read active plan into identity map
+    await add_task_paused.wait()
 
-        # Commit complete_plan while add_plan_task is paused
-        async with session_scope() as s:
-            await complete_plan(s, PROJECT_A, plan.id)
+    # Commit complete_plan while add_plan_task is paused
+    async with session_scope() as s:
+        await complete_plan(s, PROJECT_A, plan.id)
 
-        # Release add_plan_task to attempt taking lock and continuing mutation
-        resume_add_task.set()
-        add_result = await add_task_future
+    # Release add_plan_task to take row lock and verify status refresh
+    resume_add_task.set()
+    add_result = await add_task_future
 
-        assert isinstance(add_result, PlanNotActiveError)
+    assert isinstance(add_result, PlanNotActiveError)
 
-        async with session_scope() as session:
-            p = await get_plan(session, PROJECT_A, plan.id)
-            assert p.status == PLAN_STATUS_COMPLETED
-            assert not any(t.local_task_id == "T02" for t in p.tasks)
-    finally:
-        planning_service._test_add_task_pause_hook = None
+    async with session_scope() as session:
+        p = await get_plan(session, PROJECT_A, plan.id)
+        assert p.status == PLAN_STATUS_COMPLETED
+        assert not any(t.local_task_id == "T02" for t in p.tasks)
 
 
 # ---------------------------------------------------------------------------
 # Finding 2 Regression: Concurrent DAG Cycle Serialization
 # ---------------------------------------------------------------------------
 @pytest.mark.asyncio
-async def test_concurrent_dag_cycle_prevention() -> None:
+async def test_concurrent_dag_cycle_prevention(monkeypatch: pytest.MonkeyPatch) -> None:
     """Two concurrent transactions adding A->B and B->A serialize.
 
     One succeeds and one raises DependencyCycleError (FR45, INV-PLAN-1).
@@ -1264,15 +1256,26 @@ async def test_concurrent_dag_cycle_prevention() -> None:
     }
     release_both = asyncio.Event()
 
-    async def _pause_hook(task_id: str, dep_task_id: str) -> None:
-        at_check[task_id].set()
-        await release_both.wait()
+    def _wrap_session(s: AsyncSession, target_task_id: str) -> None:
+        real_exec = s.execute
 
-    planning_service._test_add_dep_pause_hook = _pause_hook
+        async def _sync_exec(statement: Any, *args: Any, **kwargs: Any) -> Any:
+            result = await real_exec(statement, *args, **kwargs)
+            froms = [
+                getattr(t, "name", None)
+                for t in getattr(statement, "get_final_froms", lambda: [])()
+            ]
+            if "task_dependencies" in froms and isinstance(statement, Select):
+                at_check[target_task_id].set()
+                await release_both.wait()
+            return result
+
+        monkeypatch.setattr(s, "execute", _sync_exec)
 
     async def _add_dep_1_2() -> DependencyCycleError | None:
         try:
             async with session_scope() as s:
+                _wrap_session(s, t1.id)
                 await add_task_dependency(s, PROJECT_A, plan.id, t1.id, t2.id)
             return None
         except DependencyCycleError as exc:
@@ -1281,51 +1284,168 @@ async def test_concurrent_dag_cycle_prevention() -> None:
     async def _add_dep_2_1() -> DependencyCycleError | None:
         try:
             async with session_scope() as s:
+                _wrap_session(s, t2.id)
                 await add_task_dependency(s, PROJECT_A, plan.id, t2.id, t1.id)
             return None
         except DependencyCycleError as exc:
             return exc
 
-    try:
-        task1 = asyncio.create_task(_add_dep_1_2())
-        task2 = asyncio.create_task(_add_dep_2_1())
+    task1 = asyncio.create_task(_add_dep_1_2())
+    task2 = asyncio.create_task(_add_dep_2_1())
 
-        # Wait for the first transaction to read dependency graph and pause before Kahn check
-        await asyncio.wait(
-            [
-                asyncio.create_task(at_check[t1.id].wait()),
-                asyncio.create_task(at_check[t2.id].wait()),
-            ],
-            return_when=asyncio.FIRST_COMPLETED,
+    # Wait for the first transaction to read dependency graph and pause before Kahn check
+    await asyncio.wait(
+        [
+            asyncio.create_task(at_check[t1.id].wait()),
+            asyncio.create_task(at_check[t2.id].wait()),
+        ],
+        return_when=asyncio.FIRST_COMPLETED,
+    )
+
+    # In un-serialized code, the loser would also reach barrier before either commits.
+    # In serialized code, loser is blocked by DB lock until winner commits.
+    loser_id = t2.id if at_check[t1.id].is_set() else t1.id
+    with contextlib.suppress(TimeoutError):
+        await asyncio.wait_for(at_check[loser_id].wait(), timeout=0.05)
+
+    # Release both simultaneously
+    release_both.set()
+
+    results = await asyncio.gather(task1, task2)
+
+    successes = [r for r in results if r is None]
+    cycle_errors = [r for r in results if isinstance(r, DependencyCycleError)]
+    assert len(successes) == 1
+    assert len(cycle_errors) == 1
+
+    async with session_scope() as session:
+        deps_res = await session.execute(
+            text("SELECT task_id, depends_on_task_id FROM task_dependencies WHERE plan_id = :pid"),
+            {"pid": plan.id},
         )
+        edges = list(deps_res.all())
+        assert len(edges) == 1
 
-        # In un-serialized code, the loser would also reach hook before either commits.
-        # In serialized code, loser is blocked by DB lock until winner commits.
-        loser_id = t2.id if at_check[t1.id].is_set() else t1.id
-        with contextlib.suppress(TimeoutError):
-            await asyncio.wait_for(at_check[loser_id].wait(), timeout=0.05)
 
-        # Release both simultaneously
-        release_both.set()
+# ---------------------------------------------------------------------------
+# TOCTOU Regression: set_task_status vs archive_plan
+# ---------------------------------------------------------------------------
+@pytest.mark.asyncio
+async def test_set_task_status_archive_race() -> None:
+    """set_task_status on archived plan raises PlanNotActiveError and records no event.
 
-        results = await asyncio.gather(task1, task2)
+    Demonstrates TOCTOU prevention: reading active plan before archive commits
+    must still be rejected with PlanNotActiveError once archive commits (FR43, FR44, D20).
+    """
+    await _seed_project(PROJECT_A)
 
-        successes = [r for r in results if r is None]
-        cycle_errors = [r for r in results if isinstance(r, DependencyCycleError)]
-        assert len(successes) == 1
-        assert len(cycle_errors) == 1
+    tasks = [TaskSpec(local_task_id="T01", title="Task 1", objective="Obj 1")]
+    async with session_scope() as session:
+        plan = await create_plan_with_tasks(session, PROJECT_A, "Status Race Plan", "Goal", tasks)
+        await activate_plan(session, PROJECT_A, plan.id)
 
-        async with session_scope() as session:
-            deps_res = await session.execute(
-                text(
-                    "SELECT task_id, depends_on_task_id FROM task_dependencies WHERE plan_id = :pid"
-                ),
-                {"pid": plan.id},
-            )
-            edges = list(deps_res.all())
-            assert len(edges) == 1
-    finally:
-        planning_service._test_add_dep_pause_hook = None
+    t1 = next(t for t in plan.tasks if t.local_task_id == "T01")
+
+    paused = asyncio.Event()
+    resume = asyncio.Event()
+
+    async def _do_status_update() -> Exception | None:
+        try:
+            async with session_scope() as s:
+                # Plain read of plan while active in this session (identity-maps active plan)
+                await s.execute(select(Plan).where(Plan.id == plan.id))
+                paused.set()
+                await resume.wait()
+                await set_task_status(
+                    s,
+                    PROJECT_A,
+                    plan.id,
+                    t1.id,
+                    status=TASK_STATUS_CANCELLED,
+                )
+            return None
+        except Exception as exc:
+            return exc
+
+    update_task = asyncio.create_task(_do_status_update())
+    await paused.wait()
+
+    # Commit archive while update_task holds stale active plan read
+    async with session_scope() as s_arch:
+        await archive_plan(s_arch, PROJECT_A, plan.id)
+        events_before = len(await get_task_history(s_arch, PROJECT_A, plan.id, t1.id))
+
+    resume.set()
+    result = await update_task
+
+    assert isinstance(result, PlanNotActiveError)
+
+    # Verify no mutation or new events occurred after archive
+    async with session_scope() as session:
+        p = await get_plan(session, PROJECT_A, plan.id)
+        assert p.status == PLAN_STATUS_ARCHIVED
+        events_after = len(await get_task_history(session, PROJECT_A, plan.id, t1.id))
+        assert events_after == events_before
+
+
+# ---------------------------------------------------------------------------
+# TOCTOU Regression: heartbeat_task and complete_task vs archive_plan
+# ---------------------------------------------------------------------------
+@pytest.mark.asyncio
+async def test_heartbeat_and_complete_task_archive_race() -> None:
+    """heartbeat_task and complete_task on archived plan raise PlanNotActiveError.
+
+    Must return PlanNotActiveError, not StaleClaimTokenError or success (FR43, FR47, D20).
+    """
+    await _seed_project(PROJECT_A)
+
+    tasks = [
+        TaskSpec(local_task_id="T01", title="Task 1", objective="Obj 1"),
+        TaskSpec(local_task_id="T02", title="Task 2", objective="Obj 2"),
+    ]
+    async with session_scope() as session:
+        plan = await create_plan_with_tasks(session, PROJECT_A, "Lease Race Plan", "Goal", tasks)
+        await activate_plan(session, PROJECT_A, plan.id)
+
+    t1 = next(t for t in plan.tasks if t.local_task_id == "T01")
+    t2 = next(t for t in plan.tasks if t.local_task_id == "T02")
+
+    # Claim both tasks
+    async with session_scope() as session:
+        c1 = await claim_task(session, PROJECT_A, plan.id, t1.id, "worker-1", 1800)
+        c2 = await claim_task(session, PROJECT_A, plan.id, t2.id, "worker-2", 1800)
+
+    # 1. Test heartbeat_task on archived plan with stale active plan read
+    hb_paused = asyncio.Event()
+    hb_resume = asyncio.Event()
+
+    async def _do_heartbeat() -> Exception | None:
+        try:
+            async with session_scope() as s:
+                await s.execute(select(Plan).where(Plan.id == plan.id))
+                hb_paused.set()
+                await hb_resume.wait()
+                await heartbeat_task(s, PROJECT_A, plan.id, t1.id, c1.claim_token)
+            return None
+        except Exception as exc:
+            return exc
+
+    hb_future = asyncio.create_task(_do_heartbeat())
+    await hb_paused.wait()
+
+    # Archive plan while heartbeat holds stale active plan read
+    async with session_scope() as s_arch:
+        await archive_plan(s_arch, PROJECT_A, plan.id)
+
+    hb_resume.set()
+    hb_result = await hb_future
+    assert isinstance(hb_result, PlanNotActiveError)
+
+    # 2. Test complete_task on archived plan with stale active plan read
+    async with session_scope() as s_comp:
+        await s_comp.execute(select(Plan).where(Plan.id == plan.id))
+        with pytest.raises(PlanNotActiveError):
+            await complete_task(s_comp, PROJECT_A, plan.id, t2.id, c2.claim_token)
 
 
 # ---------------------------------------------------------------------------

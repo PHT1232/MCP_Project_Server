@@ -10,7 +10,7 @@ from __future__ import annotations
 import hashlib
 import secrets
 from collections import deque
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
@@ -99,10 +99,6 @@ __all__ = [
     "update_plan",
     "update_plan_task",
 ]
-
-# Testing hooks for deterministic concurrency regression tests
-_test_add_task_pause_hook: Callable[[], Awaitable[None]] | None = None
-_test_add_dep_pause_hook: Callable[[str, str], Awaitable[None]] | None = None
 
 
 def _now() -> datetime:
@@ -571,7 +567,10 @@ async def update_plan(
     """Update title and/or goal of an active or draft plan (FR43)."""
     proj = await _resolve_project(session, project)
     result = await session.execute(
-        select(Plan).where(Plan.id == plan_id, Plan.project_id == proj.id).with_for_update()
+        select(Plan)
+        .where(Plan.id == plan_id, Plan.project_id == proj.id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
     )
     plan = result.scalar_one_or_none()
     if plan is None:
@@ -605,7 +604,10 @@ async def archive_plan(
     """Archive a plan; sole administrative exception revoking all active leases (FR43, D20)."""
     proj = await _resolve_project(session, project)
     result = await session.execute(
-        select(Plan).where(Plan.id == plan_id, Plan.project_id == proj.id).with_for_update()
+        select(Plan)
+        .where(Plan.id == plan_id, Plan.project_id == proj.id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
     )
     plan = result.scalar_one_or_none()
     if plan is None:
@@ -738,19 +740,6 @@ async def add_plan_task(
     clean_title = _validate_title(title)
     clean_objective = _validate_objective(objective)
     proj = await _resolve_project(session, project)
-
-    plan_res = await session.execute(
-        select(Plan).where(Plan.id == plan_id, Plan.project_id == proj.id)
-    )
-    plan = plan_res.scalar_one_or_none()
-    if plan is None:
-        raise PlanNotFoundError(plan_id, proj.name)
-
-    if plan.status in (PLAN_STATUS_COMPLETED, PLAN_STATUS_ARCHIVED):
-        raise PlanNotActiveError(f"Cannot add tasks to plan in status '{plan.status}'.")
-
-    if _test_add_task_pause_hook is not None:
-        await _test_add_task_pause_hook()
 
     # Serialize mutation with plan lifecycle: acquire row lock and re-check status (FR43, D20)
     lock_res = await session.execute(
@@ -1060,9 +1049,6 @@ async def add_task_dependency(
     existing_edges = [(r[0], r[1]) for r in all_deps_res.all()]
     existing_edges.append((task.id, dep_task.id))
 
-    if _test_add_dep_pause_hook is not None:
-        await _test_add_dep_pause_hook(task.id, dep_task.id)
-
     _check_acyclic(all_node_ids, existing_edges)
 
     now = _now()
@@ -1252,12 +1238,17 @@ async def claim_task(
 
     proj = await _resolve_project(session, project)
     plan_res = await session.execute(
-        select(Plan).where(Plan.id == plan_id, Plan.project_id == proj.id)
+        select(Plan)
+        .where(Plan.id == plan_id, Plan.project_id == proj.id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
     )
     plan = plan_res.scalar_one_or_none()
     if plan is None:
         raise PlanNotFoundError(plan_id, proj.name)
 
+    if plan.status in (PLAN_STATUS_COMPLETED, PLAN_STATUS_ARCHIVED):
+        raise PlanNotActiveError(f"Cannot claim task in non-active plan status '{plan.status}'.")
     if plan.status != PLAN_STATUS_ACTIVE:
         raise PlanNotActiveError(f"Cannot claim task in non-active plan status '{plan.status}'.")
 
@@ -1408,7 +1399,10 @@ async def heartbeat_task(
 
     proj = await _resolve_project(session, project)
     plan_res = await session.execute(
-        select(Plan).where(Plan.id == plan_id, Plan.project_id == proj.id)
+        select(Plan)
+        .where(Plan.id == plan_id, Plan.project_id == proj.id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
     )
     plan = plan_res.scalar_one_or_none()
     if plan is None:
@@ -1496,7 +1490,10 @@ async def release_task(
     """Voluntarily release a claimed/in_progress task back to ready (FR47, D20)."""
     proj = await _resolve_project(session, project)
     plan_res = await session.execute(
-        select(Plan).where(Plan.id == plan_id, Plan.project_id == proj.id)
+        select(Plan)
+        .where(Plan.id == plan_id, Plan.project_id == proj.id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
     )
     plan = plan_res.scalar_one_or_none()
     if plan is None:
@@ -1591,7 +1588,10 @@ async def set_task_status(
 
     proj = await _resolve_project(session, project)
     plan_res = await session.execute(
-        select(Plan).where(Plan.id == plan_id, Plan.project_id == proj.id)
+        select(Plan)
+        .where(Plan.id == plan_id, Plan.project_id == proj.id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
     )
     plan = plan_res.scalar_one_or_none()
     if plan is None:
@@ -1745,7 +1745,10 @@ async def complete_task(
     """
     proj = await _resolve_project(session, project)
     plan_res = await session.execute(
-        select(Plan).where(Plan.id == plan_id, Plan.project_id == proj.id)
+        select(Plan)
+        .where(Plan.id == plan_id, Plan.project_id == proj.id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
     )
     plan = plan_res.scalar_one_or_none()
     if plan is None:
@@ -1909,7 +1912,10 @@ async def complete_plan(
     """
     proj = await _resolve_project(session, project)
     plan_res = await session.execute(
-        select(Plan).where(Plan.id == plan_id, Plan.project_id == proj.id).with_for_update()
+        select(Plan)
+        .where(Plan.id == plan_id, Plan.project_id == proj.id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
     )
     plan = plan_res.scalar_one_or_none()
     if plan is None:

@@ -123,7 +123,9 @@ Do not touch MCP tools, HTTP routes, retrieval/prepare_task, frontend, or AI gen
 - [x] Concurrency tests verify that two concurrent `claim_task` calls on the same ready task result in exactly one claim and one conflict rejection.
 - [x] Concurrent task insertion during plan archive or complete is serialized with plan row lock and rejected with `PlanNotActiveError` (FR43, D20).
 - [x] Concurrent DAG cycle authoring is serialized per plan, preventing cycle races and guaranteeing DAG acyclicity (FR45, INV-PLAN-1).
-- [x] `add_task_dependency` enforces active lease check, requiring valid claim token when target task has active lease (INV-PLAN-3, D20).
+- [x] `add_task_dependency` enforces state-safe policy, rejecting leased tasks (claimed, in_progress, in_review) and reverting ready to pending on uncompleted prerequisite (INV-PLAN-1, INV-PLAN-3, D20).
+- [x] All task mutations enforce unified lock order: `Plan FOR UPDATE (populate_existing=True) -> re-check plan status -> PlanTask FOR UPDATE -> mutate`, preventing TOCTOU races with archive/complete and eliminating deadlocks.
+- [x] Deterministic concurrency tests use test-local session interception/monkeypatching without mutable test-only global hooks in production service.
 - [x] `plan_task_events` is made database-immutable via PostgreSQL trigger `trg_plan_task_events_immutable` and `pcs_reject_plan_task_event_mutation()` rejecting UPDATE and DELETE, with RESTRICT foreign key (INV-PLAN-4, FR48, D21).
 - [x] `claim_task` strictly rejects claiming pending tasks directly with `InvalidStateTransitionError` (FR47).
 - [x] Strict typecheck (`mypy --strict`), ruff format/lint, and focused tests pass.
@@ -226,8 +228,13 @@ just check
   - `StaleClaimTokenError` -> 409 / Conflict
   - `InvalidStateTransitionError` -> 409 / Conflict
   - `PlanNotActiveError` -> 409 / Conflict
+- **Concurrency & Lock Ordering Policy:**
+  - Strict lock order across all task mutations (`claim_task`, `heartbeat_task`, `release_task`, `set_task_status`, `complete_task`, `update_plan_task`, `add_plan_task`, `add_task_dependency`):
+    `Plan FOR UPDATE (populate_existing=True) -> re-check plan status -> PlanTask FOR UPDATE -> mutate`.
+  - Re-check immediately raises `PlanNotActiveError` if plan is `completed` or `archived`, preventing TOCTOU races with `archive_plan`/`complete_plan` and eliminating deadlocks.
+  - Production service contains no mutable test hooks; deterministic concurrency synchronization is achieved in tests via session interception and test-local event barriers.
 - **Verification:**
-  - `cd server && uv run pytest tests/test_planning_core.py -v`: 28 passed in 9.16s
+  - `cd server && uv run pytest tests/test_planning_core.py -v`: 30 passed in 8.88s
   - `just check`: green (101 files ruff format/check, web eslint, server mypy, web tsc, 307 server pytest passed, 68 vitest passed, docker compose config verified, web vite build succeeded)
 - **Deviations:** None
 - **Cross-task / Independent Review Needs:**

@@ -6,8 +6,10 @@ The default Docker Compose stack contains PostgreSQL with pgvector and one Pytho
 
 ```bash
 cp .env.example .env
-docker compose -f deploy/docker-compose.yml up --build --wait
+docker compose --env-file .env -f deploy/docker-compose.yml up --build --wait
 ```
+
+Compose does **not** load the repo-root `.env` unless `--env-file .env` is passed. The compose file has no `env_file:` of its own.
 
 The entrypoint waits for PostgreSQL, runs `alembic upgrade head`, then starts `pcs http`.
 
@@ -80,7 +82,7 @@ Requires a Tailscale auth key and `/dev/net/tun` on the host:
 
 ```bash
 export TS_AUTHKEY=tskey-auth-...
-docker compose \
+docker compose --env-file .env \
   -f deploy/docker-compose.yml \
   -f deploy/docker-compose.tailscale.yml \
   up --build --wait

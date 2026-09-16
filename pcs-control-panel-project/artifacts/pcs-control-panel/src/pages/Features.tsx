@@ -1,4 +1,4 @@
-import { useParams } from 'wouter';
+import { Link, useParams } from 'wouter';
 import { useGetSection, useListRequirements } from '@workspace/api-client-react';
 import { FileCode2, Loader2 } from 'lucide-react';
 import { Badge, combineQueryErrors, ErrorBanner, PageHeader, ProjectTabs, type Tone } from '../App';
@@ -64,10 +64,11 @@ export default function Features() {
         <div className="grid gap-4 md:grid-cols-2">
           {resolved.map(({ feature, requirement }) => {
             return (
-              <section
+              <Link
                 key={feature.id}
+                href={`/projects/${encodeURIComponent(project)}/features/${feature.id}`}
                 data-testid={`card-feature-${feature.id}`}
-                className="rounded-lg border border-[#d8dcd5] bg-[#faf9f4] p-4 shadow-[0_1px_0_rgba(31,43,45,.04)]"
+                className="block rounded-lg border border-[#d8dcd5] bg-[#faf9f4] p-4 shadow-[0_1px_0_rgba(31,43,45,.04)] transition-colors hover:border-[#9daeb3]"
               >
                 <h3 className="text-sm font-bold">{feature.headline}</h3>
                 {requirement && (
@@ -84,20 +85,7 @@ export default function Features() {
                 <p className="mt-2 whitespace-pre-wrap text-sm leading-5 text-[#4a5a5f]">
                   {feature.detail}
                 </p>
-                {feature.linked_files.length > 0 && (
-                  <div className="mt-3 flex flex-wrap gap-1.5">
-                    {feature.linked_files.map((path) => (
-                      <span
-                        key={path}
-                        data-testid={`chip-feature-file-${feature.id}`}
-                        className="rounded bg-[#eef0ea] px-2 py-1 font-mono text-[10px] text-[#5c6a6d]"
-                      >
-                        {path}
-                      </span>
-                    ))}
-                  </div>
-                )}
-              </section>
+              </Link>
             );
           })}
         </div>

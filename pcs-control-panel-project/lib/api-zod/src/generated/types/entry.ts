@@ -24,4 +24,5 @@ export interface Entry {
   linked_files: string[];
   related_entry_id: string | null;
   req_key: string | null;
+  diagram: string | null;
 }

@@ -10,14 +10,14 @@ import {
   Layers3, LayoutDashboard, ListChecks, Loader2, Menu, Plus, RefreshCw, Search, Settings2,
   PiggyBank, Sparkles, Terminal, Trash2, Workflow, X, Zap,
 } from 'lucide-react';
-import { Link, Route, Switch, useLocation, useParams, Router as WouterRouter } from 'wouter';
+import { Link, Route, Switch, useLocation, useParams, useSearchParams, Router as WouterRouter } from 'wouter';
 
 import {
   useListProjects, useRegisterProject,
   useGetBriefing, useGetSection, useSetFocus, useAddEntry, useResolveEntry,
   useListRequirements, useReviewRequirementCompliance, useSyncRequirements, useUpdateEntry,
   useGetIndexStatus, useReindex,
-  useGetCodeMap, useGetSource, useSearchCode,
+  useGetCodeMap, useGetCodebaseGuide, useGetSource, useSearchCode,
   useGetAiSettings, useUpdateAiSettings, getGetAiSettingsQueryKey,
   setAdminTokenGetter,
   type AiSettings, type EmbeddingSettings, type SummarySettings,
@@ -25,6 +25,7 @@ import {
 } from '@workspace/api-client-react';
 import { emptyGraph, mergeCodeMap, overlayTone, locateHit, relatedEntries, type CodeGraph, type MergedNode } from './lib/codemap';
 import Features from './pages/Features';
+import FeatureDetail from './pages/FeatureDetail';
 import Plans from './pages/Plans';
 import TokenSavings from './pages/TokenSavings';
 
@@ -549,7 +550,12 @@ function TreeNode({ project, node, depth = 0, graph, onMerge, onSelect, selected
 function CodeMap() {
   const project = decodeURIComponent(useParams<{ project: string }>().project ?? '');
   const [query, setQuery] = useState('');
-  const [selectedPath, setSelectedPath] = useState<string | null>(null);
+  // Seeded once from ?file= (FR34/D9 deep link from a feature's related
+  // files) — the tree panel itself doesn't auto-expand to reveal this path,
+  // but the preview/related-context/explanation cards below are all gated
+  // only on selectedPath, so they render correctly regardless.
+  const [searchParams] = useSearchParams();
+  const [selectedPath, setSelectedPath] = useState<string | null>(() => searchParams.get('file'));
   const [graph, setGraph] = useState<CodeGraph>(() => emptyGraph());
 
   const mergeTier = useCallback((map: CodeMapResponse) => setGraph((current) => mergeCodeMap(current, map)), []);
@@ -582,6 +588,16 @@ function CodeMap() {
   };
 
   const selectedNode = selectedPath ? graph.nodes.get(`file:${selectedPath}`) ?? null : null;
+
+  // Brief per-file explanation (FR43/T16 codebase guide) — agent-authored via
+  // describe_files. A path with zero indexed files under it 400s; treat that
+  // as "no explanation available" here rather than the page-level ErrorBanner.
+  const guideQuery = useGetCodebaseGuide(
+    project,
+    { scope: selectedPath ?? '' },
+    { query: { enabled: !!selectedPath, retry: false } as any },
+  );
+  const fileSummary = guideQuery.data?.files?.[0]?.summary ?? null;
 
   // Context entries whose linked_files touch the selected path (FR34).
   const { data: blockersData } = useGetSection(project, 'blockers', undefined, { query: { enabled: !!selectedPath } as any });
@@ -619,7 +635,11 @@ function CodeMap() {
       : rootNodes.map((node) => <TreeNode key={node.id} project={project} node={node} graph={graph} onMerge={mergeTier} onSelect={setSelectedPath} selectedPath={selectedPath} />)}
     </div></section><section className="overflow-hidden rounded-lg border border-[#d8dcd5] bg-[#faf9f4] flex flex-col"><div className="flex items-center justify-between border-b border-[#e4e6df] px-5 py-4 shrink-0"><div><p className="font-mono text-[10px] uppercase tracking-[.12em] text-[#7d898d]">File preview</p><h2 className="mt-1 text-sm font-bold">{selectedPath ?? 'No file selected'}</h2></div><div className="flex items-center gap-2"><button data-testid="button-copy-source" onClick={copySource} disabled={!sourceData?.content} className="rounded p-1.5 text-[#879397] hover:bg-[#e8edff] hover:text-[#3155d8] disabled:cursor-not-allowed disabled:opacity-40"><Copy size={14} /></button></div></div><div className="overflow-auto bg-[#202f35] p-5 text-[#d6ded6] grow flex flex-col">
       {sourceData ? <pre data-testid="text-source-preview" className="font-mono text-xs leading-7">{(sourceData.content || '').split('\n').map((line: string, index: number) => <div key={index} className="flex"><span className="mr-5 inline-block w-5 shrink-0 select-none text-right text-[#64777b]">{String(index + 1).padStart(2, '0')}</span><code>{line || ' '}</code></div>)}</pre> : <div className="text-sm text-[#64777b] m-auto">Select a file to preview</div>}
-    </div></section><aside className="space-y-4"><section className="rounded-lg border border-[#d8dcd5] bg-[#faf9f4]"><div className="border-b border-[#e4e6df] px-4 py-4"><p className="font-mono text-[10px] uppercase tracking-[.12em] text-[#7d898d]">Related context</p><h2 className="mt-1 text-sm font-bold">What connects here</h2></div><div className="space-y-2 p-3">
+    </div></section><aside className="space-y-4"><section data-testid="card-file-explanation" className="rounded-lg border border-[#d8dcd5] bg-[#faf9f4]"><div className="border-b border-[#e4e6df] px-4 py-4"><p className="font-mono text-[10px] uppercase tracking-[.12em] text-[#7d898d]">What this file does</p><h2 className="mt-1 text-sm font-bold">File explanation</h2></div><div className="p-3">
+      {!selectedPath && <p className="text-xs text-[#7d898d] italic">Select a file to see its explanation.</p>}
+      {selectedPath && fileSummary && <p className="text-xs leading-5 text-[#4a5a60]">{fileSummary}</p>}
+      {selectedPath && !fileSummary && <p className="text-xs text-[#7d898d] italic">No explanation documented yet. Ask an agent to add one via describe_files.</p>}
+    </div></section><section className="rounded-lg border border-[#d8dcd5] bg-[#faf9f4]"><div className="border-b border-[#e4e6df] px-4 py-4"><p className="font-mono text-[10px] uppercase tracking-[.12em] text-[#7d898d]">Related context</p><h2 className="mt-1 text-sm font-bold">What connects here</h2></div><div className="space-y-2 p-3">
       {!selectedPath && <p className="text-xs text-[#7d898d] italic">Select a file to see linked context.</p>}
       {selectedPath && related.length === 0 && <p className="text-xs text-[#7d898d] italic">Nothing links to this file yet.</p>}
       {related.map(({ section, entry }) => <div key={entry.id} data-testid={`related-entry-${entry.id}`} className="rounded-md border border-[#e4e6df] bg-[#eef0ea] p-2.5"><div className="flex items-center gap-2"><Badge tone="blue">{section}</Badge>{entry.status === 'resolved' && <span className="text-[10px] text-[#78868b]">resolved</span>}</div><p className={cx('mt-1.5 text-xs leading-5 text-[#4a5a60]', entry.status === 'resolved' && 'line-through opacity-70')}>{entry.headline}</p></div>)}
@@ -728,7 +748,7 @@ function NotFound() { return <div className="flex min-h-[100dvh] items-center ju
 
 function RoutedErrorBoundary({ children }: { children: ReactNode }) { const [location] = useLocation(); return <ErrorBoundary resetKey={location}>{children}</ErrorBoundary>; }
 function Router() {
-  return <RoutedErrorBoundary><Switch><Route path="/" component={HomePicker} /><Route path="/settings/ai"><AppShell><AISettings /></AppShell></Route><Route path="/projects/:project/dashboard"><AppShell><Dashboard /></AppShell></Route><Route path="/projects/:project/requirements"><AppShell><Requirements /></AppShell></Route><Route path="/projects/:project/features"><AppShell><Features /></AppShell></Route><Route path="/projects/:project/plans"><AppShell><Plans /></AppShell></Route><Route path="/projects/:project/index"><AppShell><CodeIndex /></AppShell></Route><Route path="/projects/:project/code-map"><AppShell><CodeMap /></AppShell></Route><Route path="/projects/:project/token-savings"><AppShell><TokenSavings /></AppShell></Route><Route component={NotFound} /></Switch></RoutedErrorBoundary>;
+  return <RoutedErrorBoundary><Switch><Route path="/" component={HomePicker} /><Route path="/settings/ai"><AppShell><AISettings /></AppShell></Route><Route path="/projects/:project/dashboard"><AppShell><Dashboard /></AppShell></Route><Route path="/projects/:project/requirements"><AppShell><Requirements /></AppShell></Route><Route path="/projects/:project/features"><AppShell><Features /></AppShell></Route><Route path="/projects/:project/features/:id"><AppShell><FeatureDetail /></AppShell></Route><Route path="/projects/:project/plans"><AppShell><Plans /></AppShell></Route><Route path="/projects/:project/index"><AppShell><CodeIndex /></AppShell></Route><Route path="/projects/:project/code-map"><AppShell><CodeMap /></AppShell></Route><Route path="/projects/:project/token-savings"><AppShell><TokenSavings /></AppShell></Route><Route component={NotFound} /></Switch></RoutedErrorBoundary>;
 }
 function App() { return <QueryClientProvider client={queryClient}><TooltipProvider><WouterRouter base={import.meta.env.BASE_URL.replace(/\/$/, '')}><Router /></WouterRouter><Toaster /></TooltipProvider></QueryClientProvider>; }
 export default App;

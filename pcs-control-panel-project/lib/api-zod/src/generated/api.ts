@@ -178,7 +178,8 @@ export const GetSectionResponse = zod.object({
   "requirement_status": zod.enum(['not-started', 'in-progress', 'blocked', 'done']).nullable(),
   "linked_files": zod.array(zod.string()),
   "related_entry_id": zod.string().nullable(),
-  "req_key": zod.string().nullable()
+  "req_key": zod.string().nullable(),
+  "diagram": zod.string().nullable()
 }))
 })
 
@@ -213,7 +214,8 @@ export const AddEntryResponse = zod.object({
   "requirement_status": zod.enum(['not-started', 'in-progress', 'blocked', 'done']).nullable(),
   "linked_files": zod.array(zod.string()),
   "related_entry_id": zod.string().nullable(),
-  "req_key": zod.string().nullable()
+  "req_key": zod.string().nullable(),
+  "diagram": zod.string().nullable()
 }).and(zod.object({
   "requirements_file": zod.object({
   "path": zod.string(),
@@ -259,7 +261,8 @@ export const UpdateEntryResponse = zod.object({
   "requirement_status": zod.enum(['not-started', 'in-progress', 'blocked', 'done']).nullable(),
   "linked_files": zod.array(zod.string()),
   "related_entry_id": zod.string().nullable(),
-  "req_key": zod.string().nullable()
+  "req_key": zod.string().nullable(),
+  "diagram": zod.string().nullable()
 }).and(zod.object({
   "requirements_file": zod.object({
   "path": zod.string(),
@@ -296,7 +299,8 @@ export const ResolveEntryResponse = zod.object({
   "requirement_status": zod.enum(['not-started', 'in-progress', 'blocked', 'done']).nullable(),
   "linked_files": zod.array(zod.string()),
   "related_entry_id": zod.string().nullable(),
-  "req_key": zod.string().nullable()
+  "req_key": zod.string().nullable(),
+  "diagram": zod.string().nullable()
 }).and(zod.object({
   "requirements_file": zod.object({
   "path": zod.string(),
@@ -858,6 +862,60 @@ export const GetSourceResponse = zod.object({
   "language": zod.string().nullable(),
   "content": zod.string(),
   "truncated": zod.boolean()
+})
+
+
+/**
+ * @summary Agent-authored per-file notes plus index facts (FR43, T16)
+ */
+export const GetCodebaseGuideParams = zod.object({
+  "project": zod.coerce.string().describe('Project name or id (URL-encoded by the client)')
+})
+
+export const GetCodebaseGuideQueryParams = zod.object({
+  "scope": zod.coerce.string().optional(),
+  "include": zod.coerce.string().optional()
+})
+
+export const GetCodebaseGuideResponse = zod.object({
+  "project": zod.string(),
+  "scope": zod.string().nullable(),
+  "include": zod.string(),
+  "coverage": zod.object({
+  "documented": zod.number(),
+  "total": zod.number(),
+  "stale": zod.number()
+}),
+  "generated_from": zod.object({
+  "indexed": zod.boolean(),
+  "last_full_at": zod.string().nullish(),
+  "last_incremental_at": zod.string().nullish(),
+  "last_commit": zod.string().nullish(),
+  "source": zod.string().nullish()
+}),
+  "files": zod.array(zod.object({
+  "path": zod.string(),
+  "language": zod.string().nullable(),
+  "loc": zod.number(),
+  "symbols": zod.array(zod.string()),
+  "imports": zod.array(zod.string()),
+  "imported_by": zod.array(zod.string()),
+  "summary": zod.string().nullable(),
+  "note": zod.object({
+  "summary": zod.string(),
+  "updated_by": zod.string(),
+  "updated_at": zod.string().nullable(),
+  "content_hash": zod.string()
+}).nullable(),
+  "stale": zod.boolean()
+})),
+  "artifact": zod.object({
+  "path": zod.string().nullable(),
+  "file_writable": zod.boolean(),
+  "error": zod.string().nullable()
+}),
+  "file_path": zod.string().nullable(),
+  "file_writable": zod.boolean()
 })
 
 

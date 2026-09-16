@@ -31,6 +31,7 @@ import type {
   ClaimResult,
   ClaimTaskInput,
   CodeMap,
+  CodebaseGuide,
   CompleteTaskInput,
   CreateCriterionInput,
   CreateInvariantInput,
@@ -42,6 +43,7 @@ import type {
   GeneratePlanDraftInput,
   GeneratePlanDraftResult,
   GetCodeMapParams,
+  GetCodebaseGuideParams,
   GetSectionParams,
   GetSourceParams,
   GetTokenSavingsLogParams,
@@ -2287,6 +2289,95 @@ export function useGetSource<TData = Awaited<ReturnType<typeof getSource>>, TErr
  ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
 
   const queryOptions = getGetSourceQueryOptions(project,params,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getGetCodebaseGuideUrl = (project: string,
+    params?: GetCodebaseGuideParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/projects/${project}/codebase-guide?${stringifiedParams}` : `/api/projects/${project}/codebase-guide`
+}
+
+/**
+ * @summary Agent-authored per-file notes plus index facts (FR43, T16)
+ */
+export const getCodebaseGuide = async (project: string,
+    params?: GetCodebaseGuideParams, options?: Parameters<typeof customFetch>[1]): Promise<CodebaseGuide> => {
+
+  return customFetch<CodebaseGuide>(getGetCodebaseGuideUrl(project,params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetCodebaseGuideQueryKey = (project: string,
+    params?: GetCodebaseGuideParams,) => {
+    return [
+    `/api/projects/${project}/codebase-guide`, ...(params ? [params] : [])
+    ] as const;
+    }
+
+
+export const getGetCodebaseGuideQueryOptions = <TData = Awaited<ReturnType<typeof getCodebaseGuide>>, TError = ErrorType<ErrorBody>>(project: string,
+    params?: GetCodebaseGuideParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getCodebaseGuide>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetCodebaseGuideQueryKey(project,params);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getCodebaseGuide>>> = ({ signal }) => getCodebaseGuide(project,params, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: project !== null && project !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getCodebaseGuide>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetCodebaseGuideQueryResult = NonNullable<Awaited<ReturnType<typeof getCodebaseGuide>>>
+export type GetCodebaseGuideQueryError = ErrorType<ErrorBody>
+
+
+/**
+ * @summary Agent-authored per-file notes plus index facts (FR43, T16)
+ */
+
+export function useGetCodebaseGuide<TData = Awaited<ReturnType<typeof getCodebaseGuide>>, TError = ErrorType<ErrorBody>>(
+ project: string,
+    params?: GetCodebaseGuideParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getCodebaseGuide>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetCodebaseGuideQueryOptions(project,params,options)
 
   const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
 

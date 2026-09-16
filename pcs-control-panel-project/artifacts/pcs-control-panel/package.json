@@ -75,5 +75,8 @@
     "vitest": "^5.0.1",
     "wouter": "^3.3.5",
     "zod": "catalog:"
+  },
+  "dependencies": {
+    "mermaid": "^12.0.0"
   }
 }

@@ -570,6 +570,37 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorBody"
 
+  /projects/{project}/codebase-guide:
+    get:
+      operationId: getCodebaseGuide
+      tags: [codemap]
+      summary: Agent-authored per-file notes plus index facts (FR43, T16)
+      parameters:
+        - $ref: "#/components/parameters/ProjectRef"
+        - name: scope
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: include
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Codebase guide, scoped to one file/subtree or the whole project
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CodebaseGuide"
+        "400":
+          description: Scope matches zero indexed files
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorBody"
+
   /projects/{project}/search:
     get:
       operationId: searchCode
@@ -1644,6 +1675,7 @@ components:
         - linked_files
         - related_entry_id
         - req_key
+        - diagram
       properties:
         id:
           type: string
@@ -1677,6 +1709,9 @@ components:
           type: string
           nullable: true
         req_key:
+          type: string
+          nullable: true
+        diagram:
           type: string
           nullable: true
 
@@ -2093,6 +2128,132 @@ components:
           type: array
           items:
             type: string
+
+    CodebaseGuideProvenance:
+      type: object
+      required: [indexed]
+      properties:
+        indexed:
+          type: boolean
+        last_full_at:
+          type: string
+          nullable: true
+        last_incremental_at:
+          type: string
+          nullable: true
+        last_commit:
+          type: string
+          nullable: true
+        source:
+          type: string
+          nullable: true
+
+    CodebaseGuideNote:
+      type: object
+      required: [summary, updated_by, updated_at, content_hash]
+      properties:
+        summary:
+          type: string
+        updated_by:
+          type: string
+        updated_at:
+          type: string
+          nullable: true
+        content_hash:
+          type: string
+
+    CodebaseGuideFile:
+      type: object
+      required: [path, language, loc, symbols, imports, imported_by, summary, note, stale]
+      properties:
+        path:
+          type: string
+        language:
+          type: string
+          nullable: true
+        loc:
+          type: number
+        symbols:
+          type: array
+          items:
+            type: string
+        imports:
+          type: array
+          items:
+            type: string
+        imported_by:
+          type: array
+          items:
+            type: string
+        summary:
+          type: string
+          nullable: true
+        note:
+          allOf:
+            - $ref: "#/components/schemas/CodebaseGuideNote"
+          nullable: true
+        stale:
+          type: boolean
+
+    CodebaseGuideCoverage:
+      type: object
+      required: [documented, total, stale]
+      properties:
+        documented:
+          type: number
+        total:
+          type: number
+        stale:
+          type: number
+
+    CodebaseGuideArtifact:
+      type: object
+      required: [path, file_writable, error]
+      properties:
+        path:
+          type: string
+          nullable: true
+        file_writable:
+          type: boolean
+        error:
+          type: string
+          nullable: true
+
+    CodebaseGuide:
+      type: object
+      required:
+        - project
+        - scope
+        - include
+        - coverage
+        - generated_from
+        - files
+        - artifact
+        - file_path
+        - file_writable
+      properties:
+        project:
+          type: string
+        scope:
+          type: string
+          nullable: true
+        include:
+          type: string
+        coverage:
+          $ref: "#/components/schemas/CodebaseGuideCoverage"
+        generated_from:
+          $ref: "#/components/schemas/CodebaseGuideProvenance"
+        files:
+          type: array
+          items:
+            $ref: "#/components/schemas/CodebaseGuideFile"
+        artifact:
+          $ref: "#/components/schemas/CodebaseGuideArtifact"
+        file_path:
+          type: string
+          nullable: true
+        file_writable:
+          type: boolean
 
     SourceFile:
       type: object

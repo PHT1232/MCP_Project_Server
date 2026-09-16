@@ -135,6 +135,7 @@ export interface Entry {
   linked_files: string[];
   related_entry_id: string | null;
   req_key: string | null;
+  diagram: string | null;
 }
 
 export interface SectionResponse {
@@ -315,6 +316,57 @@ export interface CodeMap {
   dependents?: string[];
   stats: CodeMapStats;
   overlay_legend: string[];
+}
+
+export interface CodebaseGuideProvenance {
+  indexed: boolean;
+  last_full_at?: string | null;
+  last_incremental_at?: string | null;
+  last_commit?: string | null;
+  source?: string | null;
+}
+
+export interface CodebaseGuideNote {
+  summary: string;
+  updated_by: string;
+  updated_at: string | null;
+  content_hash: string;
+}
+
+export interface CodebaseGuideFile {
+  path: string;
+  language: string | null;
+  loc: number;
+  symbols: string[];
+  imports: string[];
+  imported_by: string[];
+  summary: string | null;
+  note: CodebaseGuideNote | null;
+  stale: boolean;
+}
+
+export interface CodebaseGuideCoverage {
+  documented: number;
+  total: number;
+  stale: number;
+}
+
+export interface CodebaseGuideArtifact {
+  path: string | null;
+  file_writable: boolean;
+  error: string | null;
+}
+
+export interface CodebaseGuide {
+  project: string;
+  scope: string | null;
+  include: string;
+  coverage: CodebaseGuideCoverage;
+  generated_from: CodebaseGuideProvenance;
+  files: CodebaseGuideFile[];
+  artifact: CodebaseGuideArtifact;
+  file_path: string | null;
+  file_writable: boolean;
 }
 
 export interface SourceFile {
@@ -852,6 +904,11 @@ depth?: number;
 
 export type GetSourceParams = {
 path: string;
+};
+
+export type GetCodebaseGuideParams = {
+scope?: string;
+include?: string;
 };
 
 export type SearchCodeParams = {

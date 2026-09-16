@@ -71,9 +71,16 @@ function recomputeFans(graph: CodeGraph): void {
  * Merge one `get_code_map` tier into the graph and return a NEW graph.
  *
  * - Top tier (`map.scope` null): the graph is (re)seeded from this response.
- * - Subtree (`map.scope` a dir path): the aggregate `dir:<scope>` node and its
- *   tier edges are dropped and replaced by the subtree's own nodes + edges.
- *   Boundary stubs (`outside_scope`) never overwrite a real node already present.
+ * - Subtree (`map.scope` a dir path): the server's response for a scope
+ *   contains that directory's CHILDREN, never the scope node itself (AC20 —
+ *   "the response only ever describes the requested tier"). So the scope
+ *   node must be kept as-is (its own rollup stats stay valid regardless of
+ *   how deep its subtree has been expanded) — only its now-stale aggregate-
+ *   tier edges are dropped and replaced by the subtree's own, finer edges.
+ *   Deleting the scope node itself here previously made the clicked
+ *   directory vanish from the tree, since nothing in the response ever adds
+ *   it back. Boundary stubs (`outside_scope`) never overwrite a real node
+ *   already present.
  * - File scope (`map.scope_kind === "file"`) does not belong on the graph — the
  *   graph is returned unchanged (the caller uses that payload for the inspector).
  */
@@ -98,7 +105,6 @@ export function mergeCodeMap(graph: CodeGraph, map: CodeMap): CodeGraph {
 
   const next = cloneGraph(graph);
   const aggregateId = `dir:${scope}`;
-  next.nodes.delete(aggregateId);
   for (const key of [...next.edges.keys()]) {
     const edge = next.edges.get(key);
     if (edge && (edge.source === aggregateId || edge.target === aggregateId)) {

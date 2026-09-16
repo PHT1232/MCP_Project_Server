@@ -154,7 +154,12 @@ describe("mergeCodeMap", () => {
     expect(result.nodes.get("file:a.ts")?.loc).toBe(0);
   });
 
-  it("subtree merge drops the aggregate dir node, replaces its tier edges, and marks the ancestor expanded", () => {
+  it("subtree merge keeps the clicked directory node, replaces its tier edges, and marks it expanded", () => {
+    // Regression: the server's response for a scope contains that
+    // directory's CHILDREN only, never the scope node itself (matches the
+    // real get_code_map(scope="...") contract) — a fixture that (wrongly)
+    // re-included the scope node in its own subtree response masked a bug
+    // where the clicked folder disappeared from the tree entirely.
     const top = mergeCodeMap(
       emptyGraph(),
       codeMap({
@@ -165,15 +170,14 @@ describe("mergeCodeMap", () => {
 
     const subtree = codeMap({
       scope: "src",
-      nodes: [
-        node({ id: "dir:src", kind: "directory", path: "src", has_children: true }),
-        node({ id: "file:src/a.ts", kind: "file", path: "src/a.ts" }),
-      ],
+      nodes: [node({ id: "file:src/a.ts", kind: "file", path: "src/a.ts" })],
       edges: [edge("dir:src", "file:src/a.ts", "contains")],
     });
 
     const graph = mergeCodeMap(top, subtree);
 
+    // The clicked directory itself must still be present.
+    expect(graph.nodes.has("dir:src")).toBe(true);
     // The old aggregate-tier edge to dir:other is gone.
     expect(graph.edges.has(edgeKey({ source: "dir:src", target: "dir:other", kind: "contains" }))).toBe(
       false,
@@ -223,10 +227,7 @@ describe("mergeCodeMap", () => {
       top,
       codeMap({
         scope: "src",
-        nodes: [
-          node({ id: "dir:src", kind: "directory", path: "src", has_children: true }),
-          node({ id: "dir:src/nested", kind: "directory", path: "src/nested", has_children: true }),
-        ],
+        nodes: [node({ id: "dir:src/nested", kind: "directory", path: "src/nested", has_children: true })],
         edges: [],
       }),
     );
@@ -236,10 +237,7 @@ describe("mergeCodeMap", () => {
       expandedOnce,
       codeMap({
         scope: "src/nested",
-        nodes: [
-          node({ id: "dir:src/nested", kind: "directory", path: "src/nested", has_children: true }),
-          node({ id: "file:src/nested/x.ts", kind: "file", path: "src/nested/x.ts" }),
-        ],
+        nodes: [node({ id: "file:src/nested/x.ts", kind: "file", path: "src/nested/x.ts" })],
         edges: [],
       }),
     );

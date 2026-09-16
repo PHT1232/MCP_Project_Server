@@ -37,6 +37,7 @@ export * from './createCriterionInput';
 export * from './createInvariantInput';
 export * from './createPlanInput';
 export * from './createPlanWithTasksInput';
+export * from './deletedProject';
 export * from './dependencySpecInput';
 export * from './embeddingSettings';
 export * from './embeddingSettingsInput';

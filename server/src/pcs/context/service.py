@@ -11,7 +11,7 @@ import logging
 from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import select
+from sqlalchemy import delete, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from pcs.ai_settings import load_runtime_ai_settings
@@ -57,7 +57,15 @@ from pcs.context.validation import (
     validate_requirement_status,
     validate_section,
 )
-from pcs.db.models import ContextEntry, ContextEntryRevision, Project
+from pcs.db.models import (
+    ContextEntry,
+    ContextEntryRevision,
+    Project,
+    RequirementContractRevision,
+    RequirementEvidence,
+    RequirementViolation,
+)
+from pcs.planning.models import PlanTaskEvent
 
 # Re-export names T00 tests and transports already import from this module.
 __all__ = [
@@ -72,6 +80,7 @@ __all__ = [
     "archive_entry",
     "configure_project",
     "delete_entry",
+    "delete_project",
     "get_entry",
     "get_entry_history",
     "get_project_briefing",
@@ -88,6 +97,10 @@ __all__ = [
 ]
 
 logger = logging.getLogger("pcs")
+
+# Transaction-local GUC that lets append-only DELETE triggers fire during
+# project unregister only (Alembic 0027). Single-row mutation still raises.
+PROJECT_TEARDOWN_GUC = "pcs.project_teardown"
 
 
 def _now() -> datetime:
@@ -332,6 +345,59 @@ async def register_project(
     _record_revision(session, entry, ACTION_CREATE, author)
     await session.flush()
     return _as_summary(project, status_line=await _status_line(session, project))
+
+
+async def _purge_restrict_children(session: AsyncSession, project_id: str) -> None:
+    """Delete RESTRICT/append-only children so the project row can CASCADE.
+
+    Order matters: evidence references contract revisions and criteria;
+    violations reference invariants; plan_task_events reference plan_tasks.
+    """
+    await session.execute(
+        delete(RequirementEvidence).where(RequirementEvidence.project_id == project_id)
+    )
+    await session.execute(
+        delete(RequirementViolation).where(RequirementViolation.project_id == project_id)
+    )
+    await session.execute(
+        delete(RequirementContractRevision).where(
+            RequirementContractRevision.project_id == project_id
+        )
+    )
+    await session.execute(delete(PlanTaskEvent).where(PlanTaskEvent.project_id == project_id))
+    await session.flush()
+
+
+async def delete_project(
+    session: AsyncSession,
+    *,
+    project: str,
+    author: str = "agent",
+) -> ProjectSummary:
+    """Hard-unregister a project and all pcs-owned rows; never touch the repo.
+
+    Complements FR14. The filesystem at ``root_path`` is left unchanged
+    (including ``.project-context/requirements.md``). After this call the
+    name is reusable and project-scoped reads raise
+    :class:`ProjectNotFoundError` (D3, AC16).
+    """
+    row = await resolve_project(session, project, for_update=True)
+    summary = _as_summary(row, status_line=await _status_line(session, row))
+
+    from pcs.index.watch import stop_watch
+
+    await stop_watch(row.id)
+    await session.execute(
+        text("SELECT set_config(:guc, 'on', true)"), {"guc": PROJECT_TEARDOWN_GUC}
+    )
+    await _purge_restrict_children(session, row.id)
+    await session.delete(row)
+    await session.flush()
+    logger.info(
+        "project_deleted",
+        extra={"context": {"project": summary.id, "name": summary.name, "author": author}},
+    )
+    return summary
 
 
 async def configure_project(

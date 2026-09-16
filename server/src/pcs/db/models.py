@@ -329,8 +329,9 @@ class RequirementContractRevision(Base):
     """Append-only audit row for one contract create/update/delete (T10).
 
     Retention: rows outlive soft-delete of the parent requirement. Hard-delete of
-    that requirement is RESTRICTed while history exists. Project teardown may
-    CASCADE via ``project_id``. PostgreSQL rejects UPDATE and DELETE (append-only trigger).
+    that requirement is RESTRICTed while history exists. PostgreSQL rejects
+    UPDATE and DELETE (append-only trigger) unless the transaction-local GUC
+    ``pcs.project_teardown`` is ``on`` — used only by ``delete_project``.
     """
 
     __tablename__ = "requirement_contract_revisions"

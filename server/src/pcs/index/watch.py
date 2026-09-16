@@ -70,6 +70,16 @@ async def start_all() -> None:
         await ensure_watch(project.id, project.root_path)
 
 
+async def stop_watch(project_id: str) -> None:
+    """Cancel the in-process watcher for one project, if any."""
+    async with _lock:
+        task = _tasks.pop(project_id, None)
+    if task is None:
+        return
+    task.cancel()
+    await asyncio.gather(task, return_exceptions=True)
+
+
 async def stop_all() -> None:
     """Cancel every watcher (HTTP shutdown)."""
     async with _lock:

@@ -213,6 +213,24 @@ def _register_lifecycle_tools(mcp: FastMCP) -> None:
 
         return await run_tool("configure_project", project, ctx, op)
 
+    @mcp.tool()
+    async def delete_project(
+        project: str,
+        ctx: Context[Any, Any] | None = None,
+    ) -> dict[str, object]:
+        """Unregister a project and all pcs-owned data. The repo on disk is not touched.
+
+        Args:
+            project: Exact project name or id (D3). Required — there is no implicit
+                default, so an agent cannot accidentally wipe the wrong project.
+        """
+
+        async def op(session: AsyncSession) -> dict[str, object]:
+            summary = await service.delete_project(session, project=project, author=caller(ctx))
+            return {"deleted": True, "id": summary.id, "name": summary.name}
+
+        return await run_tool("delete_project", project, ctx, op)
+
 
 def _register_overview_focus(mcp: FastMCP) -> None:
     @mcp.tool()

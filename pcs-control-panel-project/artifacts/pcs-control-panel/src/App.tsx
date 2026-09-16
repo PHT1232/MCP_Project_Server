@@ -13,7 +13,7 @@ import {
 import { Link, Route, Switch, useLocation, useParams, useSearchParams, Router as WouterRouter } from 'wouter';
 
 import {
-  useListProjects, useRegisterProject,
+  useListProjects, useRegisterProject, useDeleteProject,
   useGetBriefing, useGetSection, useSetFocus, useAddEntry, useResolveEntry,
   useListRequirements, useReviewRequirementCompliance, useSyncRequirements, useUpdateEntry,
   useGetIndexStatus, useReindex,
@@ -23,6 +23,7 @@ import {
   type AiSettings, type EmbeddingSettings, type SummarySettings,
   type CodeMap as CodeMapResponse, type Entry, type SyncReport,
 } from '@workspace/api-client-react';
+import { canConfirmProjectDelete } from './lib/deleteProject';
 import { emptyGraph, mergeCodeMap, overlayTone, locateHit, relatedEntries, type CodeGraph, type MergedNode } from './lib/codemap';
 import Features from './pages/Features';
 import FeatureDetail from './pages/FeatureDetail';
@@ -120,7 +121,10 @@ export function ErrorBanner({ message, onRetry, testId = 'banner-load-error' }: 
 function AppShell({ children }: { children: ReactNode }) {
   const [location, setLocation] = useLocation();
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [pendingDelete, setPendingDelete] = useState(false);
+  const [confirmName, setConfirmName] = useState('');
   const { data: projects, isLoading, isError, error, refetch } = useListProjects();
+  const deleteMutation = useDeleteProject();
 
   const currentProjectName = decodeURIComponent(location.split('/projects/')[1]?.split('/')[0] ?? '');
   const currentProject = projects?.find((project) => project.name === currentProjectName) ?? projects?.[0];
@@ -177,6 +181,9 @@ function AppShell({ children }: { children: ReactNode }) {
           </select><ChevronDown className="pointer-events-none absolute right-2.5 top-3 text-[#9aaba6]" size={15} />
         </div>
         <div className="mt-2 flex items-center gap-2 px-1 text-[11px] text-[#99aaa5]"><span className="h-1.5 w-1.5 rounded-full bg-[#77c6a5]" />{currentProject.name}</div>
+        <button type="button" data-testid="button-delete-active-project" onClick={() => { setPendingDelete(true); setConfirmName(''); }} className="mt-3 inline-flex w-full items-center justify-center gap-2 rounded-md border border-[#5a3d3a] bg-[#2b1f21] px-3 py-2 text-xs font-medium text-[#e9c1bc] hover:bg-[#3a2729]">
+          <Trash2 size={13} />Unregister project
+        </button>
       </div>
       <nav className="flex-1 space-y-1 p-3">
         <p className="px-3 pb-2 pt-2 text-[10px] font-semibold uppercase tracking-[.16em] text-[#71847e]">Workspace</p>
@@ -194,7 +201,37 @@ function AppShell({ children }: { children: ReactNode }) {
         <div className="flex items-center gap-3"><button data-testid="button-open-mobile-nav" className="rounded-md border border-[#d0d5d0] bg-[#faf9f4] p-2 md:hidden" onClick={() => setMobileOpen(true)}><Menu size={18} /></button><div className="hidden md:block"><p className="text-[10px] font-semibold uppercase tracking-[.16em] text-[#87938e]">Operator console</p><p className="font-mono text-xs text-[#53646a]">{currentProject.root_path}</p></div><div className="md:hidden"><p className="font-bold tracking-tight">PCS <span className="font-normal text-[#748087]">/ {currentProject.name}</span></p></div></div>
         <div className="flex items-center gap-2.5"><Button testId="button-refresh-workspace" variant="secondary" size="sm" onClick={() => queryClient.invalidateQueries()}><RefreshCw size={14} />Refresh</Button><Link href="/settings/ai" data-testid="link-header-settings" className="rounded-md border border-[#d0d5d0] bg-[#faf9f4] p-2 text-[#54646a] hover:text-[#3155d8]"><Settings2 size={16} /></Link></div>
       </header>
-      <main className="mx-auto max-w-[1440px] px-4 py-6 md:px-8 md:py-8">{children}</main>
+      <main className="mx-auto max-w-[1440px] px-4 py-6 md:px-8 md:py-8">
+        {pendingDelete && (
+          <DeleteProjectConfirm
+            projectName={currentProject.name}
+            typed={confirmName}
+            pending={deleteMutation.isPending}
+            onTyped={setConfirmName}
+            onCancel={() => { setPendingDelete(false); setConfirmName(''); }}
+            onConfirm={() => {
+              if (!canConfirmProjectDelete(confirmName, currentProject.name)) {
+                return;
+              }
+              const target = currentProject.name;
+              deleteMutation.mutate(
+                { project: target },
+                {
+                  onSuccess: () => {
+                    queryClient.invalidateQueries({ queryKey: ['/api/projects'] });
+                    notify('Project unregistered', `${target} was removed from PCS. Files on disk were not changed.`);
+                    setPendingDelete(false);
+                    setConfirmName('');
+                    setLocation('/');
+                  },
+                  onError: (err) => notifyError('Delete project', err),
+                }
+              );
+            }}
+          />
+        )}
+        {children}
+      </main>
     </div>
   </div>;
 }
@@ -209,13 +246,56 @@ export function ProjectTabs({ active }: { active: string }) {
   return <div className="mb-6 flex gap-1 overflow-x-auto rounded-lg border border-[#d7dbd4] bg-[#e7e9e2] p-1">{tabs.map(([id, label]) => <Link key={id} href={`/projects/${encodeURIComponent(project)}/${id}`} data-testid={`tab-project-${id}`} className={cx('whitespace-nowrap rounded-md px-3 py-2 text-xs font-semibold transition-colors md:px-4', active === id ? 'bg-[#faf9f4] text-[#1e3036] shadow-[0_1px_2px_rgba(31,43,45,.08)]' : 'text-[#758187] hover:text-[#34464c]')}>{label}</Link>)}</div>;
 }
 
+function DeleteProjectConfirm({
+  projectName,
+  typed,
+  pending,
+  onTyped,
+  onCancel,
+  onConfirm,
+}: {
+  projectName: string;
+  typed: string;
+  pending: boolean;
+  onTyped: (value: string) => void;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  const ready = canConfirmProjectDelete(typed, projectName);
+  return (
+    <div data-testid="panel-delete-project-confirm" className="mb-5 rounded-lg border border-[#e9c1bc] bg-[#f7e1dd] p-4">
+      <p className="text-sm text-[#97433d]">
+        Unregister <strong>{projectName}</strong> from PCS. This removes stored context, index, and plans.
+        Files on disk are not deleted. Type the project name to confirm.
+      </p>
+      <input
+        data-testid="input-delete-project-confirm"
+        value={typed}
+        onChange={(event) => onTyped(event.target.value)}
+        placeholder={projectName}
+        className="mt-3 h-10 w-full rounded-md border border-[#e9c1bc] bg-[#faf9f4] px-3 text-sm outline-none focus:border-[#97433d]"
+      />
+      <div className="mt-3 flex flex-wrap gap-2">
+        <Button testId="button-cancel-delete-project" variant="secondary" onClick={onCancel}>Cancel</Button>
+        <Button testId="button-confirm-delete-project" variant="danger" disabled={!ready || pending} onClick={onConfirm}>
+          {pending ? <Loader2 className="animate-spin" size={15} /> : <Trash2 size={15} />}
+          Delete from PCS
+        </Button>
+      </div>
+    </div>
+  );
+}
+
 function HomePicker() {
   const [showForm, setShowForm] = useState(false);
   const { data: projectsState = [], isLoading: projectsLoading, isError: projectsErrored, error: projectsError, refetch: refetchProjects } = useListProjects();
   const registerMutation = useRegisterProject();
+  const deleteMutation = useDeleteProject();
   const [name, setName] = useState('');
   const [path, setPath] = useState('');
-  
+  const [pendingDelete, setPendingDelete] = useState<string | null>(null);
+  const [confirmName, setConfirmName] = useState('');
+
   const loading = registerMutation.isPending;
   const register = () => {
     const trimmedName = name.trim();
@@ -238,14 +318,33 @@ function HomePicker() {
       }
     );
   };
-  
+  const confirmDelete = () => {
+    if (pendingDelete === null || !canConfirmProjectDelete(confirmName, pendingDelete)) {
+      return;
+    }
+    const target = pendingDelete;
+    deleteMutation.mutate(
+      { project: target },
+      {
+        onSuccess: () => {
+          queryClient.invalidateQueries({ queryKey: ['/api/projects'] });
+          notify('Project unregistered', `${target} was removed from PCS. Files on disk were not changed.`);
+          setPendingDelete(null);
+          setConfirmName('');
+        },
+        onError: (err) => notifyError('Delete project', err),
+      }
+    );
+  };
+
   return <div className="min-h-[100dvh] overflow-x-hidden bg-[#f1efe8] text-[#203238] paper-grid"><div className="mx-auto max-w-[1240px] px-5 py-8 md:px-10 md:py-12">
     <header className="flex items-center justify-between"><Link href="/" data-testid="link-home-wordmark" className="flex items-center gap-3"><span className="flex h-9 w-9 items-center justify-center rounded-md bg-[#17292f] text-[#d9ae45]"><Boxes size={19} /></span><span><strong className="block text-[18px] tracking-[-.04em]">PCS</strong><span className="font-mono text-[9px] uppercase tracking-[.18em] text-[#748188]">project context server</span></span></Link><Link href="/settings/ai" data-testid="link-home-ai-settings" className="flex items-center gap-2 text-sm font-medium text-[#53646a] hover:text-[#3155d8]"><Sparkles size={16} />AI settings</Link></header>
     <section className="mt-20 max-w-3xl md:mt-28"><p className="font-mono text-[11px] uppercase tracking-[.18em] text-[#3155d8]">Your project memory, assembled</p><h1 className="mt-4 text-5xl font-bold leading-[.98] tracking-[-.06em] text-[#1d3036] md:text-7xl">Pick up where<br /><span className="text-[#3155d8]">the repo left off.</span></h1><p className="mt-6 max-w-xl text-base leading-7 text-[#66757b]">PCS keeps the state of your codebase legible between sessions — briefings, decisions, requirements, and the files that matter now.</p></section>
     <section className="mt-16 md:mt-20"><div className="mb-4 flex items-center justify-between"><div><h2 className="text-lg font-bold tracking-tight">Registered projects</h2><p className="mt-1 text-xs text-[#7b888c]">{projectsState.length} workspaces connected to this PCS instance</p></div><Button testId="button-toggle-register-project" variant="primary" onClick={() => setShowForm((value) => !value)}><Plus size={15} />Register project</Button></div>
       {projectsErrored && <ErrorBanner testId="banner-projects-error" message={projectsError instanceof Error ? projectsError.message : 'Failed to load registered projects.'} onRetry={() => refetchProjects()} />}
       {showForm && <div className="mb-5 grid gap-3 rounded-lg border border-[#cfd7d2] bg-[#faf9f4] p-4 shadow-sm md:grid-cols-[1fr_1.4fr_auto] md:items-end"><label className="text-xs font-semibold text-[#52636a]">Project name<input data-testid="input-register-name" value={name} onChange={(event) => setName(event.target.value)} placeholder="e.g. Northstar API" className="mt-1.5 h-10 w-full rounded-md border border-[#ccd4d1] bg-[#f1efe8] px-3 text-sm outline-none focus:border-[#3155d8]" /></label><label className="text-xs font-semibold text-[#52636a]">Local path<input data-testid="input-register-path" value={path} onChange={(event) => setPath(event.target.value)} placeholder="~/work/northstar-api" className="mt-1.5 h-10 w-full rounded-md border border-[#ccd4d1] bg-[#f1efe8] px-3 font-mono text-xs outline-none focus:border-[#3155d8]" /></label><Button testId="button-submit-register" onClick={register} disabled={loading}>{loading ? <Loader2 className="animate-spin" size={15} /> : <Check size={15} />} {loading ? 'Connecting…' : 'Connect'}</Button></div>}
-      {projectsLoading ? <div className="py-16 text-center"><Loader2 className="animate-spin mx-auto text-[#3155d8]" /></div> : <div className="grid gap-4 lg:grid-cols-3">{projectsState.map((project, index) => <Link href={`/projects/${encodeURIComponent(project.name)}/dashboard`} key={project.name} data-testid={`card-project-${project.name}`} className="group relative overflow-hidden rounded-lg border border-[#d2d8d2] bg-[#faf9f4] p-5 shadow-[0_2px_0_rgba(31,43,45,.04)] transition-all hover:-translate-y-0.5 hover:border-[#9daeb3] hover:shadow-[0_8px_20px_rgba(31,43,45,.07)] animate-enter" style={{ animationDelay: `${index * 60}ms` }}><div className={cx('absolute right-0 top-0 h-20 w-20 translate-x-5 -translate-y-5 rounded-full opacity-50 bg-[#ccd5ff]')} /><div className="relative"><div className="flex items-start justify-between"><span className="flex h-9 w-9 items-center justify-center rounded-md bg-[#e7e9e2] text-[#3155d8]"><Folder size={18} /></span><Badge tone="mint" dot>Synced</Badge></div><h3 className="mt-7 text-xl font-bold tracking-[-.035em]">{project.name}</h3><p className="mt-1 truncate font-mono text-[11px] text-[#77858a]">{project.root_path}</p><div className="mt-7 flex items-center justify-between border-t border-[#e1e4dc] pt-3 text-xs text-[#78858a]"><span className="flex items-center gap-1.5"></span><span className="font-mono"></span></div><ArrowRight className="absolute bottom-0 right-0 text-[#adb8b5] transition-transform group-hover:translate-x-1 group-hover:text-[#3155d8]" size={18} /></div></Link>)}</div>}
+      {pendingDelete && <DeleteProjectConfirm projectName={pendingDelete} typed={confirmName} pending={deleteMutation.isPending} onTyped={setConfirmName} onCancel={() => { setPendingDelete(null); setConfirmName(''); }} onConfirm={confirmDelete} />}
+      {projectsLoading ? <div className="py-16 text-center"><Loader2 className="animate-spin mx-auto text-[#3155d8]" /></div> : <div className="grid gap-4 lg:grid-cols-3">{projectsState.map((project, index) => <div key={project.name} data-testid={`card-project-${project.name}`} className="group relative overflow-hidden rounded-lg border border-[#d2d8d2] bg-[#faf9f4] p-5 shadow-[0_2px_0_rgba(31,43,45,.04)] transition-all hover:-translate-y-0.5 hover:border-[#9daeb3] hover:shadow-[0_8px_20px_rgba(31,43,45,.07)] animate-enter" style={{ animationDelay: `${index * 60}ms` }}><div className={cx('absolute right-0 top-0 h-20 w-20 translate-x-5 -translate-y-5 rounded-full opacity-50 bg-[#ccd5ff]')} /><div className="relative"><div className="flex items-start justify-between"><Link href={`/projects/${encodeURIComponent(project.name)}/dashboard`} className="flex h-9 w-9 items-center justify-center rounded-md bg-[#e7e9e2] text-[#3155d8]"><Folder size={18} /></Link><div className="flex items-center gap-2"><Badge tone="mint" dot>Synced</Badge><button type="button" data-testid={`button-delete-project-${project.name}`} title="Unregister project" onClick={() => { setPendingDelete(project.name); setConfirmName(''); }} className="rounded p-1.5 text-[#9aa6a6] hover:bg-[#f7e1dd] hover:text-[#97433d]"><Trash2 size={15} /></button></div></div><Link href={`/projects/${encodeURIComponent(project.name)}/dashboard`}><h3 className="mt-7 text-xl font-bold tracking-[-.035em]">{project.name}</h3><p className="mt-1 truncate font-mono text-[11px] text-[#77858a]">{project.root_path}</p></Link><div className="mt-7 flex items-center justify-between border-t border-[#e1e4dc] pt-3 text-xs text-[#78858a]"><span className="flex items-center gap-1.5"></span><ArrowRight className="text-[#adb8b5] transition-transform group-hover:translate-x-1 group-hover:text-[#3155d8]" size={18} /></div></div></div>)}</div>}
       {!projectsLoading && !projectsErrored && projectsState.length === 0 && <div className="rounded-lg border border-dashed border-[#c7d0cb] bg-[#faf9f4] py-16 text-center"><Folder className="mx-auto text-[#9eaaa5]" size={28} /><p className="mt-3 font-semibold">No projects registered</p><p className="mt-1 text-sm text-[#7b888c]">Connect a local repository to start building context.</p></div>}
     </section>
     <footer className="mt-20 flex items-center gap-2 font-mono text-[10px] uppercase tracking-[.15em] text-[#96a19d]"><span className="h-1.5 w-1.5 rounded-full bg-[#77c6a5]" />local-first · private by default</footer>

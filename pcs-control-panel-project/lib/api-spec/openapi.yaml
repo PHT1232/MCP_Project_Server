@@ -123,6 +123,27 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorBody"
 
+  /projects/{project}:
+    delete:
+      operationId: deleteProject
+      tags: [projects]
+      summary: Unregister a project (pcs data only; repo on disk is not touched)
+      parameters:
+        - $ref: "#/components/parameters/ProjectRef"
+      responses:
+        "200":
+          description: Deleted project identity
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeletedProject"
+        "404":
+          description: Unknown project
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorBody"
+
   /projects/{project}/briefing:
     get:
       operationId: getBriefing
@@ -1648,6 +1669,17 @@ components:
         root_path:
           type: string
         overview:
+          type: string
+
+    DeletedProject:
+      type: object
+      required: [deleted, id, name]
+      properties:
+        deleted:
+          type: boolean
+        id:
+          type: string
+        name:
           type: string
 
     EntryLifecycle:

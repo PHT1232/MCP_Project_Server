@@ -136,6 +136,20 @@ export const RegisterProjectResponse = zod.object({
 
 
 /**
+ * @summary Unregister a project (pcs data only; repo on disk is not touched)
+ */
+export const DeleteProjectParams = zod.object({
+  "project": zod.coerce.string().describe('Project name or id (URL-encoded by the client)')
+})
+
+export const DeleteProjectResponse = zod.object({
+  "deleted": zod.boolean(),
+  "id": zod.string(),
+  "name": zod.string()
+})
+
+
+/**
  * @summary Assembled project briefing
  */
 export const GetBriefingParams = zod.object({

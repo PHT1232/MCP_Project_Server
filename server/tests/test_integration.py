@@ -109,6 +109,7 @@ EXPECTED_TOOLS = frozenset(
         "get_token_savings_summary",
         "onboard",
         "add_new_project",
+        "delete_project",
     }
 )
 

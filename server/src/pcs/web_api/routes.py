@@ -154,6 +154,21 @@ async def _configure_project(request: Request) -> Response:
     return JSONResponse(_project_json(summary))
 
 
+async def _delete_project(request: Request) -> Response:
+    caller = _caller(request)
+    project = str(request.path_params["project"])
+    try:
+        async with session_scope() as session:
+            summary = await service.delete_project(session, project=project, author=caller)
+    except Exception as exc:
+        log_tool_call(
+            tool="delete_project", project=project, caller=caller, outcome=f"error: {exc}"
+        )
+        return _error_response(exc)
+    log_tool_call(tool="delete_project", project=project, caller=caller, outcome="ok")
+    return JSONResponse({"deleted": True, "id": summary.id, "name": summary.name})
+
+
 async def _briefing(request: Request) -> Response:
     caller = _caller(request)
     project = str(request.path_params["project"])
@@ -413,6 +428,7 @@ _ROUTES: list[tuple[str, list[str], _Handler]] = [
     ("/api/projects", ["GET"], _list_projects),
     ("/api/projects", ["POST"], _register_project),
     ("/api/projects/{project}", ["PATCH"], _configure_project),
+    ("/api/projects/{project}", ["DELETE"], _delete_project),
     ("/api/projects/{project}/briefing", ["GET"], _briefing),
     ("/api/projects/{project}/focus", ["PUT"], _set_focus),
     ("/api/projects/{project}/sections/{section}", ["GET"], _get_section),

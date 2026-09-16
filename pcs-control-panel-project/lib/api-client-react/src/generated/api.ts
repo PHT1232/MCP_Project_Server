@@ -37,6 +37,7 @@ import type {
   CreateInvariantInput,
   CreatePlanInput,
   CreatePlanWithTasksInput,
+  DeletedProject,
   EntryInput,
   EntryWriteResponse,
   ErrorBody,
@@ -513,6 +514,80 @@ export const useRegisterProject = <TError = ErrorType<ErrorBody>,
         TContext
       > => {
       return useMutation(getRegisterProjectMutationOptions(options));
+    }
+
+export const getDeleteProjectUrl = (project: string,) => {
+
+
+
+
+  return `/api/projects/${project}`
+}
+
+/**
+ * @summary Unregister a project (pcs data only; repo on disk is not touched)
+ */
+export const deleteProject = async (project: string, options?: Parameters<typeof customFetch>[1]): Promise<DeletedProject> => {
+
+  return customFetch<DeletedProject>(getDeleteProjectUrl(project),
+  {
+    ...options,
+    method: 'DELETE'
+
+
+  }
+);}
+
+
+
+
+
+export const getDeleteProjectMutationKey = () => ['deleteProject'] as const;
+
+export const getDeleteProjectMutationOptions = <TError = ErrorType<ErrorBody>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteProject>>, TError,DeleteProjectMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof deleteProject>>, TError,DeleteProjectMutationVariables, TContext> => {
+
+const mutationKey = getDeleteProjectMutationKey();
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof deleteProject>>, DeleteProjectMutationVariables> = (props) => {
+          const {project} = props ?? {};
+
+          return  deleteProject(project,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type DeleteProjectMutationResult = NonNullable<Awaited<ReturnType<typeof deleteProject>>>
+
+    export type DeleteProjectMutationError = ErrorType<ErrorBody>
+    export type DeleteProjectMutationVariables = {project: string}
+
+    /**
+ * @summary Unregister a project (pcs data only; repo on disk is not touched)
+ */
+export const useDeleteProject = <TError = ErrorType<ErrorBody>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteProject>>, TError,DeleteProjectMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof deleteProject>>,
+        TError,
+        DeleteProjectMutationVariables,
+        TContext
+      > => {
+      return useMutation(getDeleteProjectMutationOptions(options));
     }
 
 export const getGetBriefingUrl = (project: string,) => {

@@ -11,6 +11,7 @@ Requests may set `X-PCS-Caller`; absent values are logged as `frontend`. Handled
 | `GET /api/health` | none | `{status, bind_mode, bind_host}`. |
 | `GET /api/projects` | none | Array of project summaries. |
 | `POST /api/projects` | JSON: `name`, `root_path`, `overview` | `201` project summary. Registers, indexes an existing root, starts watching, and initializes requirements sync. |
+| `DELETE /api/projects/{project}` | none | `{deleted: true, id, name}`. Hard-unregisters pcs-owned rows for that project; the git repo and `.project-context` files on disk are not touched. Name becomes reusable. `404` with `available` for an unknown project. |
 | `PATCH /api/projects/{project}` | Any of `expiry_policy`, `expiry_days`, `briefing_token_budget`, `prepare_task_token_budget`, `headline_max_chars`, `detail_max_chars` | Updated project summary. |
 | `GET /api/projects/{project}/briefing` | Query: optional comma-separated `sections`; optional `max_tokens` | `{project, briefing}`. |
 | `PUT /api/projects/{project}/focus` | JSON: `text` | Project summary after replacing current focus. |

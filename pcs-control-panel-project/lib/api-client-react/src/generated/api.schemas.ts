@@ -100,6 +100,12 @@ export interface RegisterProjectInput {
   overview: string;
 }
 
+export interface DeletedProject {
+  deleted: boolean;
+  id: string;
+  name: string;
+}
+
 export type EntryLifecycle = typeof EntryLifecycle[keyof typeof EntryLifecycle];
 
 

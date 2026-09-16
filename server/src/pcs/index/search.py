@@ -57,6 +57,7 @@ class SearchResult:
     hits: list[SearchHit]
     semantic_available: bool
     mode: str
+    total_matches: int = 0
 
 
 def _like_escape(value: str) -> str:
@@ -301,6 +302,20 @@ async def keyword_search(
     ident = _IDENT.match(q) is not None
     like = "%" + _like_escape(q) + "%"
 
+    where_sql = f"""
+        c.project_id = :project_id
+          {scope_sql}
+          {glob_sql}
+          AND (
+                c.tsv @@ plainto_tsquery('simple', :q)
+             OR c.content ILIKE :like ESCAPE '\\'
+             OR c.symbol ILIKE :like ESCAPE '\\'
+             OR c.path ILIKE :like ESCAPE '\\'
+             OR (c.symbol IS NOT NULL AND similarity(c.symbol, :q) > 0.3)
+             OR similarity(c.content, :q) > 0.2
+          )
+    """
+
     sql = f"""
         SELECT
             c.path,
@@ -331,17 +346,7 @@ async def keyword_search(
                 ELSE 'fuzzy'
             END AS matched_mode
         FROM code_index.chunks c
-        WHERE c.project_id = :project_id
-          {scope_sql}
-          {glob_sql}
-          AND (
-                c.tsv @@ plainto_tsquery('simple', :q)
-             OR c.content ILIKE :like ESCAPE '\\'
-             OR c.symbol ILIKE :like ESCAPE '\\'
-             OR c.path ILIKE :like ESCAPE '\\'
-             OR (c.symbol IS NOT NULL AND similarity(c.symbol, :q) > 0.3)
-             OR similarity(c.content, :q) > 0.2
-          )
+        WHERE {where_sql}
         ORDER BY
             CASE WHEN :ident AND c.symbol ILIKE :like ESCAPE '\\' THEN 0 ELSE 1 END,
             score DESC,
@@ -349,6 +354,7 @@ async def keyword_search(
             c.start_line ASC
         LIMIT :limit
     """
+    count_sql = f"SELECT COUNT(*) FROM code_index.chunks c WHERE {where_sql}"
     params: dict[str, object] = {
         "project_id": row.id,
         "q": q,
@@ -359,8 +365,10 @@ async def keyword_search(
         **glob_params,
     }
     stmt = text(sql)
+    count_stmt = text(count_sql)
     if "file_set" in params:
         stmt = stmt.bindparams(bindparam("file_set", expanding=True))
+        count_stmt = count_stmt.bindparams(bindparam("file_set", expanding=True))
     result = await session.execute(stmt, params)
     hits: list[SearchHit] = []
     for rec in result.mappings():
@@ -397,4 +405,10 @@ async def keyword_search(
                 content=content,
             )
         )
-    return SearchResult(hits=hits, semantic_available=False, mode="keyword")
+    total_matches = len(hits)
+    if hits:
+        count_params = {k: v for k, v in params.items() if k != "limit"}
+        total_matches = int((await session.execute(count_stmt, count_params)).scalar_one())
+    return SearchResult(
+        hits=hits, semantic_available=False, mode="keyword", total_matches=total_matches
+    )

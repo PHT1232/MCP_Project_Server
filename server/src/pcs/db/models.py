@@ -36,17 +36,31 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from pcs.db.base import Base
+from pcs.planning.models import (
+    Plan,
+    PlanTask,
+    PlanTaskEvent,
+    PlanTaskRequirement,
+    TaskDependency,
+)
+from pcs.token_savings.models import TokenSavingsLogEntry
 
 __all__ = [
     "AcceptanceCriterion",
     "Base",
     "ContextEntry",
     "ContextEntryRevision",
+    "Plan",
+    "PlanTask",
+    "PlanTaskEvent",
+    "PlanTaskRequirement",
     "Project",
     "RequirementContractRevision",
     "RequirementEvidence",
     "RequirementInvariant",
     "RequirementViolation",
+    "TaskDependency",
+    "TokenSavingsLogEntry",
 ]
 
 
@@ -139,6 +153,9 @@ class ContextEntry(Base):
         JSONB, nullable=False, server_default=text("'[]'::jsonb")
     )
     related_entry_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    # Agent-authored Mermaid sequenceDiagram syntax for a features-section
+    # entry (validated at the service layer, not here).
+    diagram: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
@@ -170,6 +187,7 @@ class ContextEntryRevision(Base):
         JSONB, nullable=False, server_default=text("'[]'::jsonb")
     )
     related_entry_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    diagram: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     entry: Mapped[ContextEntry] = relationship(back_populates="revisions")

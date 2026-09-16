@@ -12,7 +12,7 @@ from mcp.server.fastmcp import Context, FastMCP
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from pcs.context import service
-from pcs.context.types import SECTION_REQUIREMENTS
+from pcs.context.types import SECTION_FEATURES, SECTION_REQUIREMENTS
 from pcs.index.service import index_if_root_exists
 from pcs.index.watch import ensure_watch
 from pcs.mcp.support import caller, run_tool
@@ -57,6 +57,7 @@ def register_tools(mcp: FastMCP) -> None:
     for section, singular in _CRUD_SECTIONS:
         _register_crud(mcp, section, singular)
     _register_requirement_tools(mcp)
+    _register_feature_tools(mcp)
     _register_delete(mcp)
 
 
@@ -80,7 +81,11 @@ def _register_read_tools(mcp: FastMCP) -> None:
 
         async def op(session: AsyncSession) -> str:
             return await service.get_project_briefing(
-                session, project=project or "", sections=sections, max_tokens=max_tokens
+                session,
+                project=project or "",
+                sections=sections,
+                max_tokens=max_tokens,
+                caller=caller(ctx),
             )
 
         return await run_tool("get_project_briefing", project, ctx, op)
@@ -96,7 +101,7 @@ def _register_read_tools(mcp: FastMCP) -> None:
 
         Args:
             section: One of overview, focus, blockers, bugs, conventions,
-                decisions, requirements, glossary.
+                decisions, requirements, glossary, features.
             project: Exact project name or id (D3).
             include_resolved: If true, include resolved (but not deleted) entries.
         """
@@ -452,6 +457,106 @@ def _register_requirement_tools(mcp: FastMCP) -> None:
             return report.as_dict()
 
         return await run_tool("sync_requirements", project, ctx, op)
+
+
+def _register_feature_tools(mcp: FastMCP) -> None:
+    """Per-feature docs: what a feature does, its files, and its requirement link.
+
+    Unlike the plain ``_CRUD_SECTIONS`` tools, these carry ``linked_files``
+    (the files that implement the feature), ``related_entry_id`` (the
+    requirements-section entry it satisfies), and ``diagram`` (agent-authored
+    Mermaid ``sequenceDiagram`` syntax) — fields a feature doc needs that the
+    generic focus/blocker/bug/etc. tools don't expose.
+    """
+
+    @mcp.tool()
+    async def add_feature(
+        project: str | None = None,
+        headline: str | None = None,
+        detail: str | None = None,
+        linked_files: list[str] | None = None,
+        related_entry_id: str | None = None,
+        diagram: str | None = None,
+        priority: int = 0,
+        ctx: Context[Any, Any] | None = None,
+    ) -> dict[str, object]:
+        """Add a feature doc (FR10). Not part of get_project_briefing; read it
+        back via get_section(project, "features").
+
+        ``diagram`` is Mermaid ``sequenceDiagram`` syntax describing the
+        feature's flow, rendered on the control-panel's feature detail page.
+        """
+
+        async def op(session: AsyncSession) -> dict[str, object]:
+            view = await service.add_entry(
+                session,
+                project=project or "",
+                section=SECTION_FEATURES,
+                headline=headline,
+                detail=detail,
+                priority=priority,
+                author=caller(ctx),
+                linked_files=linked_files,
+                related_entry_id=related_entry_id,
+                diagram=diagram,
+            )
+            return view.as_dict()
+
+        return await run_tool("add_feature", project, ctx, op)
+
+    @mcp.tool()
+    async def update_feature(
+        entry_id: str,
+        project: str | None = None,
+        headline: str | None = None,
+        detail: str | None = None,
+        linked_files: list[str] | None = None,
+        related_entry_id: str | None = None,
+        diagram: str | None = None,
+        priority: int | None = None,
+        ctx: Context[Any, Any] | None = None,
+    ) -> dict[str, object]:
+        """Merge-update a feature doc's headline/detail/files/requirement
+        link/diagram (FR10, FR17). ``diagram`` is Mermaid ``sequenceDiagram``
+        syntax; an empty string clears it."""
+
+        async def op(session: AsyncSession) -> dict[str, object]:
+            view = await service.update_entry(
+                session,
+                project=project or "",
+                entry_id=entry_id,
+                headline=headline,
+                detail=detail,
+                priority=priority,
+                author=caller(ctx),
+                linked_files=linked_files,
+                related_entry_id=related_entry_id,
+                diagram=diagram,
+                expected_section=SECTION_FEATURES,
+            )
+            return view.as_dict()
+
+        return await run_tool("update_feature", project, ctx, op)
+
+    @mcp.tool()
+    async def resolve_feature(
+        entry_id: str,
+        project: str | None = None,
+        ctx: Context[Any, Any] | None = None,
+    ) -> dict[str, object]:
+        """Resolve a feature doc so it leaves active listing (FR12)."""
+
+        async def op(session: AsyncSession) -> dict[str, object]:
+            view = await service.resolve_entry(
+                session,
+                project=project or "",
+                entry_id=entry_id,
+                author=caller(ctx),
+                expected_section=SECTION_FEATURES,
+            )
+            return view.as_dict()
+
+        return await run_tool("resolve_feature", project, ctx, op)
 
 
 def _register_delete(mcp: FastMCP) -> None:

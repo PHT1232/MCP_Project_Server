@@ -13,7 +13,14 @@ import pytest
 
 from pcs.context import service
 from pcs.context.assembly import estimate_tokens
-from pcs.context.types import ACTION_CREATE, ACTION_DELETE, ACTION_UPDATE, STATUS_DELETED
+from pcs.context.types import (
+    ACTION_CREATE,
+    ACTION_DELETE,
+    ACTION_UPDATE,
+    DIAGRAM_MAX_CHARS,
+    STATUS_DELETED,
+    ValidationError,
+)
 from pcs.db.base import reset_engine, session_scope
 from pcs.db.models import ContextEntry
 
@@ -287,3 +294,102 @@ async def test_requirement_status_round_trip() -> None:
         briefing = await service.get_project_briefing(session, project=PROJECT)
     assert fetched.requirement_status == "done"
     assert "1/1 done" in briefing
+
+
+async def test_features_section_round_trip_and_briefing_exclusion() -> None:
+    await _seed()
+    async with session_scope() as session:
+        req = await service.add_entry(
+            session,
+            project=PROJECT,
+            section="requirements",
+            headline="Checkout supports Apple Pay",
+        )
+        feature = await service.add_entry(
+            session,
+            project=PROJECT,
+            section="features",
+            headline="Checkout",
+            detail="Takes a cart + payment method, returns an order confirmation.",
+            linked_files=["src/checkout/handler.py", "src/checkout/payment.py"],
+            related_entry_id=req.id,
+            diagram="sequenceDiagram\n  Client->>Server: POST /checkout",
+        )
+    async with session_scope() as session:
+        listed = await service.get_section(session, project=PROJECT, section="features")
+        default_briefing = await service.get_project_briefing(session, project=PROJECT)
+        explicit_briefing = await service.get_project_briefing(
+            session, project=PROJECT, sections=["features"]
+        )
+    assert [e.id for e in listed] == [feature.id]
+    assert listed[0].linked_files == ("src/checkout/handler.py", "src/checkout/payment.py")
+    assert listed[0].related_entry_id == req.id
+    assert listed[0].diagram == "sequenceDiagram\n  Client->>Server: POST /checkout"
+    # Features never appear in the briefing, even when explicitly requested —
+    # they're not in assembly.py's _RANK, protecting the token budget (FR9g).
+    assert "Takes a cart + payment method" not in default_briefing
+    assert "Takes a cart + payment method" not in explicit_briefing
+    assert "sequenceDiagram" not in default_briefing
+    assert "sequenceDiagram" not in explicit_briefing
+
+    async with session_scope() as session:
+        updated = await service.update_entry(
+            session,
+            project=PROJECT,
+            entry_id=feature.id,
+            detail=(
+                "Takes a cart + payment method + shipping address, returns an order confirmation."
+            ),
+            diagram="sequenceDiagram\n  Client->>Server: POST /checkout\n  Server-->>Client: 201",
+            expected_section="features",
+        )
+    assert "shipping address" in updated.detail
+    assert updated.linked_files == ("src/checkout/handler.py", "src/checkout/payment.py")
+    assert (
+        updated.diagram
+        == "sequenceDiagram\n  Client->>Server: POST /checkout\n  Server-->>Client: 201"
+    )
+
+    async with session_scope() as session:
+        cleared = await service.update_entry(
+            session,
+            project=PROJECT,
+            entry_id=feature.id,
+            diagram="",
+            expected_section="features",
+        )
+    assert cleared.diagram is None
+
+    async with session_scope() as session:
+        await service.resolve_entry(
+            session, project=PROJECT, entry_id=feature.id, expected_section="features"
+        )
+    async with session_scope() as session:
+        active = await service.get_section(session, project=PROJECT, section="features")
+        archived = await service.get_section(
+            session, project=PROJECT, section="features", include_resolved=True
+        )
+    assert active == []
+    assert any(e.id == feature.id and e.status == "resolved" for e in archived)
+
+
+async def test_diagram_rejected_outside_features_and_over_max_chars() -> None:
+    await _seed()
+    async with session_scope() as session:
+        with pytest.raises(ValidationError, match="only valid on the features section"):
+            await service.add_entry(
+                session,
+                project=PROJECT,
+                section="blockers",
+                headline="Not a feature",
+                diagram="sequenceDiagram\n  A->>B: hi",
+            )
+    async with session_scope() as session:
+        with pytest.raises(ValidationError, match=f"exceeds {DIAGRAM_MAX_CHARS} characters"):
+            await service.add_entry(
+                session,
+                project=PROJECT,
+                section="features",
+                headline="Too big",
+                diagram="x" * (DIAGRAM_MAX_CHARS + 1),
+            )

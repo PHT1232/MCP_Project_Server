@@ -81,6 +81,32 @@ set status `done` after `evaluate_close_gate` passes. A `not-configured`
 requirement is legacy state, not verified compliance. See
 [docs/mcp-reference.md](docs/mcp-reference.md) and [docs/http-api.md](docs/http-api.md).
 
+## Explaining the codebase (feature docs)
+
+If you're asked to explain this codebase's features — what each one does, the
+files that implement it, its input/output — don't write the answer as a
+standalone `.md` file. Write it into pcs's `features` section instead, via
+`add_feature`/`update_feature` (`section='features'` under the hood), so the
+pcs-control-panel "Features" tab stays the single source of truth instead of
+a summary that immediately goes stale and duplicates what the tool already
+tracks:
+
+```
+add_feature(
+  project="...",
+  headline="Code search (search_code)",
+  detail="Input: a text/symbol/glob query plus optional scope. Output: ranked
+          hits (path, line range, snippet) plus total_matches/truncated.",
+  linked_files=["server/src/pcs/index/search.py", "server/src/pcs/index/hybrid.py"],
+  related_entry_id="<id of the requirements-section entry it satisfies, if any>",
+)
+```
+
+`related_entry_id` — not `req_key` — is the link to the requirement; `req_key`
+is reserved for the requirements section's own server-assigned `R-NNN`
+identity. See [docs/mcp-reference.md](docs/mcp-reference.md)'s Features
+section for the full tool reference.
+
 ## Frontend conventions (TypeScript)
 
 - React + Vite + TS, **strict** tsconfig, no `any` (use `unknown` + narrowing).

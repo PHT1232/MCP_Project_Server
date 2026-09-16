@@ -9,12 +9,10 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
-import os
 import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
-from pathlib import Path
 from typing import Final
 
 from sqlalchemy import select
@@ -384,55 +382,28 @@ async def _git(root: str, *args: str) -> str | None:
     return raw.decode().rstrip("\n")
 
 
-def _nul_paths(blob: bytes) -> list[bytes]:
-    return [part for part in blob.split(b"\0") if part]
-
-
-def _worktree_bytes(root: str, relpath: bytes) -> bytes:
-    file_path = Path(root) / os.fsdecode(relpath)
-    if file_path.is_file():
-        return file_path.read_bytes()
-    return b"<deleted>"
-
-
-def _fingerprint_dirty_layers(
-    *, index_listing: bytes, unstaged: bytes, untracked: bytes, root: str
-) -> str:
-    """Hash staged index blobs, unstaged worktree bytes, and untracked file bytes."""
-    hasher = hashlib.sha256()
-    hasher.update(b"index\0")
-    hasher.update(index_listing)
-    hasher.update(b"\0unstaged\0")
-    for path in _nul_paths(unstaged):
-        hasher.update(path)
-        hasher.update(b"\0")
-        hasher.update(_worktree_bytes(root, path))
-        hasher.update(b"\0")
-    hasher.update(b"untracked\0")
-    for path in _nul_paths(untracked):
-        hasher.update(path)
-        hasher.update(b"\0")
-        hasher.update(_worktree_bytes(root, path))
-        hasher.update(b"\0")
-    return hasher.hexdigest()
-
-
 async def _repo_state(root: str) -> tuple[str | None, str | None]:
-    """Return the current commit and a bounded clean/dirty fingerprint (INV-EVIDENCE-1)."""
+    """Return the current commit and a bounded clean/dirty fingerprint (INV-EVIDENCE-1).
+
+    "Dirty" means uncommitted changes to TRACKED files relative to HEAD —
+    staged or unstaged, either counts. Untracked files never count: they
+    can't retroactively invalidate evidence for a commit that never claimed
+    to include them, and a caller can't always clean up files they didn't
+    create (bug: incidental untracked clutter from unrelated tools/sessions
+    permanently blocked evidence recording under the old any-untracked-file
+    definition). ``git diff HEAD`` naturally covers staged+unstaged tracked
+    changes together and never includes untracked files, so no separate
+    untracked listing is needed at all.
+    """
     commit = await _git(root, "rev-parse", "HEAD")
     if commit is None or not _FULL_COMMIT_RE.fullmatch(commit.lower()):
         return None, None
-    index_listing = await _git_bytes(root, "ls-files", "-s", "-z")
-    staged = await _git_bytes(root, "diff", "--cached", "--name-only", "-z")
-    unstaged = await _git_bytes(root, "diff", "--name-only", "-z")
-    untracked = await _git_bytes(root, "ls-files", "-o", "--exclude-standard", "-z")
-    if index_listing is None or staged is None or unstaged is None or untracked is None:
+    diff = await _git_bytes(root, "diff", "HEAD")
+    if diff is None:
         return None, None
-    if not staged and not unstaged and not untracked:
+    if not diff:
         return commit.lower(), _CLEAN_FINGERPRINT
-    return commit.lower(), _fingerprint_dirty_layers(
-        index_listing=index_listing, unstaged=unstaged, untracked=untracked, root=root
-    )
+    return commit.lower(), hashlib.sha256(diff).hexdigest()
 
 
 async def _normalize_commit(root: str, value: str) -> str:
@@ -606,9 +577,13 @@ async def record_evidence(
     supplied_fp = _bound_fingerprint(worktree_fingerprint)
     dirty = current_fp is not None and current_fp != _CLEAN_FINGERPRINT
     if dirty and supplied_fp is None:
-        raise ValidationError("dirty-worktree: worktree_fingerprint required")
+        raise ValidationError(
+            f"dirty-worktree: worktree_fingerprint required (expected {current_fp})"
+        )
     if dirty and supplied_fp != current_fp:
-        raise ValidationError("dirty-worktree: worktree_fingerprint does not match")
+        raise ValidationError(
+            f"dirty-worktree: worktree_fingerprint does not match (expected {current_fp})"
+        )
     normalized_command_ref = _bound_optional(command_ref, field="command_ref", max_chars=REF_MAX)
     normalized_artifact_ref = _bound_optional(
         artifact_ref, field="artifact_ref", max_chars=ARTIFACT_MAX

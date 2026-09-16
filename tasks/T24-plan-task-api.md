@@ -96,26 +96,26 @@ Do not touch `pcs.index.retrieval`, frontend code, or AI generators. Do not inve
 
 ## Acceptance checklist
 
-- [ ] `AC-PLAN-7` (`eeb30422-628b-4a3d-bd01-b267c42e8a2f`): Audited MCP and HTTP planning tools expose typed operations including update_plan and archive_plan with token redaction and input validation.
-- [ ] Every MCP tool call emits structured audit log containing tool, project, caller, outcome (NFR6).
-- [ ] `update_plan` successfully updates title and/or goal; empty patch returns 400.
-- [ ] `archive_plan` transitions plan status to `archived` and revokes active leases.
-- [ ] All task-level HTTP routes use nested `/plans/{plan_id}/tasks/{task_id}/...` structure.
-- [ ] Request with mismatched `plan_id` in URL returns 404 / TaskNotFoundError.
-- [ ] `claim_task` returns raw claim token exactly once; subsequent reads omit token and token hash.
-- [ ] `claim_task` atomically reclaims expired `in_review` task (`lease_expires_at <= now()`) to `claimed`, issuing new token and lease, revoking old token.
-- [ ] `claim_task` on task with active unexpired lease (`lease_expires_at > now()`, including unexpired `in_review`) returns 409 Conflict.
-- [ ] Boundary condition `lease_expires_at == now()` is verified treated as expired (reclaimable via `claim_task`; token presentation returns 409 / StaleClaimTokenError).
-- [ ] Heartbeat on `claimed` task extends lease expiration while strictly preserving status `claimed` (does not mutate to `in_progress`).
-- [ ] Status mutation or completion on task with active lease without valid token returns 409 Conflict (no operator bypass).
-- [ ] Stale or expired token (`lease_expires_at <= now()`) on heartbeat/status/complete returns 409 / StaleClaimTokenError.
-- [ ] Mutation on task in completed or archived plan returns 409 / PlanNotActiveError.
-- [ ] Unknown fields, malformed JSON, and empty patch bodies return HTTP 400.
-- [ ] Concurrent claim conflict returns clean 409 Conflict in MCP and HTTP.
-- [ ] `get_task_history` returns structured, chronologically ordered task events with safe payloads across all 10 event types.
-- [ ] MCP tools and HTTP routes return equivalent typed JSON response shapes.
-- [ ] `just check` passes with zero lint, typecheck, or test failures.
-- [ ] Task handoff documents tool signatures, route paths, and test results.
+- [x] `AC-PLAN-7` (`eeb30422-628b-4a3d-bd01-b267c42e8a2f`): Audited MCP and HTTP planning tools expose typed operations including update_plan and archive_plan with token redaction and input validation.
+- [x] Every MCP tool call emits structured audit log containing tool, project, caller, outcome (NFR6).
+- [x] `update_plan` successfully updates title and/or goal; empty patch returns 400.
+- [x] `archive_plan` transitions plan status to `archived` and revokes active leases.
+- [x] All task-level HTTP routes use nested `/plans/{plan_id}/tasks/{task_id}/...` structure.
+- [x] Request with mismatched `plan_id` in URL returns 404 / TaskNotFoundError.
+- [x] `claim_task` returns raw claim token exactly once; subsequent reads omit token and token hash.
+- [x] `claim_task` atomically reclaims expired `in_review` task (`lease_expires_at <= now()`) to `claimed`, issuing new token and lease, revoking old token.
+- [x] `claim_task` on task with active unexpired lease (`lease_expires_at > now()`, including unexpired `in_review`) returns 409 Conflict.
+- [x] Boundary condition `lease_expires_at == now()` is verified treated as expired (reclaimable via `claim_task`; token presentation returns 409 / StaleClaimTokenError).
+- [x] Heartbeat on `claimed` task extends lease expiration while strictly preserving status `claimed` (does not mutate to `in_progress`).
+- [x] Status mutation or completion on task with active lease without valid token returns 409 Conflict (no operator bypass).
+- [x] Stale or expired token (`lease_expires_at <= now()`) on heartbeat/status/complete returns 409 / StaleClaimTokenError.
+- [x] Mutation on task in completed or archived plan returns 409 / PlanNotActiveError.
+- [x] Unknown fields, malformed JSON, and empty patch bodies return HTTP 400.
+- [x] Concurrent claim conflict returns clean 409 Conflict in MCP and HTTP.
+- [x] `get_task_history` returns structured, chronologically ordered task events with safe payloads across all 10 event types.
+- [x] MCP tools and HTTP routes return equivalent typed JSON response shapes.
+- [x] `just check` passes with zero lint, typecheck, or test failures.
+- [x] Task handoff documents tool signatures, route paths, and test results.
 
 ## Required evidence
 
@@ -129,26 +129,65 @@ cd server && uv run pytest tests/test_planning_api.py -v
 just check
 ```
 
-## Handoff template
-
-```markdown
 ## Handoff
 
 - **Branch:** `task/T24-plan-task-api`
 - **What was done:**
-  - ...
-- **Public MCP Tools:**
-  - `create_plan`, `create_plan_with_tasks`, `list_plans`, `get_plan`, `update_plan`, `archive_plan`
-  - `add_plan_task`, `update_plan_task`, `add_task_dependency`, `activate_plan`
-  - `list_ready_tasks`, `claim_task`, `heartbeat_task`, `release_task`
-  - `set_task_status`, `complete_task`, `complete_plan`, `get_task_history`
+  - Added `pcs.mcp.planning_tools.register_planning_tools` with 18 thin `@mcp.tool()` adapters over `pcs.planning.service` (FR43–FR48, AC-PLAN-7, NFR6, INV-PLAN-3). Each tool resolves `caller(ctx)`, runs inside `session_scope()`, returns `.as_dict()` (or a list of them), and emits `log_tool_call` via a local `audit_outcome()` that maps planning exceptions to categories only — never claim tokens or request payloads.
+  - Patch-style MCP tools (`update_plan`, `update_plan_task`) use the pydantic `MISSING` sentinel so omitted fields stay unchanged and empty patches raise `PlanningValidationError`.
+  - Added `pcs.web_api.planning_routes.register_planning_routes` with 19 Starlette routes registered via `mcp.custom_route(path, methods)(handler)`. Nested `.../plans/{plan_id}/tasks/{task_id}/...` handlers pass URL `plan_id`/`task_id` straight through; service-layer composite filters raise `TaskNotFoundError` on mismatch (404).
+  - HTTP error mapping follows this task's table (not T23's suggested 409 for `InvalidStateTransitionError`): `ProjectNotFoundError` → 404 + `available`; `PlanNotFoundError`/`TaskNotFoundError` → 404; `PlanningValidationError`/`InvalidStateTransitionError`/unknown fields/empty patch/malformed JSON → 400; `ClaimConflictError`/`StaleClaimTokenError`/`PlanNotActiveError` → 409. `x-pcs-caller` defaults to `"frontend"`.
+  - Registered both surfaces in `pcs.mcp.server` next to the existing contract/requirement registrations.
+  - Payload parsing for `tasks`/`dependencies` lives in `planning_tools.py` (imported by the HTTP adapter) so T23's `pcs.planning` package is untouched.
+  - Added 18 integration tests in `server/tests/test_planning_api.py`, one per acceptance-checklist line, covering audit shape, empty-patch 400, archive lease revocation, nested URL mismatch 404, one-time claim token redaction, expired `in_review` reclaim, unexpired 409, `lease_expires_at == now()` boundary, heartbeat status preservation, no-token-bypass 409, stale-token 409, completed/archived `PlanNotActiveError` 409, malformed JSON / unknown fields, concurrent claim race (MCP `asyncio.gather` + HTTP), 10-event history, and MCP/HTTP shape parity.
+- **Public MCP Tools (signatures match `pcs.planning.service`):**
+  - `create_plan(project, title, goal)`
+  - `create_plan_with_tasks(project, title, goal, tasks, dependencies=None)`
+  - `list_plans(project, status=None)`
+  - `get_plan(project, plan_id)`
+  - `update_plan(project, plan_id, title=MISSING, goal=MISSING)`
+  - `archive_plan(project, plan_id)`
+  - `activate_plan(project, plan_id)`
+  - `add_plan_task(project, plan_id, local_task_id, title, objective, acceptance_criteria=None, linked_files=None, requirement_ids=None, priority=0)`
+  - `update_plan_task(project, plan_id, task_id, title=MISSING, objective=MISSING, acceptance_criteria=MISSING, linked_files=MISSING, requirement_ids=MISSING, priority=MISSING, claim_token=MISSING)`
+  - `add_task_dependency(project, plan_id, task_id, depends_on_task_id)`
+  - `list_ready_tasks(project, plan_id=None)`
+  - `claim_task(project, plan_id, task_id, claimed_by, lease_seconds=1800)` → `{task, claim_token}` once
+  - `heartbeat_task(project, plan_id, task_id, claim_token, lease_seconds=1800)`
+  - `release_task(project, plan_id, task_id, claim_token)`
+  - `set_task_status(project, plan_id, task_id, status, claim_token=None, reason=None)`
+  - `complete_task(project, plan_id, task_id, claim_token=None)`
+  - `complete_plan(project, plan_id)`
+  - `get_task_history(project, plan_id, task_id)` → list of `{id, event_type, actor, old_status, new_status, payload, created_at, ...}`
 - **Public HTTP Endpoints (Nested):**
-  - `/api/projects/{project}/plans`
-  - `/api/projects/{project}/plans/{plan_id}`
-  - `/api/projects/{project}/plans/{plan_id}/tasks/{task_id}/*`
-  - `/api/projects/{project}/ready-tasks`
+  - `POST /api/projects/{project}/plans` (`create_plan`, 201)
+  - `POST /api/projects/{project}/plans/with-tasks` (`create_plan_with_tasks`, 201)
+  - `GET /api/projects/{project}/plans` (`list_plans`)
+  - `GET /api/projects/{project}/plans/{plan_id}` (`get_plan`)
+  - `PATCH /api/projects/{project}/plans/{plan_id}` (`update_plan`)
+  - `POST /api/projects/{project}/plans/{plan_id}/archive` (`archive_plan`)
+  - `POST /api/projects/{project}/plans/{plan_id}/activate` (`activate_plan`)
+  - `POST /api/projects/{project}/plans/{plan_id}/tasks` (`add_plan_task`, 201)
+  - `PATCH /api/projects/{project}/plans/{plan_id}/tasks/{task_id}` (`update_plan_task`)
+  - `POST /api/projects/{project}/plans/{plan_id}/dependencies` (`add_task_dependency`)
+  - `GET /api/projects/{project}/ready-tasks` (`list_ready_tasks` global)
+  - `GET /api/projects/{project}/plans/{plan_id}/ready-tasks` (`list_ready_tasks` plan-scoped)
+  - `POST /api/projects/{project}/plans/{plan_id}/tasks/{task_id}/claim` (`claim_task`)
+  - `POST /api/projects/{project}/plans/{plan_id}/tasks/{task_id}/heartbeat` (`heartbeat_task`)
+  - `POST /api/projects/{project}/plans/{plan_id}/tasks/{task_id}/release` (`release_task`)
+  - `POST /api/projects/{project}/plans/{plan_id}/tasks/{task_id}/status` (`set_task_status`)
+  - `POST /api/projects/{project}/plans/{plan_id}/tasks/{task_id}/complete` (`complete_task`)
+  - `POST /api/projects/{project}/plans/{plan_id}/complete` (`complete_plan`)
+  - `GET /api/projects/{project}/plans/{plan_id}/tasks/{task_id}/history` (`get_task_history`)
+- **Audit outcome categories:** `ok`, `error: project-not-found`, `error: not-found`, `error: claim-conflict`, `error: stale-token`, `error: plan-not-active`, `error: invalid-state`, `error: dependency-cycle`, `error: validation`, `error: failed`.
 - **Verification:**
-  - `test_planning_api.py` results
-  - `just check` result
-- **Deviations:** None
-```
+  - `cd server && uv run pytest tests/test_planning_api.py -v`: **18 passed** in 9.37s
+  - `just check`: green — ruff format/check 110 files, web eslint, server mypy (110 files), web tsc, **375 server pytest passed, 1 skipped**, 76 vitest passed, docker compose config verified, web vite build succeeded
+- **Deviations:** None vs T24's error table. Adapter-layer empty-patch rejection uses the same `EMPTY_MUTATION` wording as T14. List-valued MCP tools (`list_plans`, `list_ready_tasks`, `get_task_history`) return Python lists; FastMCP `call_tool` structured output wraps those as `{"result": [...]}` — tests unwrap that envelope so MCP/HTTP JSON shapes match (HTTP remains a JSON array).
+- **Cross-task / Independent Review Needs:**
+  - `AC-PLAN-7` (`eeb30422-628b-4a3d-bd01-b267c42e8a2f`): Independent review required for token redaction and audit safety.
+  - Minimal out-of-scope edits required for `just check`:
+    1. `server/tests/test_integration.py`: added the 18 planning tool names to `EXPECTED_TOOLS`.
+    2. `server/tests/test_ai_settings.py`: `test_migration_roundtrip` now `upgrade("head")` after the 0020 assertion so the shared pytest Postgres is not left without `plans` (T20 round-trip previously stopped at `0020_ai_provider_settings`, dropping T23 tables for every later test).
+  - T25 can start from this branch; do not start T25 as part of T24.
+  - ROADMAP status for T24 should be set to `in review` at merge time (not edited here; T24 does not own ROADMAP.md).

@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+from collections.abc import Iterable
 from dataclasses import dataclass
 from dataclasses import field as dataclass_field
 from datetime import UTC, datetime
@@ -16,6 +17,7 @@ from sqlalchemy import delete, func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from pcs.ai_settings import load_runtime_ai_settings
+from pcs.context.assembly import estimate_tokens
 from pcs.context.service import ProjectNotFoundError, resolve_project
 from pcs.index.chunker import chunk_source, language_for
 from pcs.index.embedding import get_embedding_backend
@@ -27,6 +29,8 @@ from pcs.index.schema import ensure_index_schema
 from pcs.index.search import SearchScopeName
 from pcs.index.semantic import RankedHit, embed_pending_chunks
 from pcs.index.symbol_store import refresh_symbols
+from pcs.token_savings.baseline import full_file_tokens
+from pcs.token_savings.service import record_token_savings
 
 logger = logging.getLogger("pcs")
 
@@ -573,11 +577,15 @@ async def search_code(
     files: list[str] | None = None,
     globs: list[str] | None = None,
     limit: int = 20,
+    caller: str | None = None,
 ) -> dict[str, object]:
     """Hybrid keyword + semantic ``search_code`` (FR20, FR21, FR22).
 
     Falls back to keyword-only with an explicit note when no embedding backend is
     configured or nothing is embedded yet (AC10, AC21).
+
+    ``caller`` is optional and gates token-savings logging (None = don't
+    record); only the outward-facing MCP tool/HTTP route passes it.
     """
     try:
         result: HybridResult = await hybrid_search(
@@ -592,14 +600,71 @@ async def search_code(
         )
     except PathTraversalError as exc:
         raise ValueError(str(exc)) from exc
+    hits = [_ranked_hit_dict(r) for r in result.ranked]
+    if caller is not None:
+        await _record_search_baseline(
+            session,
+            project=project,
+            caller=caller,
+            hits=hits,
+            ranked_paths=(r.hit.path for r in result.ranked),
+        )
     return {
-        "hits": [_ranked_hit_dict(r) for r in result.ranked],
+        "hits": hits,
         "semantic_available": result.semantic_available,
         "mode": "hybrid" if result.semantic_available else "keyword",
         "semantic_note": result.semantic_note,
         # Backward-compatible alias used by the existing frontend/client.
         "note": result.semantic_note,
+        # Total rows the keyword/FTS/fuzzy pool matched (before any internal
+        # LIMIT). `truncated=False` means that pool wasn't capped — it does
+        # NOT guarantee `len(hits) == total_matches`, since hybrid re-ranking
+        # can still cut the fused list down to the caller's own `limit`
+        # afterward (normal pagination, not data loss). Reflects the keyword
+        # pool only; semantic-hit exhaustiveness is a separate, already
+        # existing concern signalled via `semantic_available`.
+        "total_matches": result.keyword_total_matches,
+        "truncated": result.keyword_total_matches > len(result.keyword_hits),
     }
+
+
+async def _record_search_baseline(
+    session: AsyncSession,
+    *,
+    project: str,
+    caller: str,
+    hits: list[dict[str, object]],
+    ranked_paths: Iterable[str],
+) -> None:
+    """Best-effort: actual = the snippet content a caller actually reads
+    (path/line marker + snippet text), deliberately excluding the JSON hit's
+    bookkeeping fields (score, matched_mode, retrieval_modes, git_blob,
+    git_commit) — those are metadata overhead, not content, and including
+    them would unfairly inflate "actual" against a full-file-content
+    baseline. baseline = full on-disk content of every distinct matched
+    file. Never raises."""
+    try:
+        row = await resolve_project(session, project)
+        baseline = full_file_tokens(row.root_path, ranked_paths)
+        actual = sum(
+            estimate_tokens(
+                f"{hit.get('path', '')}:{hit.get('start_line', '')}-"
+                f"{hit.get('end_line', '')}\n{hit.get('snippet', '')}"
+            )
+            for hit in hits
+        )
+        await record_token_savings(
+            session,
+            project_id=row.id,
+            operation="search_code",
+            caller=caller,
+            actual_tokens=actual,
+            baseline_tokens=baseline,
+        )
+    except Exception:
+        logger.warning(
+            "token_savings_record_failed", extra={"context": {"operation": "search_code"}}
+        )
 
 
 async def index_if_root_exists(

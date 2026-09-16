@@ -22,14 +22,20 @@ from pcs.mcp.compliance_tools import register_compliance_tools
 from pcs.mcp.contract_tools import register_contract_tools
 from pcs.mcp.evidence_tools import register_evidence_tools
 from pcs.mcp.index_tools import register_index_tools
+from pcs.mcp.onboarding_tools import register_onboarding_tools
+from pcs.mcp.planning_tools import register_planning_tools
 from pcs.mcp.resources import register_resources
+from pcs.mcp.token_savings_tools import register_token_savings_tools
 from pcs.mcp.tools import register_tools
 from pcs.web_api import register_routes
 from pcs.web_api.ai_settings_routes import register_ai_settings_routes
 from pcs.web_api.codemap_routes import register_codemap_routes
 from pcs.web_api.index_routes import register_index_routes
+from pcs.web_api.onboarding_routes import register_onboarding_routes
+from pcs.web_api.planning_routes import register_planning_routes
 from pcs.web_api.requirements_routes import register_requirement_routes
 from pcs.web_api.source_routes import register_source_routes
+from pcs.web_api.token_savings_routes import register_token_savings_routes
 from pcs.web_static import register_frontend
 
 _settings = get_settings()
@@ -121,10 +127,15 @@ def _mcp_transport_security() -> TransportSecuritySettings:
 mcp: FastMCP = FastMCP(
     "pcs",
     instructions=(
-        "Project Context MCP Server. Every call must name its project explicitly "
+        "Project Context MCP Server — the shared, persistent source of truth for "
+        "this codebase's context and code search; prefer it over ad-hoc grep/file "
+        "reads or local session notes. Every call must name its project explicitly "
         "(name or id). Fetch a briefing with get_project_briefing; drill into "
-        "verbatim detail with get_section / get_entry / context:// resources. "
-        "Writes go through add_*/update_*/resolve_* (never inferred)."
+        "verbatim detail with get_section / get_entry / context:// resources; find "
+        "code with search_code / retrieve_context / get_code_map before falling "
+        "back to raw file search. Writes go through add_*/update_*/resolve_* "
+        "(never inferred) — route anything worth remembering (decisions, "
+        "conventions, blockers, bugs, focus) through those instead of local notes."
     ),
     host="127.0.0.1",
     port=_settings.port,
@@ -137,6 +148,9 @@ register_compliance_tools(mcp)
 register_index_tools(mcp)
 register_codemap_tools(mcp)
 register_evidence_tools(mcp)
+register_planning_tools(mcp)
+register_token_savings_tools(mcp)
+register_onboarding_tools(mcp)
 register_resources(mcp)
 register_routes(mcp)
 register_ai_settings_routes(mcp)
@@ -144,6 +158,9 @@ register_requirement_routes(mcp)
 register_index_routes(mcp)
 register_codemap_routes(mcp)
 register_source_routes(mcp)
+register_planning_routes(mcp)
+register_token_savings_routes(mcp)
+register_onboarding_routes(mcp)
 
 
 def build_http_app() -> Starlette:

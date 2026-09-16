@@ -1,0 +1,3244 @@
+openapi: 3.1.0
+info:
+  # Do not change the title — orval output paths assume "Api"
+  title: Api
+  version: 0.1.0
+  description: >
+    PCS HTTP API consumed by the Atlas Console control panel.
+    Field names and shapes mirror web/src/api/types.ts (and T20 AiSettings
+    types for /admin/ai-settings). Paths mirror web/src/api/client.ts.
+servers:
+  - url: /api
+    description: Base API path (Vite proxies /api → PCS :8080)
+tags:
+  - name: health
+  - name: admin
+  - name: projects
+  - name: context
+  - name: requirements
+  - name: index
+  - name: codemap
+  - name: plans
+  - name: token-savings
+
+paths:
+  /health:
+    get:
+      operationId: getHealth
+      tags: [health]
+      summary: Process health
+      responses:
+        "200":
+          description: Healthy
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Health"
+
+  /admin/ai-settings:
+    get:
+      operationId: getAiSettings
+      tags: [admin]
+      summary: Read global AI provider settings (T20 / AC-AISET-8)
+      responses:
+        "200":
+          description: Current embedding + summary settings (no secrets)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AiSettings"
+        "400":
+          description: Invalid runtime configuration
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorBody"
+    patch:
+      operationId: updateAiSettings
+      tags: [admin]
+      summary: Merge-update AI provider settings (T20 / AC-AISET-9)
+      parameters:
+        - $ref: "#/components/parameters/PcsAdminToken"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AiSettingsInput"
+      responses:
+        "200":
+          description: Updated settings
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AiSettings"
+        "401":
+          description: Admin token missing or wrong
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorBody"
+        "400":
+          description: Invalid body
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorBody"
+
+  /projects:
+    get:
+      operationId: listProjects
+      tags: [projects]
+      summary: List registered projects (FR31)
+      responses:
+        "200":
+          description: Projects
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Project"
+    post:
+      operationId: registerProject
+      tags: [projects]
+      summary: Register a project
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RegisterProjectInput"
+      responses:
+        "200":
+          description: Registered project
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Project"
+        "400":
+          description: Invalid input
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorBody"
+
+  /projects/{project}/briefing:
+    get:
+      operationId: getBriefing
+      tags: [context]
+      summary: Assembled project briefing
+      parameters:
+        - $ref: "#/components/parameters/ProjectRef"
+      responses:
+        "200":
+          description: Briefing markdown
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Briefing"
+        "404":
+          description: Unknown project
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorBody"
+
+  /projects/{project}/sections/{section}:
+    get:
+      operationId: getSection
+      tags: [context]
+      summary: One dashboard section with entries (FR36)
+      parameters:
+        - $ref: "#/components/parameters/ProjectRef"
+        - name: section
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: include_resolved
+          in: query
+          required: false
+          schema:
+            type: boolean
+            default: false
+      responses:
+        "200":
+          description: Section entries
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SectionResponse"
+        "404":
+          description: Unknown project or section
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorBody"
+
+  /projects/{project}/entries:
+    post:
+      operationId: addEntry
+      tags: [context]
+      summary: Create an entry (FR36)
+      parameters:
+        - $ref: "#/components/parameters/ProjectRef"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EntryInput"
+      responses:
+        "200":
+          description: Created entry (+ optional requirements file sync)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EntryWriteResponse"
+        "400":
+          description: Invalid input
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorBody"
+
+  /projects/{project}/entries/{entryId}:
+    patch:
+      operationId: updateEntry
+      tags: [context]
+      summary: Merge-update an entry (FR36)
+      parameters:
+        - $ref: "#/components/parameters/ProjectRef"
+        - $ref: "#/components/parameters/EntryId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EntryInput"
+      responses:
+        "200":
+          description: Updated entry
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EntryWriteResponse"
+        "404":
+          description: Unknown entry
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorBody"
+
+  /projects/{project}/entries/{entryId}/resolve:
+    post:
+      operationId: resolveEntry
+      tags: [context]
+      summary: Resolve an entry (FR36)
+      parameters:
+        - $ref: "#/components/parameters/ProjectRef"
+        - $ref: "#/components/parameters/EntryId"
+      responses:
+        "200":
+          description: Resolved entry
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EntryWriteResponse"
+        "404":
+          description: Unknown entry
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorBody"
+
+  /projects/{project}/focus:
+    put:
+      operationId: setFocus
+      tags: [context]
+      summary: Replace current focus (FR36 replace-semantics)
+      parameters:
+        - $ref: "#/components/parameters/ProjectRef"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SetFocusInput"
+      responses:
+        "200":
+          description: Updated project row
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Project"
+        "400":
+          description: Invalid focus
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorBody"
+
+  /projects/{project}/requirements:
+    get:
+      operationId: listRequirements
+      tags: [requirements]
+      summary: Requirements list with done/total (FR36a)
+      parameters:
+        - $ref: "#/components/parameters/ProjectRef"
+      responses:
+        "200":
+          description: Requirements
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RequirementsResponse"
+
+  /projects/{project}/requirements/{requirementId}/contract:
+    get:
+      operationId: getRequirementContract
+      tags: [requirements]
+      summary: Verbatim contract drill-down (T13)
+      parameters:
+        - $ref: "#/components/parameters/ProjectRef"
+        - $ref: "#/components/parameters/RequirementId"
+      responses:
+        "200":
+          description: Contract
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RequirementContract"
+
+  /projects/{project}/requirements/{requirementId}/invariants:
+    post:
+      operationId: createRequirementInvariant
+      tags: [requirements]
+      summary: Create an invariant (T14)
+      parameters:
+        - $ref: "#/components/parameters/ProjectRef"
+        - $ref: "#/components/parameters/RequirementId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateInvariantInput"
+      responses:
+        "200":
+          description: Created invariant
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RequirementInvariant"
+
+  /projects/{project}/requirements/invariants/{invariantId}:
+    patch:
+      operationId: updateRequirementInvariant
+      tags: [requirements]
+      summary: Merge-update an invariant (T14)
+      parameters:
+        - $ref: "#/components/parameters/ProjectRef"
+        - $ref: "#/components/parameters/InvariantId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateInvariantInput"
+      responses:
+        "200":
+          description: Updated invariant
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RequirementInvariant"
+    delete:
+      operationId: deleteRequirementInvariant
+      tags: [requirements]
+      summary: Soft-delete an invariant (T14)
+      parameters:
+        - $ref: "#/components/parameters/ProjectRef"
+        - $ref: "#/components/parameters/InvariantId"
+      responses:
+        "200":
+          description: Soft-deleted invariant
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RequirementInvariant"
+
+  /projects/{project}/requirements/invariants/{invariantId}/criteria:
+    post:
+      operationId: createAcceptanceCriterion
+      tags: [requirements]
+      summary: Create an acceptance criterion (T14)
+      parameters:
+        - $ref: "#/components/parameters/ProjectRef"
+        - $ref: "#/components/parameters/InvariantId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateCriterionInput"
+      responses:
+        "200":
+          description: Created criterion
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AcceptanceCriterion"
+
+  /projects/{project}/requirements/criteria/{criterionId}:
+    patch:
+      operationId: updateAcceptanceCriterion
+      tags: [requirements]
+      summary: Merge-update a criterion (T14)
+      parameters:
+        - $ref: "#/components/parameters/ProjectRef"
+        - $ref: "#/components/parameters/CriterionId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateCriterionInput"
+      responses:
+        "200":
+          description: Updated criterion
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AcceptanceCriterion"
+    delete:
+      operationId: deleteAcceptanceCriterion
+      tags: [requirements]
+      summary: Soft-delete a criterion (T14)
+      parameters:
+        - $ref: "#/components/parameters/ProjectRef"
+        - $ref: "#/components/parameters/CriterionId"
+      responses:
+        "200":
+          description: Soft-deleted criterion
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AcceptanceCriterion"
+
+  /projects/{project}/requirements/{requirementId}/evidence:
+    get:
+      operationId: getRequirementEvidence
+      tags: [requirements]
+      summary: Compact evidence + close gate (T13)
+      parameters:
+        - $ref: "#/components/parameters/ProjectRef"
+        - $ref: "#/components/parameters/RequirementId"
+      responses:
+        "200":
+          description: Evidence drill-down
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RequirementEvidenceResponse"
+
+  /projects/{project}/requirements/compliance:
+    get:
+      operationId: reviewRequirementCompliance
+      tags: [requirements]
+      summary: Exception-only compliance review (T13)
+      parameters:
+        - $ref: "#/components/parameters/ProjectRef"
+        - name: requirement_id
+          in: query
+          required: true
+          description: Repeatable — one or more requirement entry IDs
+          schema:
+            type: array
+            items:
+              type: string
+          style: form
+          explode: true
+      responses:
+        "200":
+          description: Compliance rows
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RequirementComplianceResponse"
+
+  /projects/{project}/requirements/sync:
+    post:
+      operationId: syncRequirements
+      tags: [requirements]
+      summary: Re-parse requirements file and reconcile (AC18)
+      parameters:
+        - $ref: "#/components/parameters/ProjectRef"
+      responses:
+        "200":
+          description: Sync report
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SyncReport"
+
+  /projects/{project}/index:
+    get:
+      operationId: getIndexStatus
+      tags: [index]
+      summary: Index status (FR37)
+      parameters:
+        - $ref: "#/components/parameters/ProjectRef"
+      responses:
+        "200":
+          description: Index status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IndexStatus"
+
+  /projects/{project}/reindex:
+    post:
+      operationId: reindex
+      tags: [index]
+      summary: Trigger index rebuild (FR37)
+      parameters:
+        - $ref: "#/components/parameters/ProjectRef"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ReindexInput"
+      responses:
+        "200":
+          description: Index status after kickoff / completion
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IndexStatus"
+
+  /projects/{project}/code-map:
+    get:
+      operationId: getCodeMap
+      tags: [codemap]
+      summary: One tier of the code map (FR32 / FR32a)
+      parameters:
+        - $ref: "#/components/parameters/ProjectRef"
+        - name: scope
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: depth
+          in: query
+          required: false
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Code map tier
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CodeMap"
+
+  /projects/{project}/source:
+    get:
+      operationId: getSource
+      tags: [codemap]
+      summary: Read-only file source (FR34)
+      parameters:
+        - $ref: "#/components/parameters/ProjectRef"
+        - name: path
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Source file
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SourceFile"
+        "404":
+          description: Path not indexed / not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorBody"
+
+  /projects/{project}/codebase-guide:
+    get:
+      operationId: getCodebaseGuide
+      tags: [codemap]
+      summary: Agent-authored per-file notes plus index facts (FR43, T16)
+      parameters:
+        - $ref: "#/components/parameters/ProjectRef"
+        - name: scope
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: include
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Codebase guide, scoped to one file/subtree or the whole project
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CodebaseGuide"
+        "400":
+          description: Scope matches zero indexed files
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorBody"
+
+  /projects/{project}/search:
+    get:
+      operationId: searchCode
+      tags: [codemap]
+      summary: Hybrid keyword + semantic search (FR35)
+      parameters:
+        - $ref: "#/components/parameters/ProjectRef"
+        - name: q
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: scope
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [project, subtree, files, focus]
+        - name: subtree
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Search hits
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SearchResponse"
+
+  /projects/{project}/token-savings:
+    get:
+      operationId: getTokenSavingsLog
+      tags: [token-savings]
+      summary: Most-recent-first token-savings log entries
+      parameters:
+        - $ref: "#/components/parameters/ProjectRef"
+        - name: operation
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/TokenSavingsOperation"
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Log entries
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/TokenSavingsLogEntry"
+        "400":
+          description: Invalid operation filter
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorBody"
+        "404":
+          description: Unknown project
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorBody"
+
+  /projects/{project}/token-savings/summary:
+    get:
+      operationId: getTokenSavingsSummary
+      tags: [token-savings]
+      summary: Overall totals plus a per-operation breakdown of tokens saved
+      parameters:
+        - $ref: "#/components/parameters/ProjectRef"
+      responses:
+        "200":
+          description: Summary
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TokenSavingsSummary"
+        "404":
+          description: Unknown project
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorBody"
+
+  /projects/{project}/plans/generate-draft:
+    post:
+      operationId: generatePlanDraft
+      tags: [plans]
+      summary: Advisory, strictly read-only AI plan draft proposal (T26, INV-PLAN-6)
+      parameters:
+        - $ref: "#/components/parameters/ProjectRef"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/GeneratePlanDraftInput"
+      responses:
+        "200":
+          description: >
+            Draft generation outcome. `ok: false` (unconfigured/unreachable
+            provider, or an invalid provider response) is a normal response,
+            not an error — `draft` is null and `warning` explains why.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GeneratePlanDraftResult"
+        "400":
+          description: Invalid goal or max_tasks
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorBody"
+        "404":
+          description: Unknown project
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorBody"
+
+  /projects/{project}/plans:
+    get:
+      operationId: listPlans
+      tags: [plans]
+      summary: List plans in a project (FR43)
+      parameters:
+        - $ref: "#/components/parameters/ProjectRef"
+        - name: status
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/PlanStatus"
+      responses:
+        "200":
+          description: Plans
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Plan"
+        "404":
+          description: Unknown project
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorBody"
+    post:
+      operationId: createPlan
+      tags: [plans]
+      summary: Create a plan (FR43)
+      parameters:
+        - $ref: "#/components/parameters/ProjectRef"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreatePlanInput"
+      responses:
+        "201":
+          description: Created plan
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Plan"
+        "400":
+          description: Invalid input
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorBody"
+        "404":
+          description: Unknown project
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorBody"
+
+  /projects/{project}/plans/with-tasks:
+    post:
+      operationId: createPlanWithTasks
+      tags: [plans]
+      summary: Atomically create a plan with its initial tasks and dependencies (FR43, INV-PLAN-6)
+      parameters:
+        - $ref: "#/components/parameters/ProjectRef"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreatePlanWithTasksInput"
+      responses:
+        "201":
+          description: Created plan with tasks
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Plan"
+        "400":
+          description: Invalid input
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorBody"
+        "404":
+          description: Unknown project
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorBody"
+
+  /projects/{project}/plans/{plan_id}:
+    get:
+      operationId: getPlan
+      tags: [plans]
+      summary: Get one plan with its tasks (FR43)
+      parameters:
+        - $ref: "#/components/parameters/ProjectRef"
+        - $ref: "#/components/parameters/PlanId"
+      responses:
+        "200":
+          description: Plan
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Plan"
+        "404":
+          description: Unknown project or plan
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorBody"
+    patch:
+      operationId: updatePlan
+      tags: [plans]
+      summary: Merge-update a plan's title/goal (FR43)
+      parameters:
+        - $ref: "#/components/parameters/ProjectRef"
+        - $ref: "#/components/parameters/PlanId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdatePlanInput"
+      responses:
+        "200":
+          description: Updated plan
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Plan"
+        "400":
+          description: Invalid input, empty patch, or unknown fields
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorBody"
+        "404":
+          description: Unknown project or plan
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorBody"
+
+  /projects/{project}/plans/{plan_id}/archive:
+    post:
+      operationId: archivePlan
+      tags: [plans]
+      summary: Archive a plan and revoke active leases (FR43, D18)
+      parameters:
+        - $ref: "#/components/parameters/ProjectRef"
+        - $ref: "#/components/parameters/PlanId"
+      responses:
+        "200":
+          description: Archived plan
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Plan"
+        "404":
+          description: Unknown project or plan
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorBody"
+
+  /projects/{project}/plans/{plan_id}/activate:
+    post:
+      operationId: activatePlan
+      tags: [plans]
+      summary: Transition a plan from draft to active (FR43, D18)
+      parameters:
+        - $ref: "#/components/parameters/ProjectRef"
+        - $ref: "#/components/parameters/PlanId"
+      responses:
+        "200":
+          description: Activated plan
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Plan"
+        "400":
+          description: Invalid state transition
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorBody"
+        "404":
+          description: Unknown project or plan
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorBody"
+
+  /projects/{project}/plans/{plan_id}/complete:
+    post:
+      operationId: completePlan
+      tags: [plans]
+      summary: Transition a plan from active to completed (FR43, D18)
+      parameters:
+        - $ref: "#/components/parameters/ProjectRef"
+        - $ref: "#/components/parameters/PlanId"
+      responses:
+        "200":
+          description: Completed plan
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Plan"
+        "400":
+          description: Invalid state transition
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorBody"
+        "404":
+          description: Unknown project or plan
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorBody"
+
+  /projects/{project}/plans/{plan_id}/tasks:
+    post:
+      operationId: addPlanTask
+      tags: [plans]
+      summary: Add a task to a plan (FR44)
+      parameters:
+        - $ref: "#/components/parameters/ProjectRef"
+        - $ref: "#/components/parameters/PlanId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AddPlanTaskInput"
+      responses:
+        "201":
+          description: Created task
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PlanTask"
+        "400":
+          description: Invalid input
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorBody"
+        "404":
+          description: Unknown project or plan
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorBody"
+
+  /projects/{project}/plans/{plan_id}/tasks/{task_id}:
+    patch:
+      operationId: updatePlanTask
+      tags: [plans]
+      summary: Merge-update a task's fields (FR44, FR47)
+      parameters:
+        - $ref: "#/components/parameters/ProjectRef"
+        - $ref: "#/components/parameters/PlanId"
+        - $ref: "#/components/parameters/TaskId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdatePlanTaskInput"
+      responses:
+        "200":
+          description: Updated task
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PlanTask"
+        "400":
+          description: Invalid input, empty patch, or unknown fields
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorBody"
+        "404":
+          description: Unknown project, plan, or task
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorBody"
+        "409":
+          description: Active lease requires a valid claim token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorBody"
+
+  /projects/{project}/plans/{plan_id}/dependencies:
+    post:
+      operationId: addTaskDependency
+      tags: [plans]
+      summary: Add a prerequisite dependency between two tasks in the same plan (FR45, D19)
+      parameters:
+        - $ref: "#/components/parameters/ProjectRef"
+        - $ref: "#/components/parameters/PlanId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AddTaskDependencyInput"
+      responses:
+        "200":
+          description: Dependency created
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [task_id, depends_on_task_id]
+                properties:
+                  task_id:
+                    type: string
+                  depends_on_task_id:
+                    type: string
+        "400":
+          description: Invalid input or dependency cycle
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorBody"
+        "404":
+          description: Unknown project, plan, or task
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorBody"
+
+  /projects/{project}/ready-tasks:
+    get:
+      operationId: listReadyTasks
+      tags: [plans]
+      summary: List tasks ready to claim across all active plans in a project (FR46)
+      parameters:
+        - $ref: "#/components/parameters/ProjectRef"
+      responses:
+        "200":
+          description: Ready tasks
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/PlanTask"
+        "404":
+          description: Unknown project
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorBody"
+
+  /projects/{project}/plans/{plan_id}/ready-tasks:
+    get:
+      operationId: listPlanReadyTasks
+      tags: [plans]
+      summary: List tasks ready to claim within one plan (FR46)
+      parameters:
+        - $ref: "#/components/parameters/ProjectRef"
+        - $ref: "#/components/parameters/PlanId"
+      responses:
+        "200":
+          description: Ready tasks
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/PlanTask"
+        "404":
+          description: Unknown project or plan
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorBody"
+
+  /projects/{project}/plans/{plan_id}/tasks/{task_id}/claim:
+    post:
+      operationId: claimTask
+      tags: [plans]
+      summary: Atomically claim a ready (or expired-lease) task (FR47, INV-PLAN-3)
+      parameters:
+        - $ref: "#/components/parameters/ProjectRef"
+        - $ref: "#/components/parameters/PlanId"
+        - $ref: "#/components/parameters/TaskId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ClaimTaskInput"
+      responses:
+        "200":
+          description: Claimed task, with the one-time claim token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ClaimResult"
+        "400":
+          description: Invalid input
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorBody"
+        "404":
+          description: Unknown project, plan, or task
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorBody"
+        "409":
+          description: Task already claimed with an unexpired lease
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorBody"
+
+  /projects/{project}/plans/{plan_id}/tasks/{task_id}/heartbeat:
+    post:
+      operationId: heartbeatTask
+      tags: [plans]
+      summary: Extend the active lease while preserving task status (FR47)
+      parameters:
+        - $ref: "#/components/parameters/ProjectRef"
+        - $ref: "#/components/parameters/PlanId"
+        - $ref: "#/components/parameters/TaskId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/HeartbeatTaskInput"
+      responses:
+        "200":
+          description: Task with extended lease
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PlanTask"
+        "400":
+          description: Invalid input
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorBody"
+        "404":
+          description: Unknown project, plan, or task
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorBody"
+        "409":
+          description: Stale or missing claim token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorBody"
+
+  /projects/{project}/plans/{plan_id}/tasks/{task_id}/release:
+    post:
+      operationId: releaseTask
+      tags: [plans]
+      summary: Relinquish an active claim lease back to ready (FR47)
+      parameters:
+        - $ref: "#/components/parameters/ProjectRef"
+        - $ref: "#/components/parameters/PlanId"
+        - $ref: "#/components/parameters/TaskId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ReleaseTaskInput"
+      responses:
+        "200":
+          description: Released task
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PlanTask"
+        "400":
+          description: Invalid input
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorBody"
+        "404":
+          description: Unknown project, plan, or task
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorBody"
+        "409":
+          description: Stale or missing claim token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorBody"
+
+  /projects/{project}/plans/{plan_id}/tasks/{task_id}/status:
+    post:
+      operationId: setTaskStatus
+      tags: [plans]
+      summary: Transition a task's status (FR44, FR47)
+      parameters:
+        - $ref: "#/components/parameters/ProjectRef"
+        - $ref: "#/components/parameters/PlanId"
+        - $ref: "#/components/parameters/TaskId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SetTaskStatusInput"
+      responses:
+        "200":
+          description: Task with new status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PlanTask"
+        "400":
+          description: Invalid input or state transition
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorBody"
+        "404":
+          description: Unknown project, plan, or task
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorBody"
+        "409":
+          description: Stale or missing claim token on an active lease
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorBody"
+
+  /projects/{project}/plans/{plan_id}/tasks/{task_id}/complete:
+    post:
+      operationId: completeTask
+      tags: [plans]
+      summary: Transition a task to completed (FR44, FR47)
+      parameters:
+        - $ref: "#/components/parameters/ProjectRef"
+        - $ref: "#/components/parameters/PlanId"
+        - $ref: "#/components/parameters/TaskId"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CompleteTaskInput"
+      responses:
+        "200":
+          description: Completed task
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PlanTask"
+        "400":
+          description: Invalid input or state transition
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorBody"
+        "404":
+          description: Unknown project, plan, or task
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorBody"
+        "409":
+          description: Stale or missing claim token on an active lease
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorBody"
+
+  /projects/{project}/prepare-task:
+    post:
+      operationId: preparePlanTaskPrompt
+      tags: [plans]
+      summary: Bounded agent handoff prompt for one planned task (T25, INV-PLAN-5)
+      parameters:
+        - $ref: "#/components/parameters/ProjectRef"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [task_id]
+              properties:
+                task_id:
+                  type: string
+                max_tokens:
+                  type: number
+      responses:
+        "200":
+          description: Rendered handoff prompt
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [project, task_id, plan_id, local_task_id, prompt]
+                properties:
+                  project:
+                    type: string
+                  task_id:
+                    type: string
+                  plan_id:
+                    type: string
+                  local_task_id:
+                    type: string
+                  prompt:
+                    type: string
+                additionalProperties: true
+        "400":
+          description: Invalid input
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorBody"
+        "404":
+          description: Unknown project, plan, or task
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorBody"
+
+  /projects/{project}/plans/{plan_id}/tasks/{task_id}/history:
+    get:
+      operationId: getTaskHistory
+      tags: [plans]
+      summary: Append-only audit history for one task (FR48, D21, INV-PLAN-4)
+      parameters:
+        - $ref: "#/components/parameters/ProjectRef"
+        - $ref: "#/components/parameters/PlanId"
+        - $ref: "#/components/parameters/TaskId"
+      responses:
+        "200":
+          description: Task events, chronologically ordered
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/TaskEvent"
+        "404":
+          description: Unknown project, plan, or task
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorBody"
+
+components:
+  parameters:
+    ProjectRef:
+      name: project
+      in: path
+      required: true
+      description: Project name or id (URL-encoded by the client)
+      schema:
+        type: string
+    EntryId:
+      name: entryId
+      in: path
+      required: true
+      schema:
+        type: string
+    RequirementId:
+      name: requirementId
+      in: path
+      required: true
+      schema:
+        type: string
+    InvariantId:
+      name: invariantId
+      in: path
+      required: true
+      schema:
+        type: string
+    CriterionId:
+      name: criterionId
+      in: path
+      required: true
+      schema:
+        type: string
+    PlanId:
+      name: plan_id
+      in: path
+      required: true
+      schema:
+        type: string
+    TaskId:
+      name: task_id
+      in: path
+      required: true
+      schema:
+        type: string
+    PcsAdminToken:
+      name: x-pcs-admin-token
+      in: header
+      required: true
+      description: Admin token for mutating AI settings
+      schema:
+        type: string
+
+  schemas:
+    ErrorBody:
+      type: object
+      properties:
+        error:
+          type: string
+        available:
+          type: array
+          items:
+            type: string
+      additionalProperties: true
+
+    Health:
+      type: object
+      required: [status, bind_mode, bind_host]
+      properties:
+        status:
+          type: string
+        bind_mode:
+          type: string
+        bind_host:
+          type: string
+
+    AiSettingSource:
+      type: string
+      enum: [persisted, environment, default]
+
+    EmbeddingSettings:
+      type: object
+      required:
+        - backend
+        - base_url
+        - model
+        - dimensions
+        - batch_size
+        - timeout_seconds
+        - api_key_configured
+        - source
+      properties:
+        backend:
+          type: string
+        base_url:
+          type: string
+        model:
+          type: string
+        dimensions:
+          type: number
+        batch_size:
+          type: number
+        timeout_seconds:
+          type: number
+        api_key_configured:
+          type: boolean
+        source:
+          $ref: "#/components/schemas/AiSettingSource"
+
+    SummarySettings:
+      type: object
+      required:
+        - backend
+        - base_url
+        - model
+        - timeout_seconds
+        - api_key_configured
+        - source
+      properties:
+        backend:
+          type: string
+        base_url:
+          type: string
+        model:
+          type: string
+        timeout_seconds:
+          type: number
+        api_key_configured:
+          type: boolean
+        source:
+          $ref: "#/components/schemas/AiSettingSource"
+
+    AiSettings:
+      type: object
+      required: [embedding, summary, reindex_required]
+      properties:
+        embedding:
+          $ref: "#/components/schemas/EmbeddingSettings"
+        summary:
+          $ref: "#/components/schemas/SummarySettings"
+        reindex_required:
+          type: boolean
+
+    EmbeddingSettingsInput:
+      type: object
+      required:
+        - backend
+        - base_url
+        - model
+        - dimensions
+        - batch_size
+        - timeout_seconds
+      properties:
+        backend:
+          type: string
+        base_url:
+          type: string
+        model:
+          type: string
+        dimensions:
+          type: number
+        batch_size:
+          type: number
+        timeout_seconds:
+          type: number
+        api_key:
+          type: string
+          nullable: true
+
+    SummarySettingsInput:
+      type: object
+      required: [backend, base_url, model, timeout_seconds]
+      properties:
+        backend:
+          type: string
+        base_url:
+          type: string
+        model:
+          type: string
+        timeout_seconds:
+          type: number
+        api_key:
+          type: string
+          nullable: true
+
+    AiSettingsInput:
+      type: object
+      properties:
+        embedding:
+          $ref: "#/components/schemas/EmbeddingSettingsInput"
+        summary:
+          $ref: "#/components/schemas/SummarySettingsInput"
+
+    Project:
+      type: object
+      required:
+        - id
+        - name
+        - root_path
+        - status_line
+        - briefing_token_budget
+        - prepare_task_token_budget
+        - headline_max_chars
+        - detail_max_chars
+        - expiry_policy
+        - expiry_days
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        root_path:
+          type: string
+        status_line:
+          type: string
+        briefing_token_budget:
+          type: number
+        prepare_task_token_budget:
+          type: number
+        headline_max_chars:
+          type: number
+        detail_max_chars:
+          type: number
+        expiry_policy:
+          type: string
+        expiry_days:
+          type: number
+          nullable: true
+
+    Briefing:
+      type: object
+      required: [project, briefing]
+      properties:
+        project:
+          type: string
+        briefing:
+          type: string
+
+    RegisterProjectInput:
+      type: object
+      required: [name, root_path, overview]
+      properties:
+        name:
+          type: string
+        root_path:
+          type: string
+        overview:
+          type: string
+
+    EntryLifecycle:
+      type: string
+      enum: [open, resolved, deleted, archived]
+
+    RequirementStatus:
+      type: string
+      enum: [not-started, in-progress, blocked, done]
+
+    Entry:
+      type: object
+      required:
+        - id
+        - project_id
+        - section
+        - headline
+        - detail
+        - status
+        - priority
+        - author
+        - created_at
+        - updated_at
+        - requirement_status
+        - linked_files
+        - related_entry_id
+        - req_key
+        - diagram
+      properties:
+        id:
+          type: string
+        project_id:
+          type: string
+        section:
+          type: string
+        headline:
+          type: string
+        detail:
+          type: string
+        status:
+          $ref: "#/components/schemas/EntryLifecycle"
+        priority:
+          type: number
+        author:
+          type: string
+        created_at:
+          type: string
+        updated_at:
+          type: string
+        requirement_status:
+          allOf:
+            - $ref: "#/components/schemas/RequirementStatus"
+          nullable: true
+        linked_files:
+          type: array
+          items:
+            type: string
+        related_entry_id:
+          type: string
+          nullable: true
+        req_key:
+          type: string
+          nullable: true
+        diagram:
+          type: string
+          nullable: true
+
+    SectionResponse:
+      type: object
+      required: [section, entries]
+      properties:
+        section:
+          type: string
+        entries:
+          type: array
+          items:
+            $ref: "#/components/schemas/Entry"
+
+    EntryInput:
+      type: object
+      properties:
+        section:
+          type: string
+        headline:
+          type: string
+        detail:
+          type: string
+        priority:
+          type: number
+        status:
+          $ref: "#/components/schemas/RequirementStatus"
+        linked_files:
+          type: array
+          items:
+            type: string
+
+    ReconciliationNote:
+      type: object
+      required: [req_key, message]
+      properties:
+        req_key:
+          type: string
+        message:
+          type: string
+
+    RequirementsFileSync:
+      type: object
+      required: [path, written, writable, errors, reconciliations]
+      properties:
+        path:
+          type: string
+        written:
+          type: boolean
+        writable:
+          type: boolean
+        errors:
+          type: array
+          items:
+            type: string
+        reconciliations:
+          type: array
+          items:
+            $ref: "#/components/schemas/ReconciliationNote"
+
+    EntryWriteResponse:
+      allOf:
+        - $ref: "#/components/schemas/Entry"
+        - type: object
+          properties:
+            requirements_file:
+              $ref: "#/components/schemas/RequirementsFileSync"
+
+    SetFocusInput:
+      type: object
+      required: [text]
+      properties:
+        text:
+          type: string
+
+    Requirement:
+      type: object
+      required:
+        - req_key
+        - entry_id
+        - title
+        - status
+        - lifecycle
+        - linked_files
+      properties:
+        req_key:
+          type: string
+        entry_id:
+          type: string
+        title:
+          type: string
+        status:
+          $ref: "#/components/schemas/RequirementStatus"
+        lifecycle:
+          type: string
+        linked_files:
+          type: array
+          items:
+            type: string
+
+    RequirementsResponse:
+      type: object
+      required: [requirements, done_count, total_count]
+      properties:
+        requirements:
+          type: array
+          items:
+            $ref: "#/components/schemas/Requirement"
+        done_count:
+          type: number
+        total_count:
+          type: number
+
+    SyncReport:
+      type: object
+      required:
+        - project_id
+        - project_name
+        - file_path
+        - ok
+        - file_existed
+        - file_written
+        - file_writable
+        - created
+        - updated
+        - archived
+        - written_back
+        - reconciliations
+        - errors
+        - requirements
+        - done_count
+        - total_count
+      properties:
+        project_id:
+          type: string
+        project_name:
+          type: string
+        file_path:
+          type: string
+        ok:
+          type: boolean
+        file_existed:
+          type: boolean
+        file_written:
+          type: boolean
+        file_writable:
+          type: boolean
+        created:
+          type: array
+          items:
+            type: string
+        updated:
+          type: array
+          items:
+            type: string
+        archived:
+          type: array
+          items:
+            type: string
+        written_back:
+          type: array
+          items:
+            type: string
+        reconciliations:
+          type: array
+          items:
+            $ref: "#/components/schemas/ReconciliationNote"
+        errors:
+          type: array
+          items:
+            type: string
+        requirements:
+          type: array
+          items:
+            $ref: "#/components/schemas/Requirement"
+        done_count:
+          type: number
+        total_count:
+          type: number
+
+    SkippedFile:
+      type: object
+      required: [path, reason]
+      properties:
+        path:
+          type: string
+        reason:
+          type: string
+
+    IndexStatus:
+      type: object
+      required:
+        - project_id
+        - project_name
+        - state
+        - last_full_at
+        - last_incremental_at
+        - last_commit
+        - file_count
+        - chunk_count
+        - skipped_count
+        - skipped
+        - semantic_available
+      properties:
+        project_id:
+          type: string
+        project_name:
+          type: string
+        state:
+          type: string
+        last_full_at:
+          type: string
+          nullable: true
+        last_incremental_at:
+          type: string
+          nullable: true
+        last_commit:
+          type: string
+          nullable: true
+        file_count:
+          type: number
+        chunk_count:
+          type: number
+        skipped_count:
+          type: number
+        skipped:
+          type: array
+          items:
+            $ref: "#/components/schemas/SkippedFile"
+        semantic_available:
+          type: boolean
+        semantic_note:
+          type: string
+          nullable: true
+
+    ReindexInput:
+      type: object
+      required: [incremental]
+      properties:
+        incremental:
+          type: boolean
+
+    CodeMapOverlay:
+      type: object
+      required: [focus, blockers, bugs, requirements, hot]
+      properties:
+        focus:
+          type: number
+        blockers:
+          type: number
+        bugs:
+          type: number
+        requirements:
+          type: number
+        hot:
+          type: boolean
+
+    CodeMapNodeKind:
+      type: string
+      enum: [directory, file, symbol, external]
+
+    CodeMapNode:
+      type: object
+      required:
+        - id
+        - kind
+        - path
+        - label
+        - language
+        - loc
+        - size_bytes
+        - file_count
+        - symbol_count
+        - fan_in
+        - fan_out
+        - has_children
+        - outside_scope
+        - overlay
+      properties:
+        id:
+          type: string
+        kind:
+          $ref: "#/components/schemas/CodeMapNodeKind"
+        path:
+          type: string
+        label:
+          type: string
+        language:
+          type: string
+          nullable: true
+        loc:
+          type: number
+        size_bytes:
+          type: number
+        file_count:
+          type: number
+        symbol_count:
+          type: number
+        fan_in:
+          type: number
+        fan_out:
+          type: number
+        has_children:
+          type: boolean
+        outside_scope:
+          type: boolean
+        overlay:
+          $ref: "#/components/schemas/CodeMapOverlay"
+        symbol_kind:
+          type: string
+        start_line:
+          type: number
+        end_line:
+          type: number
+        signature:
+          type: string
+          nullable: true
+
+    CodeMapEdge:
+      type: object
+      required: [source, target, kind, weight]
+      properties:
+        source:
+          type: string
+        target:
+          type: string
+        kind:
+          type: string
+        weight:
+          type: number
+
+    CodeMapProvenance:
+      type: object
+      required: [indexed]
+      properties:
+        indexed:
+          type: boolean
+        last_full_at:
+          type: string
+          nullable: true
+        last_incremental_at:
+          type: string
+          nullable: true
+        last_commit:
+          type: string
+          nullable: true
+        symbol_modes:
+          type: object
+          additionalProperties:
+            type: string
+
+    CodeMapStats:
+      type: object
+      required: [node_count, edge_count, truncated]
+      properties:
+        total_files:
+          type: number
+        total_resolved_edges:
+          type: number
+        node_count:
+          type: number
+        edge_count:
+          type: number
+        truncated:
+          type: boolean
+
+    CodeMap:
+      type: object
+      required:
+        - project
+        - project_name
+        - scope
+        - scope_kind
+        - depth
+        - generated_from
+        - nodes
+        - edges
+        - stats
+        - overlay_legend
+      properties:
+        project:
+          type: string
+        project_name:
+          type: string
+        scope:
+          type: string
+          nullable: true
+        scope_kind:
+          type: string
+          enum: [directory, file]
+        depth:
+          type: number
+        generated_from:
+          $ref: "#/components/schemas/CodeMapProvenance"
+        nodes:
+          type: array
+          items:
+            $ref: "#/components/schemas/CodeMapNode"
+        edges:
+          type: array
+          items:
+            $ref: "#/components/schemas/CodeMapEdge"
+        dependencies:
+          type: array
+          items:
+            type: string
+        dependents:
+          type: array
+          items:
+            type: string
+        stats:
+          $ref: "#/components/schemas/CodeMapStats"
+        overlay_legend:
+          type: array
+          items:
+            type: string
+
+    CodebaseGuideProvenance:
+      type: object
+      required: [indexed]
+      properties:
+        indexed:
+          type: boolean
+        last_full_at:
+          type: string
+          nullable: true
+        last_incremental_at:
+          type: string
+          nullable: true
+        last_commit:
+          type: string
+          nullable: true
+        source:
+          type: string
+          nullable: true
+
+    CodebaseGuideNote:
+      type: object
+      required: [summary, updated_by, updated_at, content_hash]
+      properties:
+        summary:
+          type: string
+        updated_by:
+          type: string
+        updated_at:
+          type: string
+          nullable: true
+        content_hash:
+          type: string
+
+    CodebaseGuideFile:
+      type: object
+      required: [path, language, loc, symbols, imports, imported_by, summary, note, stale]
+      properties:
+        path:
+          type: string
+        language:
+          type: string
+          nullable: true
+        loc:
+          type: number
+        symbols:
+          type: array
+          items:
+            type: string
+        imports:
+          type: array
+          items:
+            type: string
+        imported_by:
+          type: array
+          items:
+            type: string
+        summary:
+          type: string
+          nullable: true
+        note:
+          allOf:
+            - $ref: "#/components/schemas/CodebaseGuideNote"
+          nullable: true
+        stale:
+          type: boolean
+
+    CodebaseGuideCoverage:
+      type: object
+      required: [documented, total, stale]
+      properties:
+        documented:
+          type: number
+        total:
+          type: number
+        stale:
+          type: number
+
+    CodebaseGuideArtifact:
+      type: object
+      required: [path, file_writable, error]
+      properties:
+        path:
+          type: string
+          nullable: true
+        file_writable:
+          type: boolean
+        error:
+          type: string
+          nullable: true
+
+    CodebaseGuide:
+      type: object
+      required:
+        - project
+        - scope
+        - include
+        - coverage
+        - generated_from
+        - files
+        - artifact
+        - file_path
+        - file_writable
+      properties:
+        project:
+          type: string
+        scope:
+          type: string
+          nullable: true
+        include:
+          type: string
+        coverage:
+          $ref: "#/components/schemas/CodebaseGuideCoverage"
+        generated_from:
+          $ref: "#/components/schemas/CodebaseGuideProvenance"
+        files:
+          type: array
+          items:
+            $ref: "#/components/schemas/CodebaseGuideFile"
+        artifact:
+          $ref: "#/components/schemas/CodebaseGuideArtifact"
+        file_path:
+          type: string
+          nullable: true
+        file_writable:
+          type: boolean
+
+    SourceFile:
+      type: object
+      required: [path, language, content, truncated]
+      properties:
+        path:
+          type: string
+        language:
+          type: string
+          nullable: true
+        content:
+          type: string
+        truncated:
+          type: boolean
+
+    SearchHit:
+      type: object
+      required:
+        - path
+        - start_line
+        - end_line
+        - snippet
+        - score
+        - matched_mode
+        - stale
+        - symbol
+        - kind
+        - language
+      properties:
+        path:
+          type: string
+        start_line:
+          type: number
+        end_line:
+          type: number
+        snippet:
+          type: string
+        score:
+          type: number
+        matched_mode:
+          type: string
+        retrieval_modes:
+          type: array
+          items:
+            type: string
+        stale:
+          type: boolean
+        symbol:
+          type: string
+          nullable: true
+        kind:
+          type: string
+        language:
+          type: string
+          nullable: true
+
+    SearchResponse:
+      type: object
+      required: [hits, semantic_available, mode]
+      properties:
+        hits:
+          type: array
+          items:
+            $ref: "#/components/schemas/SearchHit"
+        semantic_available:
+          type: boolean
+        mode:
+          type: string
+        note:
+          type: string
+          nullable: true
+
+    RequirementInvariant:
+      type: object
+      required:
+        - id
+        - project_id
+        - requirement_id
+        - key
+        - statement
+        - kind
+        - risk
+        - sort_order
+        - status
+        - author
+        - created_at
+        - updated_at
+      properties:
+        id:
+          type: string
+        project_id:
+          type: string
+        requirement_id:
+          type: string
+        key:
+          type: string
+        statement:
+          type: string
+        kind:
+          type: string
+        risk:
+          type: string
+        sort_order:
+          type: number
+        status:
+          type: string
+        author:
+          type: string
+        created_at:
+          type: string
+        updated_at:
+          type: string
+
+    AcceptanceCriterion:
+      type: object
+      required:
+        - id
+        - project_id
+        - invariant_id
+        - key
+        - statement
+        - evidence_kind
+        - required
+        - independent_review
+        - sort_order
+        - status
+        - author
+        - created_at
+        - updated_at
+      properties:
+        id:
+          type: string
+        project_id:
+          type: string
+        invariant_id:
+          type: string
+        key:
+          type: string
+        statement:
+          type: string
+        evidence_kind:
+          type: string
+        required:
+          type: boolean
+        independent_review:
+          type: string
+        sort_order:
+          type: number
+        status:
+          type: string
+        author:
+          type: string
+        created_at:
+          type: string
+        updated_at:
+          type: string
+
+    RequirementContract:
+      type: object
+      required: [requirement_id, req_key, headline, include, invariants, criteria]
+      properties:
+        requirement_id:
+          type: string
+        req_key:
+          type: string
+          nullable: true
+        headline:
+          type: string
+        include:
+          type: string
+          enum: [invariants, criteria, both]
+        invariants:
+          type: array
+          items:
+            $ref: "#/components/schemas/RequirementInvariant"
+        criteria:
+          type: array
+          items:
+            $ref: "#/components/schemas/AcceptanceCriterion"
+
+    CreateInvariantInput:
+      type: object
+      required: [statement, kind, risk]
+      properties:
+        statement:
+          type: string
+        kind:
+          type: string
+        risk:
+          type: string
+        key:
+          type: string
+        sort_order:
+          type: number
+
+    UpdateInvariantInput:
+      type: object
+      properties:
+        statement:
+          type: string
+        kind:
+          type: string
+        risk:
+          type: string
+        key:
+          type: string
+        sort_order:
+          type: number
+
+    CreateCriterionInput:
+      type: object
+      required: [statement, evidence_kind]
+      properties:
+        statement:
+          type: string
+        evidence_kind:
+          type: string
+        key:
+          type: string
+        required:
+          type: boolean
+        independent_review:
+          type: string
+        sort_order:
+          type: number
+
+    UpdateCriterionInput:
+      type: object
+      properties:
+        statement:
+          type: string
+        evidence_kind:
+          type: string
+        required:
+          type: boolean
+        independent_review:
+          type: string
+        key:
+          type: string
+        sort_order:
+          type: number
+
+    ValidationState:
+      type: string
+      enum: [ok, stale, not-configured]
+
+    IndependentReviewState:
+      type: string
+      enum: [passed, failed, not-configured]
+
+    RequirementComplianceException:
+      type: object
+      required: [kind, invariant_id, invariant_key, file_refs]
+      properties:
+        kind:
+          type: string
+          enum:
+            - missing
+            - stale
+            - blocking
+            - review-missing
+            - review-failed
+            - review-stale
+        criterion_id:
+          type: string
+        criterion_key:
+          type: string
+        violation_id:
+          type: string
+        invariant_id:
+          type: string
+        invariant_key:
+          type: string
+        file_refs:
+          type: array
+          items:
+            type: string
+        summary:
+          type: string
+          nullable: true
+
+    RequirementComplianceRow:
+      type: object
+      required:
+        - requirement_id
+        - req_key
+        - status
+        - configured
+        - verdict
+        - ac_verified
+        - ac_total
+        - validation
+        - review
+        - exceptions
+        - omitted_exceptions
+      properties:
+        requirement_id:
+          type: string
+        req_key:
+          type: string
+          nullable: true
+        status:
+          $ref: "#/components/schemas/RequirementStatus"
+        configured:
+          type: boolean
+        verdict:
+          type: string
+          enum: [verified, failed, not-configured]
+        ac_verified:
+          type: number
+        ac_total:
+          type: number
+        validation:
+          $ref: "#/components/schemas/ValidationState"
+        review:
+          $ref: "#/components/schemas/IndependentReviewState"
+        exceptions:
+          type: array
+          items:
+            $ref: "#/components/schemas/RequirementComplianceException"
+        omitted_exceptions:
+          type: number
+
+    RequirementComplianceResponse:
+      type: object
+      required:
+        - project_id
+        - requirements
+        - reviewed_count
+        - omitted_requirements
+        - limits
+      properties:
+        project_id:
+          type: string
+        requirements:
+          type: array
+          items:
+            $ref: "#/components/schemas/RequirementComplianceRow"
+        reviewed_count:
+          type: number
+        omitted_requirements:
+          type: number
+        limits:
+          type: object
+          required: [requirements, exceptions_per_requirement]
+          properties:
+            requirements:
+              type: number
+            exceptions_per_requirement:
+              type: number
+
+    RequirementEvidence:
+      type: object
+      required:
+        - id
+        - criterion_id
+        - contract_revision_id
+        - kind
+        - result
+        - source_commit
+        - file_refs
+        - seq
+      properties:
+        id:
+          type: string
+        criterion_id:
+          type: string
+        contract_revision_id:
+          type: string
+        kind:
+          type: string
+        result:
+          type: string
+          enum: [passed, failed, manual-pending]
+        source_commit:
+          type: string
+        file_refs:
+          type: array
+          items:
+            type: string
+        seq:
+          type: number
+
+    RequirementViolation:
+      type: object
+      required: [id, invariant_id, severity, status, summary, file_refs]
+      properties:
+        id:
+          type: string
+        invariant_id:
+          type: string
+        severity:
+          type: string
+          enum: [blocking, warning]
+        status:
+          type: string
+          enum: [open, resolved]
+        summary:
+          type: string
+        file_refs:
+          type: array
+          items:
+            type: string
+
+    RequirementCloseGate:
+      type: object
+      required:
+        - requirement_id
+        - configured
+        - passed
+        - unmet
+        - ac_verified
+        - ac_total
+        - missing
+        - stale
+        - blocking
+        - validation
+        - review
+      properties:
+        requirement_id:
+          type: string
+        configured:
+          type: boolean
+        passed:
+          type: boolean
+        unmet:
+          type: array
+          items:
+            type: string
+        ac_verified:
+          type: number
+        ac_total:
+          type: number
+        missing:
+          type: array
+          items:
+            type: object
+            additionalProperties:
+              type: string
+        stale:
+          type: array
+          items:
+            type: object
+            additionalProperties:
+              type: string
+        blocking:
+          type: array
+          items:
+            type: object
+            additionalProperties:
+              type: string
+        validation:
+          type: string
+        review:
+          type: string
+
+    RequirementEvidenceResponse:
+      type: object
+      required:
+        - requirement_id
+        - evidence
+        - violations
+        - close_gate
+        - evidence_total
+        - evidence_omitted
+        - violations_total
+        - violations_omitted
+        - limits
+      properties:
+        requirement_id:
+          type: string
+        evidence:
+          type: array
+          items:
+            $ref: "#/components/schemas/RequirementEvidence"
+        violations:
+          type: array
+          items:
+            $ref: "#/components/schemas/RequirementViolation"
+        close_gate:
+          $ref: "#/components/schemas/RequirementCloseGate"
+        evidence_total:
+          type: number
+        evidence_omitted:
+          type: number
+        violations_total:
+          type: number
+        violations_omitted:
+          type: number
+        limits:
+          type: object
+          required: [evidence, violations]
+          properties:
+            evidence:
+              type: number
+            violations:
+              type: number
+
+    PlanStatus:
+      type: string
+      enum: [draft, active, completed, archived]
+
+    TaskStatus:
+      type: string
+      enum:
+        - pending
+        - ready
+        - claimed
+        - in_progress
+        - blocked
+        - in_review
+        - completed
+        - cancelled
+
+    TaskEventType:
+      type: string
+      enum:
+        - created
+        - updated
+        - dependency_added
+        - claimed
+        - reclaimed
+        - heartbeat
+        - released
+        - status_changed
+        - completed
+        - cancelled
+
+    PlanTask:
+      type: object
+      required:
+        - id
+        - plan_id
+        - project_id
+        - local_task_id
+        - title
+        - objective
+        - acceptance_criteria
+        - linked_files
+        - priority
+        - status
+        - claimed_by
+        - lease_expires_at
+        - created_at
+        - updated_at
+        - dependencies
+        - requirement_ids
+      properties:
+        id:
+          type: string
+        plan_id:
+          type: string
+        project_id:
+          type: string
+        local_task_id:
+          type: string
+        title:
+          type: string
+        objective:
+          type: string
+        acceptance_criteria:
+          type: array
+          items:
+            type: string
+        linked_files:
+          type: array
+          items:
+            type: string
+        priority:
+          type: number
+        status:
+          $ref: "#/components/schemas/TaskStatus"
+        claimed_by:
+          type: string
+          nullable: true
+        lease_expires_at:
+          type: string
+          format: date-time
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        dependencies:
+          type: array
+          items:
+            type: string
+        requirement_ids:
+          type: array
+          items:
+            type: string
+
+    Plan:
+      type: object
+      required:
+        - id
+        - project_id
+        - title
+        - goal
+        - status
+        - author
+        - created_at
+        - updated_at
+        - tasks
+      properties:
+        id:
+          type: string
+        project_id:
+          type: string
+        title:
+          type: string
+        goal:
+          type: string
+        status:
+          $ref: "#/components/schemas/PlanStatus"
+        author:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        tasks:
+          type: array
+          items:
+            $ref: "#/components/schemas/PlanTask"
+
+    ClaimResult:
+      type: object
+      required: [task, claim_token]
+      properties:
+        task:
+          $ref: "#/components/schemas/PlanTask"
+        claim_token:
+          type: string
+
+    TaskEvent:
+      type: object
+      required:
+        - id
+        - project_id
+        - plan_id
+        - task_id
+        - event_type
+        - actor
+        - old_status
+        - new_status
+        - payload
+        - created_at
+      properties:
+        id:
+          type: string
+        project_id:
+          type: string
+        plan_id:
+          type: string
+        task_id:
+          type: string
+        event_type:
+          $ref: "#/components/schemas/TaskEventType"
+        actor:
+          type: string
+        old_status:
+          type: string
+          nullable: true
+        new_status:
+          type: string
+          nullable: true
+        payload:
+          type: object
+          additionalProperties: true
+        created_at:
+          type: string
+          format: date-time
+
+    CreatePlanInput:
+      type: object
+      required: [title, goal]
+      properties:
+        title:
+          type: string
+        goal:
+          type: string
+
+    TaskSpecInput:
+      type: object
+      required: [local_task_id, title, objective]
+      properties:
+        local_task_id:
+          type: string
+        title:
+          type: string
+        objective:
+          type: string
+        acceptance_criteria:
+          type: array
+          items:
+            type: string
+        linked_files:
+          type: array
+          items:
+            type: string
+        requirement_ids:
+          type: array
+          items:
+            type: string
+        priority:
+          type: number
+
+    DependencySpecInput:
+      type: object
+      required: [task_local_id, depends_on_local_id]
+      properties:
+        task_local_id:
+          type: string
+        depends_on_local_id:
+          type: string
+
+    CreatePlanWithTasksInput:
+      type: object
+      required: [title, goal, tasks]
+      properties:
+        title:
+          type: string
+        goal:
+          type: string
+        tasks:
+          type: array
+          items:
+            $ref: "#/components/schemas/TaskSpecInput"
+        dependencies:
+          type: array
+          items:
+            $ref: "#/components/schemas/DependencySpecInput"
+
+    UpdatePlanInput:
+      type: object
+      properties:
+        title:
+          type: string
+        goal:
+          type: string
+
+    AddPlanTaskInput:
+      type: object
+      required: [local_task_id, title, objective]
+      properties:
+        local_task_id:
+          type: string
+        title:
+          type: string
+        objective:
+          type: string
+        acceptance_criteria:
+          type: array
+          items:
+            type: string
+        linked_files:
+          type: array
+          items:
+            type: string
+        requirement_ids:
+          type: array
+          items:
+            type: string
+        priority:
+          type: number
+
+    UpdatePlanTaskInput:
+      type: object
+      properties:
+        title:
+          type: string
+        objective:
+          type: string
+        acceptance_criteria:
+          type: array
+          items:
+            type: string
+        linked_files:
+          type: array
+          items:
+            type: string
+        requirement_ids:
+          type: array
+          items:
+            type: string
+        priority:
+          type: number
+        claim_token:
+          type: string
+
+    AddTaskDependencyInput:
+      type: object
+      required: [task_id, depends_on_task_id]
+      properties:
+        task_id:
+          type: string
+        depends_on_task_id:
+          type: string
+
+    ClaimTaskInput:
+      type: object
+      required: [claimed_by]
+      properties:
+        claimed_by:
+          type: string
+        lease_seconds:
+          type: number
+
+    HeartbeatTaskInput:
+      type: object
+      required: [claim_token]
+      properties:
+        claim_token:
+          type: string
+        lease_seconds:
+          type: number
+
+    ReleaseTaskInput:
+      type: object
+      required: [claim_token]
+      properties:
+        claim_token:
+          type: string
+
+    SetTaskStatusInput:
+      type: object
+      required: [status]
+      properties:
+        status:
+          $ref: "#/components/schemas/TaskStatus"
+        claim_token:
+          type: string
+        reason:
+          type: string
+
+    CompleteTaskInput:
+      type: object
+      properties:
+        claim_token:
+          type: string
+
+    GeneratePlanDraftInput:
+      type: object
+      required: [goal]
+      properties:
+        goal:
+          type: string
+        constraints:
+          type: string
+        max_tasks:
+          type: number
+
+    PlanDraftTask:
+      type: object
+      required: [local_task_id, title, objective, acceptance_criteria, linked_files, requirement_ids]
+      properties:
+        local_task_id:
+          type: string
+        title:
+          type: string
+        objective:
+          type: string
+        acceptance_criteria:
+          type: array
+          items:
+            type: string
+        linked_files:
+          type: array
+          items:
+            type: string
+        requirement_ids:
+          type: array
+          items:
+            type: string
+
+    PlanDraftDependency:
+      type: object
+      required: [task_local_id, depends_on_local_id]
+      properties:
+        task_local_id:
+          type: string
+        depends_on_local_id:
+          type: string
+
+    PlanDraft:
+      type: object
+      required: [title, goal, tasks, dependencies, notes]
+      properties:
+        title:
+          type: string
+        goal:
+          type: string
+        tasks:
+          type: array
+          items:
+            $ref: "#/components/schemas/PlanDraftTask"
+        dependencies:
+          type: array
+          items:
+            $ref: "#/components/schemas/PlanDraftDependency"
+        notes:
+          type: string
+          nullable: true
+
+    GeneratePlanDraftResult:
+      type: object
+      required: [ok, draft, provider, model, warning]
+      properties:
+        ok:
+          type: boolean
+        draft:
+          allOf:
+            - $ref: "#/components/schemas/PlanDraft"
+          nullable: true
+        provider:
+          type: string
+        model:
+          type: string
+        warning:
+          type: string
+          nullable: true
+
+    TokenSavingsOperation:
+      type: string
+      enum: [retrieve_context, search_code, prepare_task, get_project_briefing]
+
+    TokenSavingsLogEntry:
+      type: object
+      required:
+        - id
+        - project_id
+        - operation
+        - caller
+        - actual_tokens
+        - baseline_tokens
+        - saved_tokens
+        - created_at
+      properties:
+        id:
+          type: string
+        project_id:
+          type: string
+        operation:
+          $ref: "#/components/schemas/TokenSavingsOperation"
+        caller:
+          type: string
+        actual_tokens:
+          type: number
+        baseline_tokens:
+          type: number
+        saved_tokens:
+          type: number
+        created_at:
+          type: string
+          format: date-time
+
+    TokenSavingsOperationSummary:
+      type: object
+      required: [operation, call_count, actual_tokens_total, baseline_tokens_total, saved_tokens_total]
+      properties:
+        operation:
+          allOf:
+            - $ref: "#/components/schemas/TokenSavingsOperation"
+          nullable: true
+        call_count:
+          type: number
+        actual_tokens_total:
+          type: number
+        baseline_tokens_total:
+          type: number
+        saved_tokens_total:
+          type: number
+
+    TokenSavingsSummary:
+      type: object
+      required: [overall, by_operation]
+      properties:
+        overall:
+          $ref: "#/components/schemas/TokenSavingsOperationSummary"
+        by_operation:
+          type: array
+          items:
+            $ref: "#/components/schemas/TokenSavingsOperationSummary"

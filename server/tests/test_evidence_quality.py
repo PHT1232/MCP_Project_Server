@@ -79,9 +79,11 @@ async def _contract(
 
 
 async def test_dirty_rejection_and_provisional_lifecycle_hide_paths(tmp_path: Path) -> None:
+    """Dirty means a TRACKED file differs from HEAD — modify the already-committed
+    app.py (not a new untracked file) to exercise that path genuinely."""
     _, _, ac_id = await _contract(tmp_path)
     sha = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=tmp_path, text=True).strip()
-    (tmp_path / "private-secret.py").write_text("DIRTY = True\n", encoding="utf-8")
+    (tmp_path / "app.py").write_text("VALUE = 1\nSECRET_TOKEN = 's3cret'\n", encoding="utf-8")
     async with session_scope() as session:
         with pytest.raises(ValidationError) as caught:
             await evidence.record_evidence(
@@ -93,10 +95,12 @@ async def test_dirty_rejection_and_provisional_lifecycle_hide_paths(tmp_path: Pa
                 source_commit=sha,
             )
         message = str(caught.value)
-        assert message == "dirty-worktree: worktree_fingerprint required"
-        assert "private-secret.py" not in message
+        assert message.startswith("dirty-worktree: worktree_fingerprint required (expected ")
+        assert "SECRET_TOKEN" not in message
+        assert "s3cret" not in message
         _, fingerprint = await evidence._repo_state(str(tmp_path))
         assert fingerprint is not None and len(fingerprint) == 64
+        assert fingerprint in message
         row = await evidence.record_evidence(
             session,
             project=PROJECT,
@@ -111,6 +115,33 @@ async def test_dirty_rejection_and_provisional_lifecycle_hide_paths(tmp_path: Pa
         )
     assert row.lifecycle == "provisional"
     assert not gate.passed
+
+
+async def test_untracked_files_never_require_a_fingerprint(tmp_path: Path) -> None:
+    """Regression: incidental untracked clutter (from unrelated tools/sessions)
+    used to permanently block evidence recording, because "dirty" counted any
+    untracked file. A clean tracked-diff-at-source_commit must be recordable
+    with no worktree_fingerprint at all, regardless of untracked files."""
+    _, _, ac_id = await _contract(tmp_path)
+    sha = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=tmp_path, text=True).strip()
+    (tmp_path / ".continue").mkdir()
+    (tmp_path / ".continue" / "session.md").write_text("unrelated\n", encoding="utf-8")
+    (tmp_path / "AGENTS.md").write_text("unrelated notes\n", encoding="utf-8")
+    async with session_scope() as session:
+        row = await evidence.record_evidence(
+            session,
+            project=PROJECT,
+            criterion_id=ac_id,
+            kind="test",
+            result="passed",
+            source_commit=sha,
+        )
+        gate = await evidence.evaluate_close_gate(
+            session, project=PROJECT, requirement_id=row.requirement_id
+        )
+    assert row.lifecycle == "verified-at-commit"
+    assert row.worktree_fingerprint is None
+    assert gate.passed
 
 
 async def test_lifecycle_claim_bounds_and_only_verified_current_passes(tmp_path: Path) -> None:

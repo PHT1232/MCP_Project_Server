@@ -49,15 +49,54 @@ An entry contains `id`, `project_id`, `section`, `headline`, `detail`, lifecycle
 
 Requirement status values are `not-started`, `in-progress`, `blocked`, and `done`. Lifecycle resolution is distinct from status `done`.
 
+## Planning (plans, tasks, orchestration)
+
+Plans and tasks live under `/api/projects/{project}/plans/...`; every task-scoped route is nested under its plan (`/plans/{plan_id}/tasks/{task_id}/...`) and returns `404` if `task_id` does not belong to `plan_id`, or if `plan_id` does not belong to `{project}` (AC-PLAN-1). See `docs/mcp-reference.md`'s Planning section for the shared domain model — plan/task status values, the lease-expiry boundary (`lease_expires_at > now()` is active; `<= now()` is expired/reclaimable), and the "no operator bypass" active-lease token rule.
+
+| Method and path | Input | Success |
+|---|---|---|
+| `POST /api/projects/{project}/plans` | JSON: `title`, `goal` | `201` empty plan in `draft` status. |
+| `GET /api/projects/{project}/plans` | Query: optional `status` | Array of plans (with tasks). |
+| `POST /api/projects/{project}/plans/with-tasks` | JSON: `title`, `goal`, `tasks` (array of `{local_task_id, title, objective, acceptance_criteria, linked_files, requirement_ids, priority}`), optional `dependencies` (array of `{task_local_id, depends_on_local_id}`) | `201` plan created atomically with its full task DAG (FR43-FR45, D23). This is the only route that ever persists an AI-drafted plan, and only when a caller submits it explicitly. |
+| `POST /api/projects/{project}/plans/generate-draft` | JSON: `goal`; optional `constraints`, `max_tasks` (`10` default, `1`-`30`) | `200` `{ok, draft, provider, model, warning}` (T26, INV-PLAN-6). Strictly read-only — writes zero rows regardless of `ok`. `ok=false` with a `warning` (not an HTTP error) covers an unconfigured/unreachable provider or an invalid/hallucinated proposal. |
+| `GET /api/projects/{project}/plans/{plan_id}` | none | One plan with tasks, resolved dependencies, and requirement links. |
+| `PATCH /api/projects/{project}/plans/{plan_id}` | Any of `title`, `goal` | Merge-update; empty patch returns `400`. |
+| `POST /api/projects/{project}/plans/{plan_id}/activate` | none | `draft` -> `active`; zero-dependency tasks become `ready`. |
+| `POST /api/projects/{project}/plans/{plan_id}/complete` | none | `active` -> `completed`; `400` while any task is non-terminal. Never touches linked requirements (D4). |
+| `POST /api/projects/{project}/plans/{plan_id}/archive` | none | -> `archived`; atomically revokes every active lease in the plan and cancels non-terminal tasks — the sole trusted exception to active-lease token enforcement. |
+| `POST /api/projects/{project}/plans/{plan_id}/tasks` | JSON: `local_task_id`, `title`, `objective`; optional `acceptance_criteria`, `linked_files`, `requirement_ids`, `priority` | `201` task added to a draft or active plan. `requirement_ids` must reference that project's `requirements`-section entries. |
+| `PATCH /api/projects/{project}/plans/{plan_id}/tasks/{task_id}` | Any of `title`, `objective`, `acceptance_criteria`, `linked_files`, `requirement_ids`, `priority`, `claim_token` | Merge-update; empty patch returns `400`. `claim_token` required (`409` otherwise) while the task holds an active lease. |
+| `POST /api/projects/{project}/plans/{plan_id}/dependencies` | JSON: `task_id`, `depends_on_task_id` | Adds one prerequisite edge; `400` on a cycle, self-dependency, or a task from another plan/project (INV-PLAN-1). |
+| `GET /api/projects/{project}/ready-tasks` | none | Ready/reclaimable tasks across every active plan in the project (FR46). |
+| `GET /api/projects/{project}/plans/{plan_id}/ready-tasks` | none | Same predicate, scoped to one plan. |
+| `POST /api/projects/{project}/plans/{plan_id}/tasks/{task_id}/claim` | JSON: `claimed_by`; optional `lease_seconds` (`1800` default) | `200` `{task, claim_token}` — claims a `ready` task or atomically reclaims one with an expired lease. `claim_token` is returned exactly once; every later read redacts it. `409` if the current lease is unexpired. |
+| `POST /api/projects/{project}/plans/{plan_id}/tasks/{task_id}/heartbeat` | JSON: `claim_token`; optional `lease_seconds` (`1800` default) | Extends the lease, strictly preserving status (never `claimed` -> `in_progress`). `409` on a stale/expired/invalid token. |
+| `POST /api/projects/{project}/plans/{plan_id}/tasks/{task_id}/release` | JSON: `claim_token` | Relinquishes the lease back to `ready`. `409` on a stale/expired/invalid token. |
+| `POST /api/projects/{project}/plans/{plan_id}/tasks/{task_id}/status` | JSON: `status`; optional `claim_token`, `reason` | Transitions status. `409` if the task holds an active lease and `claim_token` is missing or invalid — no bypass. |
+| `POST /api/projects/{project}/plans/{plan_id}/tasks/{task_id}/complete` | JSON (optional body): optional `claim_token` | Completes the task, revokes its lease, and unlocks downstream dependents. `claim_token` required only while the lease is active; tokenless completion is allowed once it has expired. |
+| `GET /api/projects/{project}/plans/{plan_id}/tasks/{task_id}/history` | none | Immutable, chronologically ordered event array — `created`, `updated`, `dependency_added`, `claimed`, `reclaimed`, `heartbeat`, `released`, `status_changed`, `completed`, `cancelled` — each with actor, prior/new status, timestamp, and a redacted structured payload (FR48, D21, INV-PLAN-4). |
+
+A plan object contains `id`, `project_id`, `title`, `goal`, `status` (`draft`/`active`/`completed`/`archived`), `author`, timestamps, and `tasks`. A task object contains `id`, `plan_id`, `project_id`, `local_task_id`, `title`, `objective`, `acceptance_criteria`, `linked_files`, `priority`, `status`, `claimed_by`, `lease_expires_at`, timestamps, `dependencies` (prerequisite task ids), and `requirement_ids` — never `claim_token` or `claim_token_hash`.
+
+```bash
+curl -s -X POST http://127.0.0.1:8080/api/projects/demo/plans \
+  -H 'content-type: application/json' -H 'x-pcs-caller: agent' \
+  -d '{"title":"Ship checkout","goal":"Migrate off the legacy gateway"}'
+curl -s -X POST http://127.0.0.1:8080/api/projects/demo/plans/PLAN_ID/tasks/TASK_ID/claim \
+  -H 'content-type: application/json' \
+  -d '{"claimed_by":"agent-7","lease_seconds":1800}'
+curl -s http://127.0.0.1:8080/api/projects/demo/ready-tasks
+```
+
 ## Index and retrieval
 
 | Method and path | Input | Success |
 |---|---|---|
 | `GET /api/projects/{project}/index` | none | Index state, timestamps, commit, file/chunk/skip counts, skipped files, symbol modes/count, embedded count, and semantic status. |
 | `POST /api/projects/{project}/reindex` | Optional JSON `incremental` (`true` default) | Updated index status. |
-| `GET /api/projects/{project}/search` | Query: `q` or `query`; `scope=project` default; optional `subtree`, comma-separated `files`, comma-separated `globs`, `limit=20` | `{hits, semantic_available, mode, note}`. Limit range is `1`–`100`. |
+| `GET /api/projects/{project}/search` | Query: `q` or `query`; `scope=project` default; optional `subtree`, comma-separated `files`, comma-separated `globs`, `limit=20` | `{hits, semantic_available, mode, note, total_matches, truncated}`. `total_matches` is the keyword/FTS/fuzzy pool size before any cap; `truncated` says whether that pool was cut off (`false` does not guarantee `len(hits) == total_matches` — hybrid re-ranking can still trim the returned list to `limit`). Limit range is `1`–`100`. |
 | `POST /api/projects/{project}/retrieve-context` | JSON or query: `task`; optional `max_tokens` (`1500` default) | Token-bounded context pack. Unlike the MCP tool, this HTTP route currently does not accept scope fields. |
-| `POST /api/projects/{project}/prepare-task` | JSON or query: `task`; optional `max_tokens` (project default) | Curated briefing plus code pack and reported budget split. |
+| `POST /api/projects/{project}/prepare-task` | JSON or query: exactly one of `task` (free text) or `task_id` (a planned task's UUID, T25); optional `max_tokens` (project default) | With `task`: curated briefing plus code pack and reported budget split. With `task_id`: a bounded, role-neutral Markdown handoff `prompt` covering the task's objective, acceptance criteria, dependency status, and linked contract rules — never claim tokens or raw diffs. |
 
 Scopes are `project`, `subtree`, `files`, and `focus`. Search hits include path, line range, snippet, score, match/retrieval modes, stale flag, symbol, kind, and language.
 

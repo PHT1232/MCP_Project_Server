@@ -1,13 +1,19 @@
 # Multi-stage: Vite frontend + uv server. No secrets in the image (FR40).
 # Bind address is decided at runtime via PCS_BIND_MODE (NFR14).
 
-# --- frontend ---
-FROM node:22-alpine AS web
-WORKDIR /web
-COPY web/package.json web/package-lock.json ./
-RUN npm ci
-COPY web/ ./
-RUN npm run build
+# --- frontend (Atlas Console / PCS Control Panel) ---
+# node:22-slim (glibc/Debian), not -alpine: pcs-control-panel-project's
+# pnpm-workspace.yaml overrides pin esbuild to the linux-x64 (glibc) binary and
+# explicitly strip every other platform variant, musl included.
+FROM node:22-slim AS control-panel
+WORKDIR /control-panel
+RUN corepack enable && corepack prepare pnpm@10.15.0 --activate
+COPY pcs-control-panel-project/ ./
+RUN pnpm install --frozen-lockfile
+# Build-time only — the served SPA calls same-origin /api/*, so neither value
+# affects runtime behavior. BASE_PATH=/ matches register_frontend's root mount.
+ENV PORT=5173 BASE_PATH=/
+RUN pnpm --filter @workspace/pcs-control-panel run build
 
 # --- python deps ---
 FROM python:3.12-slim-bookworm AS build
@@ -30,7 +36,7 @@ RUN apt-get update \
     && mkdir -p /var/lib/pcs/index \
     && chown pcs:pcs /var/lib/pcs/index
 COPY --from=build --chown=pcs:pcs /app /app
-COPY --from=web /web/dist /app/web/dist
+COPY --from=control-panel /control-panel/artifacts/pcs-control-panel/dist/public /app/web/dist
 COPY deploy/entrypoint.sh /app/entrypoint.sh
 RUN chmod 755 /app/entrypoint.sh
 WORKDIR /app

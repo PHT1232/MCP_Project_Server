@@ -18,6 +18,12 @@ SECTION_CONVENTIONS: Final = "conventions"
 SECTION_DECISIONS: Final = "decisions"
 SECTION_REQUIREMENTS: Final = "requirements"
 SECTION_GLOSSARY: Final = "glossary"
+# Per-feature docs (description, implementing files via linked_files, and the
+# requirement it satisfies via related_entry_id). Deliberately excluded from
+# _RANK in assembly.py, so it never appears in get_project_briefing regardless
+# of the `sections` argument — read it back via get_section(project, "features")
+# to protect the briefing token budget (FR9g).
+SECTION_FEATURES: Final = "features"
 
 ALL_SECTIONS: Final[tuple[str, ...]] = (
     SECTION_OVERVIEW,
@@ -28,6 +34,7 @@ ALL_SECTIONS: Final[tuple[str, ...]] = (
     SECTION_DECISIONS,
     SECTION_REQUIREMENTS,
     SECTION_GLOSSARY,
+    SECTION_FEATURES,
 )
 
 SECTION_HEADINGS: Final[dict[str, str]] = {
@@ -39,6 +46,7 @@ SECTION_HEADINGS: Final[dict[str, str]] = {
     SECTION_DECISIONS: "Decisions",
     SECTION_REQUIREMENTS: "Requirements",
     SECTION_GLOSSARY: "Glossary",
+    SECTION_FEATURES: "Features",
 }
 
 # Lifecycle status (FR3, FR11). "deleted" is a soft-delete; the row is kept.
@@ -139,6 +147,8 @@ PREPARE_TASK_TOKEN_MIN: Final = 1000
 PREPARE_TASK_TOKEN_MAX: Final = 16_000
 HEADLINE_MAX_CHARS: Final = 120
 DETAIL_MAX_CHARS: Final = 8000
+# Agent-authored Mermaid sequenceDiagram syntax on a features-section entry.
+DIAGRAM_MAX_CHARS: Final = 8000
 CHARS_PER_TOKEN: Final = 4
 
 
@@ -223,6 +233,7 @@ class EntryView:
     linked_files: tuple[str, ...] = ()
     related_entry_id: str | None = None
     req_key: str | None = None
+    diagram: str | None = None
 
     def as_dict(self) -> dict[str, object]:
         """JSON-ready dict (ISO timestamps)."""
@@ -241,6 +252,7 @@ class EntryView:
             "linked_files": list(self.linked_files),
             "related_entry_id": self.related_entry_id,
             "req_key": self.req_key,
+            "diagram": self.diagram,
         }
 
 
@@ -260,6 +272,7 @@ class RevisionView:
     requirement_status: str | None = None
     linked_files: tuple[str, ...] = ()
     related_entry_id: str | None = None
+    diagram: str | None = None
 
     def as_dict(self) -> dict[str, object]:
         """JSON-ready dict (ISO timestamps)."""
@@ -276,6 +289,7 @@ class RevisionView:
             "requirement_status": self.requirement_status,
             "linked_files": list(self.linked_files),
             "related_entry_id": self.related_entry_id,
+            "diagram": self.diagram,
         }
 
 

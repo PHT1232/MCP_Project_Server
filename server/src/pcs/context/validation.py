@@ -9,8 +9,10 @@ from __future__ import annotations
 from pcs.context.types import (
     ALL_SECTIONS,
     DETAIL_MAX_CHARS,
+    DIAGRAM_MAX_CHARS,
     HEADLINE_MAX_CHARS,
     REQUIREMENT_STATUSES,
+    SECTION_FEATURES,
     SECTION_REQUIREMENTS,
     ValidationError,
 )
@@ -99,3 +101,26 @@ def default_requirement_status(section: str, supplied: str | None) -> str | None
     if supplied is None or not supplied.strip():
         return "not-started"
     return validate_requirement_status(supplied)
+
+
+def bound_diagram(
+    section: str, diagram: str | None, max_chars: int = DIAGRAM_MAX_CHARS
+) -> str | None:
+    """Agent-authored Mermaid ``sequenceDiagram`` text, features-section only.
+
+    Hard-rejects over ``max_chars`` (like ``detail`` — never truncated).
+    Empty/whitespace clears the field.
+    """
+    if section != SECTION_FEATURES:
+        if diagram:
+            raise ValidationError("diagram is only valid on the features section")
+        return None
+    cleaned = (diagram or "").strip()
+    if not cleaned:
+        return None
+    if len(cleaned) > max_chars:
+        raise ValidationError(
+            f"diagram exceeds {max_chars} characters (FR9g/D13); "
+            "shorten it and retry — the server will not truncate a supplied diagram"
+        )
+    return cleaned

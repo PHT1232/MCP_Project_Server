@@ -148,12 +148,12 @@ Implementation plan: [tasks/PLAN-TASK-ORCHESTRATION.md](tasks/PLAN-TASK-ORCHESTR
 | T20 | `task/T20-ai-provider-settings` | **merged** |
 | T21 | `task/T21-semantic-runtime-fallback` | **merged** |
 | T22 | `task/T22-plan-task-contract` | **in review** |
-| T23 | `task/T23-plan-task-core` | **not started** |
-| T24 | `task/T24-plan-task-api` | **not started** |
-| T25 | `task/T25-planned-task-handoff` | **not started** |
-| T26 | `task/T26-ai-plan-draft` | **not started** |
-| T27 | `task/T27-plans-ui` | **not started** |
-| T28 | `task/T28-ai-plan-ui` | **not started** |
-| T29 | `task/T29-plan-task-integration` | **not started** |
+| T23 | `task/T23-plan-task-core` | **in review** |
+| T24 | `task/T24-plan-task-api` | **in review** |
+| T25 | `task/T25-planned-task-handoff` | **in review** |
+| T26 | `task/T26-ai-plan-draft` | **in review** |
+| T27 | `task/T27-plans-ui` | **in review** |
+| T28 | `task/T28-ai-plan-ui` | **in review** |
+| T29 | `task/T29-plan-task-integration` | **in progress** |
 
 Update this table as tasks move: `not started → in progress → in review → changes requested → merged`.

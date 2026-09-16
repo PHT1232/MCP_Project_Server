@@ -835,40 +835,33 @@ async def test_staged_index_change_after_clean_evidence_is_stale(tmp_path: Path)
     assert gate.passed is False
 
 
-async def test_untracked_file_content_change_is_stale(tmp_path: Path) -> None:
+async def test_untracked_files_never_cause_staleness_or_block_done(tmp_path: Path) -> None:
+    """Regression: untracked files (incidental clutter unrelated to the
+    evidenced commit) must never make evidence stale or block `done` — only
+    a TRACKED file differing from HEAD counts as dirty/stale."""
     req_id, sha = await _seed_git_requirement(tmp_path)
     _, ac_id = await _add_required_criterion(req_id, ac_key="AC-UNTRACKED")
-    await _pass(ac_id, sha)
+    first = await _pass(ac_id, sha)
+    assert first.worktree_fingerprint is None
     scratch = tmp_path / "scratch.txt"
     scratch.write_text("untracked-one", encoding="utf-8")
     async with session_scope() as session:
         created = await evidence.evaluate_close_gate(
             session, project=PROJECT, requirement_id=req_id
         )
-        with pytest.raises(evidence.CloseGateError, match=r"(?:stale|provisional) AC-UNTRACKED"):
-            await service.set_requirement_status(
-                session, project=PROJECT, entry_id=req_id, status=REQ_DONE
-            )
-    assert created.validation == "stale"
-    _, fingerprint = await evidence._repo_state(str(tmp_path))
-    second = await _pass(ac_id, sha, worktree_fingerprint=fingerprint)
-    async with session_scope() as session:
-        current = await evidence.evaluate_close_gate(
-            session, project=PROJECT, requirement_id=req_id
-        )
-    assert current.passed is False
-    assert second.worktree_fingerprint
+    assert created.validation == "ok"
+    assert created.passed is True
+
     scratch.write_text("untracked-two", encoding="utf-8")
     async with session_scope() as session:
         changed = await evidence.evaluate_close_gate(
             session, project=PROJECT, requirement_id=req_id
         )
-        with pytest.raises(evidence.CloseGateError, match=r"(?:stale|provisional) AC-UNTRACKED"):
-            await service.set_requirement_status(
-                session, project=PROJECT, entry_id=req_id, status=REQ_DONE
-            )
-    assert changed.validation == "stale"
-    assert changed.passed is False
+        await service.set_requirement_status(
+            session, project=PROJECT, entry_id=req_id, status=REQ_DONE
+        )
+    assert changed.validation == "ok"
+    assert changed.passed is True
 
 
 async def test_unreadable_git_state_fails_closed(tmp_path: Path) -> None:

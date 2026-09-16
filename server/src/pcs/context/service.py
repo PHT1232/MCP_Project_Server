@@ -7,6 +7,7 @@ Plain async functions over :class:`AsyncSession`. No MCP or HTTP imports
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
 
@@ -50,6 +51,7 @@ from pcs.context.types import (
     ValidationError,
 )
 from pcs.context.validation import (
+    bound_diagram,
     default_requirement_status,
     derive_headline_detail,
     validate_requirement_status,
@@ -75,6 +77,7 @@ __all__ = [
     "get_project_briefing",
     "get_section",
     "list_projects",
+    "load_assembly_entries",
     "register_project",
     "resolve_entry",
     "resolve_project",
@@ -83,6 +86,8 @@ __all__ = [
     "update_entry",
     "update_overview",
 ]
+
+logger = logging.getLogger("pcs")
 
 
 def _now() -> datetime:
@@ -106,6 +111,7 @@ def _as_view(row: ContextEntry) -> EntryView:
         linked_files=tuple(str(f) for f in files),
         related_entry_id=row.related_entry_id,
         req_key=row.req_key,
+        diagram=row.diagram,
     )
 
 
@@ -124,6 +130,7 @@ def _as_revision(row: ContextEntryRevision) -> RevisionView:
         requirement_status=row.requirement_status,
         linked_files=tuple(str(f) for f in files),
         related_entry_id=row.related_entry_id,
+        diagram=row.diagram,
     )
 
 
@@ -163,6 +170,7 @@ def _record_revision(session: AsyncSession, entry: ContextEntry, action: str, au
             requirement_status=entry.requirement_status,
             linked_files=list(files),
             related_entry_id=entry.related_entry_id,
+            diagram=entry.diagram,
         )
     )
 
@@ -395,11 +403,14 @@ async def add_entry(
     linked_files: Sequence[str] | None = None,
     related_entry_id: str | None = None,
     req_key: str | None = None,
+    diagram: str | None = None,
 ) -> EntryView:
     """Append a new entry in ``section`` (FR10, FR13, FR17 append/merge).
 
     ``req_key`` is the server-assigned ``R-NNN`` identity for a requirement
     (FR16a); it is set by :mod:`pcs.requirements` and is unique per project.
+    ``diagram`` is agent-authored Mermaid ``sequenceDiagram`` syntax, valid
+    only on the features section.
     """
     section_key = validate_section(section)
     if section_key == SECTION_OVERVIEW:
@@ -413,6 +424,7 @@ async def add_entry(
     )
     req_status = default_requirement_status(section_key, requirement_status)
     related = await _assert_related(session, row, related_entry_id)
+    diagram_text = bound_diagram(section_key, diagram)
     entry = ContextEntry(
         project_id=row.id,
         section=section_key,
@@ -425,6 +437,7 @@ async def add_entry(
         linked_files=_linked_files(linked_files),
         related_entry_id=related,
         req_key=(req_key.strip() or None) if req_key else None,
+        diagram=diagram_text,
     )
     session.add(entry)
     await session.flush()
@@ -445,6 +458,7 @@ async def update_entry(
     requirement_status: str | None = None,
     linked_files: Sequence[str] | None = None,
     related_entry_id: str | None = None,
+    diagram: str | None = None,
     expected_section: str | None = None,
 ) -> EntryView:
     """Merge provided fields onto one entry (FR10, FR17, FR18). Unset fields stay."""
@@ -482,6 +496,8 @@ async def update_entry(
         entry.linked_files = _linked_files(linked_files)
     if related_entry_id is not None:
         entry.related_entry_id = await _assert_related(session, row, related_entry_id or None)
+    if diagram is not None:
+        entry.diagram = bound_diagram(entry.section, diagram)
     entry.author = author
     entry.updated_at = _now()
     await session.flush()
@@ -712,20 +728,9 @@ async def get_entry_history(
     return [_as_revision(r) for r in result.scalars().all()]
 
 
-async def get_project_briefing(
-    session: AsyncSession,
-    *,
-    project: str,
-    sections: Sequence[str] | None = None,
-    max_tokens: int | None = None,
-) -> str:
-    """Assemble the §7.2a briefing (FR5, FR6, FR9, FR9a-FR9c, FR9e, FR9f)."""
-    row = await resolve_project(session, project)
-    budget = row.briefing_token_budget if max_tokens is None else max_tokens
-    if not BRIEFING_TOKEN_MIN <= budget <= BRIEFING_TOKEN_MAX:
-        raise ValidationError(
-            f"max_tokens must be in [{BRIEFING_TOKEN_MIN}, {BRIEFING_TOKEN_MAX}] (FR9g)"
-        )
+async def load_assembly_entries(session: AsyncSession, row: Project) -> list[AssemblyEntry]:
+    """Visible, non-deleted/archived entries mapped for `assemble_briefing` (shared by the
+    real briefing assembly and the unbounded baseline used for token-savings logging)."""
     result = await session.execute(
         select(ContextEntry).where(
             ContextEntry.project_id == row.id,
@@ -736,7 +741,7 @@ async def get_project_briefing(
     visible = [
         e for e in result.scalars().all() if _is_visible(e, row, now=now, include_resolved=False)
     ]
-    assembly = [
+    return [
         AssemblyEntry(
             id=e.id,
             section=e.section,
@@ -749,8 +754,32 @@ async def get_project_briefing(
         )
         for e in visible
     ]
+
+
+async def get_project_briefing(
+    session: AsyncSession,
+    *,
+    project: str,
+    sections: Sequence[str] | None = None,
+    max_tokens: int | None = None,
+    caller: str | None = None,
+) -> str:
+    """Assemble the §7.2a briefing (FR5, FR6, FR9, FR9a-FR9c, FR9e, FR9f).
+
+    ``caller`` is optional and gates token-savings logging (None = don't
+    record); only the outward-facing MCP tool/HTTP route passes it — internal
+    callers (e.g. prepare_task's own briefing sub-assembly) leave it unset so
+    a single user-facing call doesn't produce duplicate log entries.
+    """
+    row = await resolve_project(session, project)
+    budget = row.briefing_token_budget if max_tokens is None else max_tokens
+    if not BRIEFING_TOKEN_MIN <= budget <= BRIEFING_TOKEN_MAX:
+        raise ValidationError(
+            f"max_tokens must be in [{BRIEFING_TOKEN_MIN}, {BRIEFING_TOKEN_MAX}] (FR9g)"
+        )
+    assembly = await load_assembly_entries(session, row)
     runtime_ai = await load_runtime_ai_settings(session)
-    return await asyncio.to_thread(
+    text = await asyncio.to_thread(
         assemble_briefing,
         project_name=row.name,
         entries=assembly,
@@ -758,6 +787,49 @@ async def get_project_briefing(
         sections=sections,
         summarizer=Summarizer(runtime_ai.summary),
     )
+    if caller is not None:
+        await _record_briefing_baseline(
+            session, row=row, sections=sections, assembly=assembly, actual_text=text, caller=caller
+        )
+    return text
+
+
+async def _record_briefing_baseline(
+    session: AsyncSession,
+    *,
+    row: Project,
+    sections: Sequence[str] | None,
+    assembly: list[AssemblyEntry],
+    actual_text: str,
+    caller: str,
+) -> None:
+    """Best-effort: baseline = the same assembly, unbounded (no summarizer needed —
+    an unlimited budget never truncates, so nothing gets summarized or dropped).
+    Never raises — a logging failure must not break get_project_briefing itself."""
+    from pcs.context.assembly import estimate_tokens
+    from pcs.token_savings.service import record_token_savings
+
+    try:
+        baseline_text = await asyncio.to_thread(
+            assemble_briefing,
+            project_name=row.name,
+            entries=assembly,
+            budget_tokens=10_000_000,
+            sections=sections,
+            summarizer=None,
+        )
+        await record_token_savings(
+            session,
+            project_id=row.id,
+            operation="get_project_briefing",
+            caller=caller,
+            actual_tokens=estimate_tokens(actual_text),
+            baseline_tokens=estimate_tokens(baseline_text),
+        )
+    except Exception:
+        logger.warning(
+            "token_savings_record_failed", extra={"context": {"operation": "get_project_briefing"}}
+        )
 
 
 # Keep T00's estimate helper importable from the service for existing unit tests.

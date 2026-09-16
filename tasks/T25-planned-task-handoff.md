@@ -46,15 +46,15 @@ Do not touch AI providers or frontend code.
 
 ## Acceptance checklist
 
-- [ ] `AC-PLAN-8` (`eabc07be-3c22-4227-ae97-9b63bc2ea3f4`): `prepare_task` with `task_id` produces bounded role-neutral prompt with dependency and contract state without secrets.
-- [ ] Existing `prepare_task(task="...")` remains 100% backward compatible.
-- [ ] Supplying both `task` and `task_id` or neither is rejected with descriptive validation error.
-- [ ] Cross-project or non-existent `task_id` returns 404 / NotFoundError.
-- [ ] Prompt instructs agent on AGENTS.md conventions, scope boundaries, and evidence recording.
-- [ ] Prompt contains zero claim tokens, API secrets, or full diffs.
-- [ ] Token budget limits are respected, and code floor is preserved when chunks exist.
-- [ ] `just check` passes cleanly across server and web.
-- [ ] Task handoff documents prompt format, token budgeting, and verification results.
+- [x] `AC-PLAN-8` (`eabc07be-3c22-4227-ae97-9b63bc2ea3f4`): `prepare_task` with `task_id` produces bounded role-neutral prompt with dependency and contract state without secrets.
+- [x] Existing `prepare_task(task="...")` remains 100% backward compatible.
+- [x] Supplying both `task` and `task_id` or neither is rejected with descriptive validation error.
+- [x] Cross-project or non-existent `task_id` returns 404 / NotFoundError.
+- [x] Prompt instructs agent on AGENTS.md conventions, scope boundaries, and evidence recording.
+- [x] Prompt contains zero claim tokens, API secrets, or full diffs.
+- [x] Token budget limits are respected, and code floor is preserved when chunks exist.
+- [x] `just check` passes cleanly across server and web.
+- [x] Task handoff documents prompt format, token budgeting, and verification results.
 
 ## Required evidence
 
@@ -68,19 +68,18 @@ cd server && uv run pytest tests/test_planned_task_handoff.py -v
 just check
 ```
 
-## Handoff template
-
-```markdown
 ## Handoff
 
-- **Branch:** `task/T25-planned-task-handoff`
+- **Branch:** `task/T25-planned-task-handoff` (built on `main` after the T24 merge; not yet pushed to a dedicated branch)
 - **What was done:**
-  - ...
+  - New `server/src/pcs/planning/handoff.py::render_handoff_prompt` — resolves `task_id` to its plan via the `plan_tasks (id, project_id)` unique constraint from T23 (one query, no caller-supplied `plan_id` trusted), builds the canonical retrieval query from title/objective/AC/linked_files, computes prerequisite dependency status by cross-referencing the resolved `PlanView.tasks`, fetches linked requirement contracts by delegating straight to T11's existing `pcs.requirements.briefing.get_task_contract` (no reimplementation), packs relevant code via the existing `pack_code_chunks`/`gather_relevant`, and assembles the role-neutral Markdown prompt.
+  - `pcs.index.retrieval.prepare_task` gained a `task_id: str | None` parameter alongside the now-optional `task`; validates exactly one of the two is given, then delegates to `render_handoff_prompt` (deferred import — `handoff.py` imports `retrieval.py`'s `pack_code_chunks`/`PackedChunk` at module scope, so the reverse import stays lazy to avoid a cycle). Free-text `task=` behavior and response shape are unchanged.
+  - `pcs.mcp.index_tools.prepare_task` and `pcs.web_api.index_routes._prepare_task` both gained a `task_id` parameter/body field and pass it straight through; `index_routes._error_response` gained a `TaskNotFoundError -> 404` mapping (it previously only had `ProjectNotFoundError`, so a cross-project/unknown `task_id` would have 500'd instead of 404ing over HTTP).
 - **Prompt Structure:**
-  - Sections generated in role-neutral Markdown prompt
-  - Token budget allocations and truncation order
+  - `## Task Handoff — <local_task_id>: <title>` heading, an `AGENTS.md` / file-scope instruction line, `### Objective`, `### Acceptance criteria` (checkbox list), `### Dependencies` (`local_task_id (done|<status>): title`, or `None`), optional `### Declared file scope` (linked_files), the reused T11 `CONTRACT` + `CLOSE GATE` block (or a literal "no linked requirement contracts" line when the task has no `requirement_ids`), optional `### Relevant code` (fenced, path:start-end headers), and a fixed `### Verification` block pointing at `record_requirement_evidence` and the project's standard handoff template.
+  - Token budget allocations and truncation order: the task identity block (id, title, objective, AC, deps, file scope) is rendered first and never truncated — its cost is subtracted from the total budget first. What's left is split the same way `prepare_task`'s free-text mode already splits context vs. code: a 30%-of-remaining code floor is reserved when any relevant chunks exist, the contract gets `min(CONTRACT_TOKEN_CAP=500, remaining - code_floor)` and self-truncates via T11's own renderer, and whatever's left over goes to code via the existing `pack_code_chunks`. The `split` dict in the response reports `budget`, `task_tokens`, `contract_tokens`/`contract_cap`, `code_tokens`/`code_budget`/`code_floor`.
 - **Verification:**
-  - `test_planned_task_handoff.py` results
-  - `just check` result
-- **Deviations:** None
-```
+  - `cd server && uv run pytest tests/test_planned_task_handoff.py -v`: **12 passed** — backward compat, dependency status (pending and completed), both/neither `task`/`task_id` rejected (service, MCP, and HTTP layers), cross-project and nonexistent `task_id` -> 404/`TaskNotFoundError`, prompt mentions `AGENTS.md`/scope/`record_requirement_evidence`, zero claim-token/diff-marker leakage (including with a *live* claim token on the very task being described), token budget respected with the code floor met, invalid `max_tokens` rejected.
+  - `just check`: green — **389 server pytest passed, 1 skipped** (up from 377 pre-T25), 76 vitest, ruff format/lint, mypy --strict, eslint, tsc, web vite build all clean.
+- **Deviations:** None.
+- **Cross-task note:** `AC-PLAN-8` independent review (prompt bounds and secret absence) — reviewed by re-reading `handoff.py` end to end plus the token-leak and AGENTS.md/scope tests above; no claim token, provider key, evidence log, or diff marker path was found. Recommend a second independent pass before this is treated as fully closed for a production deployment, per the task's own "Required evidence" note.

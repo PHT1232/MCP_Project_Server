@@ -163,7 +163,7 @@ async def _briefing(request: Request) -> Response:
     try:
         async with session_scope() as session:
             text = await service.get_project_briefing(
-                session, project=project, sections=sections, max_tokens=max_tokens
+                session, project=project, sections=sections, max_tokens=max_tokens, caller=caller
             )
     except Exception as exc:
         log_tool_call(
@@ -213,6 +213,7 @@ async def _add_entry(request: Request) -> Response:
                 requirement_status=_opt_str(body, "requirement_status") or _opt_str(body, "status"),
                 linked_files=_opt_str_list(body, "linked_files"),
                 related_entry_id=_opt_str(body, "related_entry_id"),
+                diagram=_opt_str(body, "diagram"),
             )
             file_sync = await _sync_if_requirement(session, project, caller, view.section)
     except Exception as exc:
@@ -254,6 +255,7 @@ async def _patch_entry(request: Request) -> Response:
                 requirement_status=_opt_str(body, "requirement_status") or _opt_str(body, "status"),
                 linked_files=_opt_str_list(body, "linked_files"),
                 related_entry_id=_opt_str(body, "related_entry_id"),
+                diagram=_opt_str(body, "diagram"),
             )
             file_sync = await _sync_if_requirement(session, project, caller, view.section)
     except Exception as exc:

@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from pcs.index import retrieval, service
 from pcs.index.search import SearchScopeName
-from pcs.mcp.support import run_tool
+from pcs.mcp.support import caller, run_tool
 
 _SCOPES: frozenset[str] = frozenset({"project", "subtree", "files", "focus"})
 
@@ -66,6 +66,15 @@ def register_index_tools(mcp: FastMCP) -> None:
             files: Repo-relative paths when ``scope='files'``.
             globs: Optional path globs (e.g. ``**/*.py``).
             limit: Max hits (1-100).
+
+        Result also carries ``total_matches`` (how many chunks matched the
+        keyword/FTS/fuzzy pool, before any internal cap) and ``truncated``
+        (whether that pool was cut off). ``truncated=False`` means "exact"
+        mode is a real, exhaustive literal-substring match — but it does not
+        guarantee ``len(hits) == total_matches``, since hybrid re-ranking can
+        still cut the returned list down to ``limit`` afterward. Both fields
+        describe the keyword pool only, not semantic-hit exhaustiveness
+        (already separately signalled via ``semantic_available``).
         """
 
         async def op(session: AsyncSession) -> dict[str, object]:
@@ -80,6 +89,7 @@ def register_index_tools(mcp: FastMCP) -> None:
                 files=files,
                 globs=globs,
                 limit=limit,
+                caller=caller(ctx),
             )
 
         return await run_tool("search_code", project, ctx, op)
@@ -111,24 +121,34 @@ def register_index_tools(mcp: FastMCP) -> None:
                 scope=cast(SearchScopeName, scope),
                 subtree=subtree,
                 files=files,
+                caller=caller(ctx),
             )
 
         return await run_tool("retrieve_context", project, ctx, op)
 
     @mcp.tool()
     async def prepare_task(
-        task: str,
+        task: str | None = None,
+        task_id: str | None = None,
         project: str | None = None,
         max_tokens: int | None = None,
         ctx: Context[Any, Any] | None = None,
     ) -> dict[str, object]:
-        """Project briefing + relevant-code pack in one budgeted response (FR22, FR22a, D13, T11).
+        """Project briefing + relevant-code pack, or a planned-task handoff prompt.
 
-        Total defaults to the project's ``prepare_task_token_budget`` (4000).
-        Curated context is capped at 50%; code is floored at 30% when chunks exist;
-        unused context budget spills to code. A contract/close-gate section is
-        capped at 500 estimated tokens inside the same total; unused contract
-        budget spills to code. The actual split is reported.
+        Exactly one of ``task`` (free text) or ``task_id`` (a planned task's UUID
+        from create_plan/add_plan_task, T25) must be given.
+
+        With ``task``: total defaults to the project's ``prepare_task_token_budget``
+        (4000). Curated context is capped at 50%; code is floored at 30% when chunks
+        exist; unused context budget spills to code. A contract/close-gate section is
+        capped at 500 estimated tokens inside the same total; unused contract budget
+        spills to code. The actual split is reported.
+
+        With ``task_id``: returns a bounded, role-neutral Markdown handoff prompt
+        with the task's objective, acceptance criteria, dependency status, and
+        linked requirement contracts — never claim tokens, provider keys, or raw
+        diffs (INV-PLAN-5).
         """
 
         async def op(session: AsyncSession) -> dict[str, object]:
@@ -136,7 +156,9 @@ def register_index_tools(mcp: FastMCP) -> None:
                 session,
                 project=project or "",
                 task=task,
+                task_id=task_id,
                 max_tokens=max_tokens,
+                caller=caller(ctx),
             )
 
         return await run_tool("prepare_task", project, ctx, op)

@@ -107,6 +107,8 @@ EXPECTED_TOOLS = frozenset(
         "generate_plan_draft",
         "get_token_savings_log",
         "get_token_savings_summary",
+        "onboard",
+        "add_new_project",
     }
 )
 

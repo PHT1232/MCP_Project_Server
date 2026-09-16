@@ -48,11 +48,25 @@ Per-feature docs — what a feature does, which files implement it, and which re
 
 | Tool | Arguments and defaults | Behavior |
 |---|---|---|
-| `add_feature` | `project=null`, `headline=null`, `detail=null`, `linked_files=null`, `related_entry_id=null`, `priority=0` | Creates a feature entry. `linked_files` are the files that implement it; `related_entry_id` is the id of the requirements-section entry it satisfies. |
-| `update_feature` | `entry_id`, `project=null`, `headline=null`, `detail=null`, `linked_files=null`, `related_entry_id=null`, `priority=null` | Merge-updates supplied fields. |
+| `add_feature` | `project=null`, `headline=null`, `detail=null`, `linked_files=null`, `related_entry_id=null`, `diagram=null`, `priority=0` | Creates a feature entry. `linked_files` are the files that implement it; `related_entry_id` is the id of the requirements-section entry it satisfies; `diagram` is Mermaid `sequenceDiagram` syntax rendered on the feature's detail page. |
+| `update_feature` | `entry_id`, `project=null`, `headline=null`, `detail=null`, `linked_files=null`, `related_entry_id=null`, `diagram=null`, `priority=null` | Merge-updates supplied fields. `diagram=""` clears it. |
 | `resolve_feature` | `entry_id`, `project=null` | Resolves the entry so it leaves active listings. |
 
-To populate this section, an agent asked to "explain the codebase's features, their files, and I/O" should write the result via `add_feature`/`update_feature` instead of a standalone `.md` file, so the control-panel Features view stays the source of truth.
+To populate this section, an agent asked to "explain the codebase's features, their files, and I/O" should write the result via `add_feature`/`update_feature` instead of a standalone `.md` file, so the control-panel Features view stays the source of truth. Example diagram:
+
+```
+add_feature(
+  project="...",
+  headline="Login",
+  detail="Input: email+password. Output: a session cookie.",
+  linked_files=["server/src/pcs/auth/service.py"],
+  diagram="""sequenceDiagram
+    Client->>Server: POST /login {email, password}
+    Server->>DB: verify credentials
+    DB-->>Server: user row
+    Server-->>Client: Set-Cookie: session=...""",
+)
+```
 
 ## Requirements
 

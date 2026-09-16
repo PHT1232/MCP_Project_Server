@@ -463,9 +463,10 @@ def _register_feature_tools(mcp: FastMCP) -> None:
     """Per-feature docs: what a feature does, its files, and its requirement link.
 
     Unlike the plain ``_CRUD_SECTIONS`` tools, these carry ``linked_files``
-    (the files that implement the feature) and ``related_entry_id`` (the
-    requirements-section entry it satisfies) — the two fields a feature doc
-    needs that the generic focus/blocker/bug/etc. tools don't expose.
+    (the files that implement the feature), ``related_entry_id`` (the
+    requirements-section entry it satisfies), and ``diagram`` (agent-authored
+    Mermaid ``sequenceDiagram`` syntax) — fields a feature doc needs that the
+    generic focus/blocker/bug/etc. tools don't expose.
     """
 
     @mcp.tool()
@@ -475,11 +476,16 @@ def _register_feature_tools(mcp: FastMCP) -> None:
         detail: str | None = None,
         linked_files: list[str] | None = None,
         related_entry_id: str | None = None,
+        diagram: str | None = None,
         priority: int = 0,
         ctx: Context[Any, Any] | None = None,
     ) -> dict[str, object]:
         """Add a feature doc (FR10). Not part of get_project_briefing; read it
-        back via get_section(project, "features")."""
+        back via get_section(project, "features").
+
+        ``diagram`` is Mermaid ``sequenceDiagram`` syntax describing the
+        feature's flow, rendered on the control-panel's feature detail page.
+        """
 
         async def op(session: AsyncSession) -> dict[str, object]:
             view = await service.add_entry(
@@ -492,6 +498,7 @@ def _register_feature_tools(mcp: FastMCP) -> None:
                 author=caller(ctx),
                 linked_files=linked_files,
                 related_entry_id=related_entry_id,
+                diagram=diagram,
             )
             return view.as_dict()
 
@@ -505,10 +512,13 @@ def _register_feature_tools(mcp: FastMCP) -> None:
         detail: str | None = None,
         linked_files: list[str] | None = None,
         related_entry_id: str | None = None,
+        diagram: str | None = None,
         priority: int | None = None,
         ctx: Context[Any, Any] | None = None,
     ) -> dict[str, object]:
-        """Merge-update a feature doc's headline/detail/files/requirement link (FR10, FR17)."""
+        """Merge-update a feature doc's headline/detail/files/requirement
+        link/diagram (FR10, FR17). ``diagram`` is Mermaid ``sequenceDiagram``
+        syntax; an empty string clears it."""
 
         async def op(session: AsyncSession) -> dict[str, object]:
             view = await service.update_entry(
@@ -521,6 +531,7 @@ def _register_feature_tools(mcp: FastMCP) -> None:
                 author=caller(ctx),
                 linked_files=linked_files,
                 related_entry_id=related_entry_id,
+                diagram=diagram,
                 expected_section=SECTION_FEATURES,
             )
             return view.as_dict()

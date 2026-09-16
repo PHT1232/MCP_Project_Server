@@ -51,6 +51,7 @@ from pcs.context.types import (
     ValidationError,
 )
 from pcs.context.validation import (
+    bound_diagram,
     default_requirement_status,
     derive_headline_detail,
     validate_requirement_status,
@@ -110,6 +111,7 @@ def _as_view(row: ContextEntry) -> EntryView:
         linked_files=tuple(str(f) for f in files),
         related_entry_id=row.related_entry_id,
         req_key=row.req_key,
+        diagram=row.diagram,
     )
 
 
@@ -128,6 +130,7 @@ def _as_revision(row: ContextEntryRevision) -> RevisionView:
         requirement_status=row.requirement_status,
         linked_files=tuple(str(f) for f in files),
         related_entry_id=row.related_entry_id,
+        diagram=row.diagram,
     )
 
 
@@ -167,6 +170,7 @@ def _record_revision(session: AsyncSession, entry: ContextEntry, action: str, au
             requirement_status=entry.requirement_status,
             linked_files=list(files),
             related_entry_id=entry.related_entry_id,
+            diagram=entry.diagram,
         )
     )
 
@@ -399,11 +403,14 @@ async def add_entry(
     linked_files: Sequence[str] | None = None,
     related_entry_id: str | None = None,
     req_key: str | None = None,
+    diagram: str | None = None,
 ) -> EntryView:
     """Append a new entry in ``section`` (FR10, FR13, FR17 append/merge).
 
     ``req_key`` is the server-assigned ``R-NNN`` identity for a requirement
     (FR16a); it is set by :mod:`pcs.requirements` and is unique per project.
+    ``diagram`` is agent-authored Mermaid ``sequenceDiagram`` syntax, valid
+    only on the features section.
     """
     section_key = validate_section(section)
     if section_key == SECTION_OVERVIEW:
@@ -417,6 +424,7 @@ async def add_entry(
     )
     req_status = default_requirement_status(section_key, requirement_status)
     related = await _assert_related(session, row, related_entry_id)
+    diagram_text = bound_diagram(section_key, diagram)
     entry = ContextEntry(
         project_id=row.id,
         section=section_key,
@@ -429,6 +437,7 @@ async def add_entry(
         linked_files=_linked_files(linked_files),
         related_entry_id=related,
         req_key=(req_key.strip() or None) if req_key else None,
+        diagram=diagram_text,
     )
     session.add(entry)
     await session.flush()
@@ -449,6 +458,7 @@ async def update_entry(
     requirement_status: str | None = None,
     linked_files: Sequence[str] | None = None,
     related_entry_id: str | None = None,
+    diagram: str | None = None,
     expected_section: str | None = None,
 ) -> EntryView:
     """Merge provided fields onto one entry (FR10, FR17, FR18). Unset fields stay."""
@@ -486,6 +496,8 @@ async def update_entry(
         entry.linked_files = _linked_files(linked_files)
     if related_entry_id is not None:
         entry.related_entry_id = await _assert_related(session, row, related_entry_id or None)
+    if diagram is not None:
+        entry.diagram = bound_diagram(entry.section, diagram)
     entry.author = author
     entry.updated_at = _now()
     await session.flush()

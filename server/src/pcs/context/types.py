@@ -147,6 +147,8 @@ PREPARE_TASK_TOKEN_MIN: Final = 1000
 PREPARE_TASK_TOKEN_MAX: Final = 16_000
 HEADLINE_MAX_CHARS: Final = 120
 DETAIL_MAX_CHARS: Final = 8000
+# Agent-authored Mermaid sequenceDiagram syntax on a features-section entry.
+DIAGRAM_MAX_CHARS: Final = 8000
 CHARS_PER_TOKEN: Final = 4
 
 
@@ -231,6 +233,7 @@ class EntryView:
     linked_files: tuple[str, ...] = ()
     related_entry_id: str | None = None
     req_key: str | None = None
+    diagram: str | None = None
 
     def as_dict(self) -> dict[str, object]:
         """JSON-ready dict (ISO timestamps)."""
@@ -249,6 +252,7 @@ class EntryView:
             "linked_files": list(self.linked_files),
             "related_entry_id": self.related_entry_id,
             "req_key": self.req_key,
+            "diagram": self.diagram,
         }
 
 
@@ -268,6 +272,7 @@ class RevisionView:
     requirement_status: str | None = None
     linked_files: tuple[str, ...] = ()
     related_entry_id: str | None = None
+    diagram: str | None = None
 
     def as_dict(self) -> dict[str, object]:
         """JSON-ready dict (ISO timestamps)."""
@@ -284,6 +289,7 @@ class RevisionView:
             "requirement_status": self.requirement_status,
             "linked_files": list(self.linked_files),
             "related_entry_id": self.related_entry_id,
+            "diagram": self.diagram,
         }
 
 

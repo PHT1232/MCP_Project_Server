@@ -15,7 +15,9 @@ from pcs.context import service as context_service
 from pcs.db.base import session_scope
 from pcs.index.chunker import chunk_source
 from pcs.index.ignore import PathTraversalError, resolve_under_root, walk_repo
+from pcs.index.search import keyword_search
 from pcs.index.service import get_index_status, reindex, search_code
+from pcs.index.symbols import extract_definitions
 from pcs.mcp import build_http_app, mcp
 
 pytestmark = pytest.mark.usefixtures("clean_db")
@@ -86,6 +88,110 @@ def test_chunker_splits_python_on_function_and_class_boundaries() -> None:
     assert "return name" in greet.content
 
 
+def test_chunker_indexes_module_level_content_around_boundaries() -> None:
+    """Regression: content outside every function/class body used to be dropped
+    entirely (never stored in any chunk) whenever a file had at least one
+    boundary node — e.g. EXPECTED_TOOLS-style module constants were invisible
+    to search_code even in literal/exact mode, because the text was never
+    indexed at all, not because of ranking."""
+    path = Path("src/app.py")
+    source = (
+        '"""Module docstring."""\n'
+        "import os\n"
+        "\n"
+        'EXPECTED_TOOLS = frozenset({"a", "b"})\n'
+        "\n"
+        "def greet(name: str) -> str:\n"
+        "    return name\n"
+        "\n"
+        "# a comment between defs\n"
+        "\n"
+        "class Cart:\n"
+        "    def total(self) -> int:\n"
+        "        return 1\n"
+        "\n"
+        "TRAILING = 1\n"
+    )
+    chunks = chunk_source(path, source)
+
+    def _found(needle: str) -> bool:
+        return any(needle in c.content for c in chunks)
+
+    assert _found("Module docstring")
+    assert _found("EXPECTED_TOOLS")
+    assert _found("a comment between defs")
+    assert _found("TRAILING")
+    assert not any(not c.content.strip() for c in chunks)
+    # Every non-blank source line is accounted for in some chunk.
+    covered = "\n".join(c.content for c in chunks)
+    for line in source.splitlines():
+        if line.strip():
+            assert line in covered
+    # Existing boundary chunks are unaffected by the gap fill.
+    greet = next(c for c in chunks if c.symbol == "greet")
+    assert greet.kind == "function"
+    cart = next(c for c in chunks if c.symbol == "Cart")
+    assert cart.kind == "class"
+
+
+def test_chunker_gap_fill_handles_overlapping_nested_boundaries() -> None:
+    """A class chunk and its method chunk legitimately overlap in line range;
+    gap computation must treat covered lines as a union, not assume the
+    boundary chunks are sorted/disjoint."""
+    path = Path("src/app.py")
+    source = "class Cart:\n    def total(self) -> int:\n        return 1\n\nTRAILING = 2\n"
+    chunks = chunk_source(path, source)
+    cart = next(c for c in chunks if c.symbol == "Cart")
+    total = next(c for c in chunks if c.symbol == "total")
+    assert cart.start_line <= total.start_line <= total.end_line <= cart.end_line
+    # No spurious gap chunk duplicating the (overlapping) class/method body.
+    module_chunks = [c for c in chunks if c.symbol is None]
+    assert all("class Cart" not in c.content for c in module_chunks)
+    assert any("TRAILING" in c.content for c in module_chunks)
+
+
+def test_chunker_indexes_top_level_content_in_other_languages() -> None:
+    """The gap-fill is generic across chunk_source's languages, not Python-only."""
+    path = Path("main.go")
+    source = (
+        "package main\n"
+        "\n"
+        'const GREETING = "hello"\n'
+        "\n"
+        "func greet(name string) string {\n"
+        "\treturn name\n"
+        "}\n"
+    )
+    chunks = chunk_source(path, source)
+    assert any("GREETING" in c.content for c in chunks)
+    assert any(c.symbol == "greet" for c in chunks)
+
+
+def test_chunker_gap_chunks_never_pollute_the_symbol_table() -> None:
+    """Gap chunks must carry symbol=None: extract_definitions treats any chunk
+    with a non-None symbol and kind in {function, class, module} as a symbol
+    definition feeding the symbol table / code map."""
+    path = Path("src/app.py")
+    source = (
+        '"""Module docstring."""\n'
+        "import os\n"
+        "\n"
+        'EXPECTED_TOOLS = frozenset({"a", "b"})\n'
+        "\n"
+        "def greet(name: str) -> str:\n"
+        "    return name\n"
+        "\n"
+        "class Cart:\n"
+        "    def total(self) -> int:\n"
+        "        return 1\n"
+        "\n"
+        "TRAILING = 1\n"
+    )
+    defs = extract_definitions(path, source)
+    names = {d.name for d in defs}
+    assert names == {"greet", "Cart", "total"}
+
+
 def test_walk_honours_gitignore_and_default_excludes(tmp_path: Path) -> None:
     _sample_repo(tmp_path)
     walked = walk_repo(tmp_path)
@@ -135,6 +241,35 @@ async def test_keyword_query_returns_path_line_snippet(tmp_path: Path) -> None:
     assert "greet" in str(hit["snippet"])
     assert hit["matched_mode"] in {"exact", "symbol", "fts", "fuzzy"}
     assert payload["semantic_available"] is False
+
+
+async def test_module_level_constant_is_findable_end_to_end(tmp_path: Path) -> None:
+    """Real-world repro: a module-level assignment (like EXPECTED_TOOLS in
+    test_integration.py) between two functions used to be invisible to
+    search_code, even in literal/exact mode, because it was never chunked."""
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "config.py").write_text(
+        "def before() -> None:\n"
+        "    pass\n"
+        "\n"
+        'EXPECTED_TOOLS = frozenset({"add_focus", "add_blocker"})\n'
+        "\n"
+        "def after() -> None:\n"
+        "    pass\n",
+        encoding="utf-8",
+    )
+    async with session_scope() as session:
+        await context_service.register_project(
+            session, name=PROJECT, root_path=str(tmp_path), overview=OVERVIEW
+        )
+    async with session_scope() as session:
+        await reindex(session, project=PROJECT, incremental=False)
+    async with session_scope() as session:
+        payload = await search_code(session, project=PROJECT, query="EXPECTED_TOOLS")
+    hits = cast(list[object], payload["hits"])
+    assert hits
+    assert any("EXPECTED_TOOLS" in str(cast(dict[str, object], h)["snippet"]) for h in hits)
 
 
 async def test_ac9_edit_incremental_fresh_and_stale_flagged(tmp_path: Path) -> None:
@@ -238,6 +373,66 @@ async def test_search_scopes_subtree_files_and_focus(tmp_path: Path) -> None:
     focus_hits = cast(list[object], focus["hits"])
     assert focus_hits
     assert all(str(cast(dict[str, object], h)["path"]) == "src/app.py" for h in focus_hits)
+
+
+async def test_search_code_reports_truncation(tmp_path: Path) -> None:
+    # hybrid_search always asks keyword_search for at least 20 rows regardless
+    # of the caller's own limit, so truncation of the keyword pool itself only
+    # shows up once matches exceed that floor.
+    (tmp_path / "src").mkdir()
+    for i in range(25):
+        (tmp_path / "src" / f"mod_{i}.py").write_text(
+            f"NEEDLE_{i} = {i}\n\ndef fn_{i}() -> int:\n    return {i}\n",
+            encoding="utf-8",
+        )
+    async with session_scope() as session:
+        await context_service.register_project(
+            session, name=PROJECT, root_path=str(tmp_path), overview=OVERVIEW
+        )
+    async with session_scope() as session:
+        await reindex(session, project=PROJECT, incremental=False)
+
+    async with session_scope() as session:
+        capped = await search_code(session, project=PROJECT, query="NEEDLE", limit=3)
+        uncapped = await search_code(session, project=PROJECT, query="NEEDLE", limit=100)
+        scoped = await search_code(
+            session, project=PROJECT, query="NEEDLE", scope="files", files=["src/mod_0.py"]
+        )
+
+    capped_hits = cast(list[object], capped["hits"])
+    assert len(capped_hits) == 3
+    assert int(str(capped["total_matches"])) == 25
+    assert capped["truncated"] is True
+
+    uncapped_hits = cast(list[object], uncapped["hits"])
+    assert int(str(uncapped["total_matches"])) == 25
+    assert len(uncapped_hits) == 25
+    assert uncapped["truncated"] is False
+
+    scoped_hits = cast(list[object], scoped["hits"])
+    assert int(str(scoped["total_matches"])) == 1
+    assert len(scoped_hits) == 1
+    assert scoped["truncated"] is False
+
+
+async def test_keyword_search_total_matches_exceeds_capped_hits(tmp_path: Path) -> None:
+    """Direct unit test of keyword_search's own total_matches, independent of
+    hybrid_search's limit-flooring behavior."""
+    (tmp_path / "src").mkdir()
+    for i in range(25):
+        (tmp_path / "src" / f"mod_{i}.py").write_text(f"NEEDLE_{i} = {i}\n", encoding="utf-8")
+    async with session_scope() as session:
+        await context_service.register_project(
+            session, name=PROJECT, root_path=str(tmp_path), overview=OVERVIEW
+        )
+    async with session_scope() as session:
+        await reindex(session, project=PROJECT, incremental=False)
+
+    async with session_scope() as session:
+        result = await keyword_search(session, project=PROJECT, query="NEEDLE", limit=5)
+
+    assert len(result.hits) == 5
+    assert result.total_matches == 25
 
 
 async def test_unknown_project_search_lists_registered(tmp_path: Path) -> None:

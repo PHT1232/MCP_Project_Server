@@ -327,8 +327,7 @@ async def test_features_section_round_trip_and_briefing_exclusion() -> None:
             project=PROJECT,
             entry_id=feature.id,
             detail=(
-                "Takes a cart + payment method + shipping address, "
-                "returns an order confirmation."
+                "Takes a cart + payment method + shipping address, returns an order confirmation."
             ),
             expected_section="features",
         )

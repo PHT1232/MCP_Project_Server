@@ -66,6 +66,15 @@ def register_index_tools(mcp: FastMCP) -> None:
             files: Repo-relative paths when ``scope='files'``.
             globs: Optional path globs (e.g. ``**/*.py``).
             limit: Max hits (1-100).
+
+        Result also carries ``total_matches`` (how many chunks matched the
+        keyword/FTS/fuzzy pool, before any internal cap) and ``truncated``
+        (whether that pool was cut off). ``truncated=False`` means "exact"
+        mode is a real, exhaustive literal-substring match — but it does not
+        guarantee ``len(hits) == total_matches``, since hybrid re-ranking can
+        still cut the returned list down to ``limit`` afterward. Both fields
+        describe the keyword pool only, not semantic-hit exhaustiveness
+        (already separately signalled via ``semantic_available``).
         """
 
         async def op(session: AsyncSession) -> dict[str, object]:

@@ -38,6 +38,10 @@ class HybridResult:
     semantic_hits: list[SearchHit] = field(default_factory=list)
     semantic_available: bool = False
     semantic_note: str | None = None
+    # Total rows the keyword/FTS/fuzzy pool matched, before any LIMIT — lets a
+    # caller tell "there were only 3 matches" apart from "there were 30 and
+    # you got the top 20" instead of silently guessing.
+    keyword_total_matches: int = 0
 
 
 _UNAVAILABLE = (
@@ -98,6 +102,7 @@ async def hybrid_search(
             keyword_hits=keyword_hits,
             semantic_available=False,
             semantic_note=_UNAVAILABLE,
+            keyword_total_matches=keyword_result.total_matches,
         )
 
     status = await session.get(IndexStatus, row.id)
@@ -111,6 +116,7 @@ async def hybrid_search(
             keyword_hits=keyword_hits,
             semantic_available=False,
             semantic_note=_NOT_EMBEDDED,
+            keyword_total_matches=keyword_result.total_matches,
         )
 
     clause = await resolve_search_scope(
@@ -151,6 +157,7 @@ async def hybrid_search(
             keyword_hits=keyword_hits,
             semantic_available=False,
             semantic_note=_RUNTIME_UNAVAILABLE,
+            keyword_total_matches=keyword_result.total_matches,
         )
     ranked = hybrid_rank(keyword_hits, semantic_hits, limit=limit)
     return HybridResult(
@@ -159,6 +166,7 @@ async def hybrid_search(
         semantic_hits=semantic_hits,
         semantic_available=True,
         semantic_note=None,
+        keyword_total_matches=keyword_result.total_matches,
     )
 
 
@@ -223,4 +231,7 @@ async def gather_relevant(
         keyword_hits=extra,
         semantic_available=False,
         semantic_note=primary.semantic_note,
+        # Best-effort: primary's own query total, not a true sum across the
+        # per-term fan-out below (those overlap, so summing would double-count).
+        keyword_total_matches=primary.keyword_total_matches,
     )

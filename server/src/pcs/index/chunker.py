@@ -271,26 +271,72 @@ def _walk_boundaries(
     out.extend(_dedupe(raw))
 
 
-def _plaintext_chunks(text: str, language: str | None) -> list[Chunk]:
-    lines = text.splitlines()
-    if not lines:
-        return []
+def _windowed_chunks(
+    lines: Sequence[str], *, offset: int, language: str | None, kind: str
+) -> list[Chunk]:
+    """Split ``lines`` into ``PLAINTEXT_WINDOW``-line chunks, line-numbered from ``offset``."""
     chunks: list[Chunk] = []
     for i in range(0, len(lines), PLAINTEXT_WINDOW):
         window = lines[i : i + PLAINTEXT_WINDOW]
-        start = i + 1
-        end = i + len(window)
+        start = offset + i + 1
+        end = offset + i + len(window)
         chunks.append(
             Chunk(
                 start_line=start,
                 end_line=end,
-                kind="text",
+                kind=kind,
                 symbol=None,
                 content="\n".join(window),
                 language=language,
             )
         )
     return chunks
+
+
+def _plaintext_chunks(text: str, language: str | None) -> list[Chunk]:
+    lines = text.splitlines()
+    if not lines:
+        return []
+    return _windowed_chunks(lines, offset=0, language=language, kind="text")
+
+
+def _gap_chunks(text: str, boundary_chunks: Sequence[Chunk], language: str) -> list[Chunk]:
+    """Chunks for the text NOT covered by any boundary chunk (F23a follow-up).
+
+    A module docstring, imports, top-level constants, and inter-def comments
+    are outside every function/class boundary node, so without this they are
+    never indexed anywhere — ``IndexFile`` stores no raw content of its own,
+    only ``IndexChunk`` does. ``symbol=None`` here is required, not cosmetic:
+    :func:`pcs.index.symbols.extract_definitions` treats any chunk with a
+    non-``None`` symbol and ``kind`` in ``{"function", "class", "module"}`` as
+    a symbol definition, so a gap chunk with a symbol would inject a spurious
+    entry into the symbol table / code map.
+    """
+    lines = text.splitlines()
+    total = len(lines)
+    if total == 0:
+        return []
+    # Boundary chunks may legitimately overlap/nest (a class and its method),
+    # so the covered range is a running high-water mark, not a disjoint sort.
+    ordered = sorted(boundary_chunks, key=lambda c: c.start_line)
+    gaps: list[tuple[int, int]] = []
+    covered_until = 0
+    for chunk in ordered:
+        if chunk.start_line > covered_until + 1:
+            gaps.append((covered_until + 1, chunk.start_line - 1))
+        covered_until = max(covered_until, chunk.end_line)
+    if covered_until < total:
+        gaps.append((covered_until + 1, total))
+
+    out: list[Chunk] = []
+    for g_start, g_end in gaps:
+        gap_lines = lines[g_start - 1 : g_end]
+        if not any(line.strip() for line in gap_lines):
+            continue
+        out.extend(
+            _windowed_chunks(gap_lines, offset=g_start - 1, language=language, kind="module")
+        )
+    return out
 
 
 def _line_count(text: str) -> int:
@@ -328,4 +374,6 @@ def chunk_source(path: Path, text: str) -> list[Chunk]:
         )
         if end > PLAINTEXT_WINDOW * 2:
             out.extend(_plaintext_chunks(text, language))
+    else:
+        out.extend(_gap_chunks(text, out, language))
     return out

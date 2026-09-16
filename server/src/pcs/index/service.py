@@ -616,6 +616,15 @@ async def search_code(
         "semantic_note": result.semantic_note,
         # Backward-compatible alias used by the existing frontend/client.
         "note": result.semantic_note,
+        # Total rows the keyword/FTS/fuzzy pool matched (before any internal
+        # LIMIT). `truncated=False` means that pool wasn't capped — it does
+        # NOT guarantee `len(hits) == total_matches`, since hybrid re-ranking
+        # can still cut the fused list down to the caller's own `limit`
+        # afterward (normal pagination, not data loss). Reflects the keyword
+        # pool only; semantic-hit exhaustiveness is a separate, already
+        # existing concern signalled via `semantic_available`.
+        "total_matches": result.keyword_total_matches,
+        "truncated": result.keyword_total_matches > len(result.keyword_hits),
     }
 
 

@@ -49,9 +49,12 @@ def register_evidence_tools(mcp: FastMCP) -> None:
     ) -> dict[str, object]:
         """Append compact evidence. Does not change requirement status (D4, T12).
 
-        On a dirty worktree, `worktree_fingerprint` must exactly equal the value
-        the server computes for the project's current tree state. If omitted or
-        wrong, the rejection message includes that expected value directly
+        The worktree is "dirty" only when a TRACKED file differs from HEAD
+        (staged or unstaged) — untracked files never count, so incidental
+        clutter from other tools/sessions can never block evidence. Only when
+        dirty, `worktree_fingerprint` must exactly equal the value the server
+        computes for the project's current tree state. If omitted or wrong,
+        the rejection message includes that expected value directly
         (`... (expected <hex>)`) so the caller can retry with it verbatim
         instead of guessing.
         """
@@ -144,7 +147,13 @@ def register_evidence_tools(mcp: FastMCP) -> None:
         project: str | None = None,
         ctx: Context[Any, Any] | None = None,
     ) -> dict[str, object]:
-        """Deterministic close-gate evaluation. Does not change status (D4)."""
+        """Deterministic close-gate evaluation. Does not change status (D4).
+
+        Evidence goes `stale` if HEAD has moved since its `source_commit`, or
+        if a TRACKED file now differs from HEAD relative to when the evidence
+        was recorded — untracked files never count (see
+        `record_requirement_evidence`).
+        """
 
         async def op(session: AsyncSession) -> dict[str, object]:
             view = await evidence.evaluate_close_gate(

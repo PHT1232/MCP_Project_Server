@@ -102,6 +102,8 @@ EXPECTED_TOOLS = frozenset(
         "complete_plan",
         "get_task_history",
         "generate_plan_draft",
+        "get_token_savings_log",
+        "get_token_savings_summary",
     }
 )
 

@@ -103,6 +103,7 @@ async def _search(request: Request) -> Response:
                 files=files,
                 globs=globs,
                 limit=limit,
+                caller=caller,
             )
     except Exception as exc:
         log_tool_call(tool="search_code", project=project, caller=caller, outcome=f"error: {exc}")
@@ -125,7 +126,7 @@ async def _retrieve_context(request: Request) -> Response:
         max_tokens = int(body.get("max_tokens") or request.query_params.get("max_tokens") or 1500)
         async with session_scope() as session:
             payload = await retrieval.retrieve_context(
-                session, project=project, task=task, max_tokens=max_tokens
+                session, project=project, task=task, max_tokens=max_tokens, caller=caller
             )
     except Exception as exc:
         log_tool_call(
@@ -154,7 +155,12 @@ async def _prepare_task(request: Request) -> Response:
         max_tokens = int(raw_budget) if raw_budget else None
         async with session_scope() as session:
             payload = await retrieval.prepare_task(
-                session, project=project, task=task, task_id=task_id, max_tokens=max_tokens
+                session,
+                project=project,
+                task=task,
+                task_id=task_id,
+                max_tokens=max_tokens,
+                caller=caller,
             )
     except Exception as exc:
         log_tool_call(tool="prepare_task", project=project, caller=caller, outcome=f"error: {exc}")

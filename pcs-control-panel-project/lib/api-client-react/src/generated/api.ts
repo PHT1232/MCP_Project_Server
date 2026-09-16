@@ -44,6 +44,7 @@ import type {
   GetCodeMapParams,
   GetSectionParams,
   GetSourceParams,
+  GetTokenSavingsLogParams,
   Health,
   HeartbeatTaskInput,
   IndexStatus,
@@ -70,6 +71,8 @@ import type {
   SourceFile,
   SyncReport,
   TaskEvent,
+  TokenSavingsLogEntry,
+  TokenSavingsSummary,
   UpdateCriterionInput,
   UpdateInvariantInput,
   UpdatePlanInput,
@@ -2373,6 +2376,172 @@ export function useSearchCode<TData = Awaited<ReturnType<typeof searchCode>>, TE
  ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
 
   const queryOptions = getSearchCodeQueryOptions(project,params,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getGetTokenSavingsLogUrl = (project: string,
+    params?: GetTokenSavingsLogParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/projects/${project}/token-savings?${stringifiedParams}` : `/api/projects/${project}/token-savings`
+}
+
+/**
+ * @summary Most-recent-first token-savings log entries
+ */
+export const getTokenSavingsLog = async (project: string,
+    params?: GetTokenSavingsLogParams, options?: Parameters<typeof customFetch>[1]): Promise<TokenSavingsLogEntry[]> => {
+
+  return customFetch<TokenSavingsLogEntry[]>(getGetTokenSavingsLogUrl(project,params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetTokenSavingsLogQueryKey = (project: string,
+    params?: GetTokenSavingsLogParams,) => {
+    return [
+    `/api/projects/${project}/token-savings`, ...(params ? [params] : [])
+    ] as const;
+    }
+
+
+export const getGetTokenSavingsLogQueryOptions = <TData = Awaited<ReturnType<typeof getTokenSavingsLog>>, TError = ErrorType<ErrorBody>>(project: string,
+    params?: GetTokenSavingsLogParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getTokenSavingsLog>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetTokenSavingsLogQueryKey(project,params);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getTokenSavingsLog>>> = ({ signal }) => getTokenSavingsLog(project,params, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: project !== null && project !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getTokenSavingsLog>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetTokenSavingsLogQueryResult = NonNullable<Awaited<ReturnType<typeof getTokenSavingsLog>>>
+export type GetTokenSavingsLogQueryError = ErrorType<ErrorBody>
+
+
+/**
+ * @summary Most-recent-first token-savings log entries
+ */
+
+export function useGetTokenSavingsLog<TData = Awaited<ReturnType<typeof getTokenSavingsLog>>, TError = ErrorType<ErrorBody>>(
+ project: string,
+    params?: GetTokenSavingsLogParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getTokenSavingsLog>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetTokenSavingsLogQueryOptions(project,params,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getGetTokenSavingsSummaryUrl = (project: string,) => {
+
+
+
+
+  return `/api/projects/${project}/token-savings/summary`
+}
+
+/**
+ * @summary Overall totals plus a per-operation breakdown of tokens saved
+ */
+export const getTokenSavingsSummary = async (project: string, options?: Parameters<typeof customFetch>[1]): Promise<TokenSavingsSummary> => {
+
+  return customFetch<TokenSavingsSummary>(getGetTokenSavingsSummaryUrl(project),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetTokenSavingsSummaryQueryKey = (project: string,) => {
+    return [
+    `/api/projects/${project}/token-savings/summary`
+    ] as const;
+    }
+
+
+export const getGetTokenSavingsSummaryQueryOptions = <TData = Awaited<ReturnType<typeof getTokenSavingsSummary>>, TError = ErrorType<ErrorBody>>(project: string, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getTokenSavingsSummary>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetTokenSavingsSummaryQueryKey(project);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getTokenSavingsSummary>>> = ({ signal }) => getTokenSavingsSummary(project, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: project !== null && project !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getTokenSavingsSummary>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetTokenSavingsSummaryQueryResult = NonNullable<Awaited<ReturnType<typeof getTokenSavingsSummary>>>
+export type GetTokenSavingsSummaryQueryError = ErrorType<ErrorBody>
+
+
+/**
+ * @summary Overall totals plus a per-operation breakdown of tokens saved
+ */
+
+export function useGetTokenSavingsSummary<TData = Awaited<ReturnType<typeof getTokenSavingsSummary>>, TError = ErrorType<ErrorBody>>(
+ project: string, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getTokenSavingsSummary>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetTokenSavingsSummaryQueryOptions(project,options)
 
   const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
 

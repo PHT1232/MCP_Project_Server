@@ -7,6 +7,7 @@ Plain async functions over :class:`AsyncSession`. No MCP or HTTP imports
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
 
@@ -75,6 +76,7 @@ __all__ = [
     "get_project_briefing",
     "get_section",
     "list_projects",
+    "load_assembly_entries",
     "register_project",
     "resolve_entry",
     "resolve_project",
@@ -83,6 +85,8 @@ __all__ = [
     "update_entry",
     "update_overview",
 ]
+
+logger = logging.getLogger("pcs")
 
 
 def _now() -> datetime:
@@ -712,20 +716,9 @@ async def get_entry_history(
     return [_as_revision(r) for r in result.scalars().all()]
 
 
-async def get_project_briefing(
-    session: AsyncSession,
-    *,
-    project: str,
-    sections: Sequence[str] | None = None,
-    max_tokens: int | None = None,
-) -> str:
-    """Assemble the §7.2a briefing (FR5, FR6, FR9, FR9a-FR9c, FR9e, FR9f)."""
-    row = await resolve_project(session, project)
-    budget = row.briefing_token_budget if max_tokens is None else max_tokens
-    if not BRIEFING_TOKEN_MIN <= budget <= BRIEFING_TOKEN_MAX:
-        raise ValidationError(
-            f"max_tokens must be in [{BRIEFING_TOKEN_MIN}, {BRIEFING_TOKEN_MAX}] (FR9g)"
-        )
+async def load_assembly_entries(session: AsyncSession, row: Project) -> list[AssemblyEntry]:
+    """Visible, non-deleted/archived entries mapped for `assemble_briefing` (shared by the
+    real briefing assembly and the unbounded baseline used for token-savings logging)."""
     result = await session.execute(
         select(ContextEntry).where(
             ContextEntry.project_id == row.id,
@@ -736,7 +729,7 @@ async def get_project_briefing(
     visible = [
         e for e in result.scalars().all() if _is_visible(e, row, now=now, include_resolved=False)
     ]
-    assembly = [
+    return [
         AssemblyEntry(
             id=e.id,
             section=e.section,
@@ -749,8 +742,32 @@ async def get_project_briefing(
         )
         for e in visible
     ]
+
+
+async def get_project_briefing(
+    session: AsyncSession,
+    *,
+    project: str,
+    sections: Sequence[str] | None = None,
+    max_tokens: int | None = None,
+    caller: str | None = None,
+) -> str:
+    """Assemble the §7.2a briefing (FR5, FR6, FR9, FR9a-FR9c, FR9e, FR9f).
+
+    ``caller`` is optional and gates token-savings logging (None = don't
+    record); only the outward-facing MCP tool/HTTP route passes it — internal
+    callers (e.g. prepare_task's own briefing sub-assembly) leave it unset so
+    a single user-facing call doesn't produce duplicate log entries.
+    """
+    row = await resolve_project(session, project)
+    budget = row.briefing_token_budget if max_tokens is None else max_tokens
+    if not BRIEFING_TOKEN_MIN <= budget <= BRIEFING_TOKEN_MAX:
+        raise ValidationError(
+            f"max_tokens must be in [{BRIEFING_TOKEN_MIN}, {BRIEFING_TOKEN_MAX}] (FR9g)"
+        )
+    assembly = await load_assembly_entries(session, row)
     runtime_ai = await load_runtime_ai_settings(session)
-    return await asyncio.to_thread(
+    text = await asyncio.to_thread(
         assemble_briefing,
         project_name=row.name,
         entries=assembly,
@@ -758,6 +775,49 @@ async def get_project_briefing(
         sections=sections,
         summarizer=Summarizer(runtime_ai.summary),
     )
+    if caller is not None:
+        await _record_briefing_baseline(
+            session, row=row, sections=sections, assembly=assembly, actual_text=text, caller=caller
+        )
+    return text
+
+
+async def _record_briefing_baseline(
+    session: AsyncSession,
+    *,
+    row: Project,
+    sections: Sequence[str] | None,
+    assembly: list[AssemblyEntry],
+    actual_text: str,
+    caller: str,
+) -> None:
+    """Best-effort: baseline = the same assembly, unbounded (no summarizer needed —
+    an unlimited budget never truncates, so nothing gets summarized or dropped).
+    Never raises — a logging failure must not break get_project_briefing itself."""
+    from pcs.context.assembly import estimate_tokens
+    from pcs.token_savings.service import record_token_savings
+
+    try:
+        baseline_text = await asyncio.to_thread(
+            assemble_briefing,
+            project_name=row.name,
+            entries=assembly,
+            budget_tokens=10_000_000,
+            sections=sections,
+            summarizer=None,
+        )
+        await record_token_savings(
+            session,
+            project_id=row.id,
+            operation="get_project_briefing",
+            caller=caller,
+            actual_tokens=estimate_tokens(actual_text),
+            baseline_tokens=estimate_tokens(baseline_text),
+        )
+    except Exception:
+        logger.warning(
+            "token_savings_record_failed", extra={"context": {"operation": "get_project_briefing"}}
+        )
 
 
 # Keep T00's estimate helper importable from the service for existing unit tests.

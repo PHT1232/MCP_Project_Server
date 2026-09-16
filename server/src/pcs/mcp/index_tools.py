@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from pcs.index import retrieval, service
 from pcs.index.search import SearchScopeName
-from pcs.mcp.support import run_tool
+from pcs.mcp.support import caller, run_tool
 
 _SCOPES: frozenset[str] = frozenset({"project", "subtree", "files", "focus"})
 
@@ -80,6 +80,7 @@ def register_index_tools(mcp: FastMCP) -> None:
                 files=files,
                 globs=globs,
                 limit=limit,
+                caller=caller(ctx),
             )
 
         return await run_tool("search_code", project, ctx, op)
@@ -111,6 +112,7 @@ def register_index_tools(mcp: FastMCP) -> None:
                 scope=cast(SearchScopeName, scope),
                 subtree=subtree,
                 files=files,
+                caller=caller(ctx),
             )
 
         return await run_tool("retrieve_context", project, ctx, op)
@@ -147,6 +149,7 @@ def register_index_tools(mcp: FastMCP) -> None:
                 task=task,
                 task_id=task_id,
                 max_tokens=max_tokens,
+                caller=caller(ctx),
             )
 
         return await run_tool("prepare_task", project, ctx, op)

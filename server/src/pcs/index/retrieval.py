@@ -5,20 +5,59 @@ FR22 / FR22a / D13. Built on hybrid search — no FTS/vector SQL here.
 
 from __future__ import annotations
 
+import asyncio
+import logging
+from collections.abc import Iterable
 from dataclasses import dataclass
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from pcs.context.assembly import estimate_tokens
-from pcs.context.service import get_project_briefing, resolve_project
+from pcs.context.assembly import assemble_briefing, estimate_tokens
+from pcs.context.service import get_project_briefing, load_assembly_entries, resolve_project
 from pcs.context.types import (
     PREPARE_TASK_TOKEN_CAP,
     PREPARE_TASK_TOKEN_MAX,
     PREPARE_TASK_TOKEN_MIN,
 )
+from pcs.db.models import Project
 from pcs.index.hybrid import HybridResult, gather_relevant
 from pcs.index.search import SearchScopeName
 from pcs.requirements.briefing import CONTRACT_TOKEN_CAP, get_task_contract
+from pcs.token_savings.baseline import full_file_tokens
+from pcs.token_savings.service import record_token_savings
+
+# Baseline briefing assembly uses an effectively unlimited budget so nothing
+# gets truncated/summarized — same order of magnitude used in context/service.py.
+_UNBOUNDED_BUDGET = 10_000_000
+
+logger = logging.getLogger("pcs")
+
+
+async def _record_code_baseline(
+    session: AsyncSession,
+    *,
+    project: str,
+    operation: str,
+    caller: str,
+    actual_tokens: int,
+    ranked_paths: Iterable[str],
+) -> None:
+    """Best-effort: baseline = full on-disk content of every distinct relevant
+    path hybrid search found (not just what fit the budget). Never raises —
+    a logging failure must not break the retrieval call it describes."""
+    try:
+        row = await resolve_project(session, project)
+        baseline = full_file_tokens(row.root_path, ranked_paths)
+        await record_token_savings(
+            session,
+            project_id=row.id,
+            operation=operation,
+            caller=caller,
+            actual_tokens=actual_tokens,
+            baseline_tokens=baseline,
+        )
+    except Exception:
+        logger.warning("token_savings_record_failed", extra={"context": {"operation": operation}})
 
 
 @dataclass(frozen=True)
@@ -129,8 +168,13 @@ async def retrieve_context(
     scope: SearchScopeName = "project",
     subtree: str | None = None,
     files: list[str] | None = None,
+    caller: str | None = None,
 ) -> dict[str, object]:
-    """Token-bounded pack of the most relevant chunks for ``task`` (FR22)."""
+    """Token-bounded pack of the most relevant chunks for ``task`` (FR22).
+
+    ``caller`` is optional and gates token-savings logging (None = don't
+    record); only the outward-facing MCP tool/HTTP route passes it.
+    """
     if not task.strip():
         raise ValueError("task description must not be empty")
     budget = max(1, min(int(max_tokens), 16_000))
@@ -144,6 +188,15 @@ async def retrieve_context(
         limit=40,
     )
     pack = pack_code_chunks(hybrid, max_tokens=budget)
+    if caller is not None:
+        await _record_code_baseline(
+            session,
+            project=project,
+            operation="retrieve_context",
+            caller=caller,
+            actual_tokens=pack.token_estimate,
+            ranked_paths=(r.hit.path for r in hybrid.ranked),
+        )
     return {
         "task": task,
         "chunks": [c.as_dict() for c in pack.chunks],
@@ -173,6 +226,7 @@ async def prepare_task(
     task: str | None = None,
     task_id: str | None = None,
     max_tokens: int | None = None,
+    caller: str | None = None,
 ) -> dict[str, object]:
     """Briefing + relevant-code pack in one budgeted response (FR22, FR22a, D13, T11).
 
@@ -198,7 +252,7 @@ async def prepare_task(
 
         assert task_id is not None
         return await render_handoff_prompt(
-            session, project=project, task_id=task_id, max_tokens=max_tokens
+            session, project=project, task_id=task_id, max_tokens=max_tokens, caller=caller
         )
 
     assert task is not None
@@ -244,6 +298,17 @@ async def prepare_task(
     code_budget = max(0, remaining - context_tokens) if have_code else 0
     pack = pack_code_chunks(hybrid, max_tokens=code_budget) if code_budget else _empty_pack(hybrid)
 
+    if caller is not None:
+        await _record_prepare_task_baseline(
+            session,
+            row=row,
+            caller=caller,
+            context_tokens=context_tokens,
+            contract_tokens=contract_tokens,
+            code_tokens=pack.token_estimate,
+            ranked_paths=(r.hit.path for r in hybrid.ranked),
+        )
+
     return {
         "project": row.name,
         "task": task,
@@ -264,6 +329,48 @@ async def prepare_task(
         "mode": "hybrid" if hybrid.semantic_available else "keyword",
         "semantic_note": hybrid.semantic_note,
     }
+
+
+async def _record_prepare_task_baseline(
+    session: AsyncSession,
+    *,
+    row: Project,
+    caller: str,
+    context_tokens: int,
+    contract_tokens: int,
+    code_tokens: int,
+    ranked_paths: Iterable[str],
+) -> None:
+    """Best-effort combined baseline: full-file code content (over every path
+    hybrid search found relevant, not just what fit the budget) + the same
+    briefing assembly unbounded. The contract sub-part's baseline is left
+    equal to its actual (contract is capped at 500 tokens regardless, so this
+    barely affects the total — a true contract baseline would need
+    TaskContractView to expose its pre-truncation candidate set, which it
+    currently doesn't). Never raises."""
+    try:
+        assembly = await load_assembly_entries(session, row)
+        briefing_baseline_text = await asyncio.to_thread(
+            assemble_briefing,
+            project_name=row.name,
+            entries=assembly,
+            budget_tokens=_UNBOUNDED_BUDGET,
+        )
+        code_baseline = full_file_tokens(row.root_path, ranked_paths)
+        baseline = code_baseline + estimate_tokens(briefing_baseline_text) + contract_tokens
+        actual = context_tokens + contract_tokens + code_tokens
+        await record_token_savings(
+            session,
+            project_id=row.id,
+            operation="prepare_task",
+            caller=caller,
+            actual_tokens=actual,
+            baseline_tokens=baseline,
+        )
+    except Exception:
+        logger.warning(
+            "token_savings_record_failed", extra={"context": {"operation": "prepare_task"}}
+        )
 
 
 def _empty_pack(hybrid: HybridResult) -> CodePack:

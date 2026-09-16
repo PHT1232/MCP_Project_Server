@@ -795,6 +795,40 @@ export interface GeneratePlanDraftResult {
   warning: string | null;
 }
 
+export type TokenSavingsOperation = typeof TokenSavingsOperation[keyof typeof TokenSavingsOperation];
+
+
+export const TokenSavingsOperation = {
+  retrieve_context: 'retrieve_context',
+  search_code: 'search_code',
+  prepare_task: 'prepare_task',
+  get_project_briefing: 'get_project_briefing',
+} as const;
+
+export interface TokenSavingsLogEntry {
+  id: string;
+  project_id: string;
+  operation: TokenSavingsOperation;
+  caller: string;
+  actual_tokens: number;
+  baseline_tokens: number;
+  saved_tokens: number;
+  created_at: string;
+}
+
+export interface TokenSavingsOperationSummary {
+  operation: TokenSavingsOperation | null;
+  call_count: number;
+  actual_tokens_total: number;
+  baseline_tokens_total: number;
+  saved_tokens_total: number;
+}
+
+export interface TokenSavingsSummary {
+  overall: TokenSavingsOperationSummary;
+  by_operation: TokenSavingsOperationSummary[];
+}
+
 /**
  * Admin token for mutating AI settings
  */
@@ -836,6 +870,11 @@ export const SearchCodeScope = {
   files: 'files',
   focus: 'focus',
 } as const;
+
+export type GetTokenSavingsLogParams = {
+operation?: TokenSavingsOperation;
+limit?: number;
+};
 
 export type ListPlansParams = {
 status?: PlanStatus;

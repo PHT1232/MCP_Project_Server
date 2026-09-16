@@ -43,6 +43,7 @@ from pcs.planning.models import (
     PlanTaskRequirement,
     TaskDependency,
 )
+from pcs.token_savings.models import TokenSavingsLogEntry
 
 __all__ = [
     "AcceptanceCriterion",
@@ -59,6 +60,7 @@ __all__ = [
     "RequirementInvariant",
     "RequirementViolation",
     "TaskDependency",
+    "TokenSavingsLogEntry",
 ]
 
 

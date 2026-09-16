@@ -342,24 +342,30 @@ async def test_cross_project_requests_cannot_access_or_mutate_plans_or_tasks() -
 # ---------------------------------------------------------------------------
 # Migration round trip through the T20/T23 merge point
 # ---------------------------------------------------------------------------
-def test_migration_downgrade_one_step_and_reupgrade_through_merge_point() -> None:
+def test_migration_downgrade_through_merge_point_and_reupgrade() -> None:
     """`alembic downgrade <target> / upgrade head` round-trips cleanly with
     zero data loss through the T20/T23 merge point (`0024_merge_t20_t23` —
     a pure no-op join of the two independently developed branches), landing
     on `0023_plan_task_orchestration` (T23's own head, one hop below the
     merge) and re-converging back to the single head.
 
+    Targets the merge point **by name** rather than assuming it's the
+    current head — later migrations (e.g. `0025_token_savings_log`) land on
+    top of it, so "head" and "the merge point" are two different things and
+    this test must not conflate them.
+
     NOTE on the literal `uv run alembic downgrade -1` from T29's own
-    Verification section: it does **not** work from this head — confirmed
-    directly (`alembic.util.exc.CommandError: Ambiguous walk`), both here
-    and by running the exact command against the live `pcs` database (which
-    aborted cleanly before any write, `alembic_version` unchanged at
-    `0024_merge_t20_t23` — alembic raises during revision *resolution*,
-    before touching the DB). `-1` is only unambiguous on a single linear
-    branch; at a merge point alembic can't infer which parent branch "one
-    step back" means, and requires an explicit target revision instead. This
-    is a real, reproducible discrepancy between the task spec's literal
-    verification command and this repo's actual migration topology — a
+    Verification section: it does **not** work when the current position is
+    the merge point itself — confirmed directly
+    (`alembic.util.exc.CommandError: Ambiguous walk`) and by running the
+    exact command against the live `pcs` database at a moment its head was
+    that merge point (it aborted cleanly before any write — alembic raises
+    during revision *resolution*, before touching the DB). `-1` is only
+    unambiguous on a single linear branch; at a merge point alembic can't
+    infer which parent branch "one step back" means, and requires an
+    explicit target revision instead. This is a real, reproducible
+    discrepancy between the task spec's literal verification command and
+    this repo's migration topology whenever the merge point is current — a
     documentation correction, not a migration bug (`0024`'s downgrade() is
     intentionally a no-op; there is nothing for a relative walk to undo).
 
@@ -385,6 +391,9 @@ def test_migration_downgrade_one_step_and_reupgrade_through_merge_point() -> Non
     asyncio.run(reset_engine())  # drop the engine bound to seed()'s now-closed loop
 
     config = Config("alembic.ini")
+    # Step down to exactly the merge point, then confirm a further relative
+    # step from *there* is genuinely ambiguous (0024 has two parents).
+    command.downgrade(config, "0024_merge_t20_t23")
     with pytest.raises(CommandError, match="Ambiguous walk"):
         command.downgrade(config, "-1")
 

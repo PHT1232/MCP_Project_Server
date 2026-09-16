@@ -896,6 +896,56 @@ export const SearchCodeResponse = zod.object({
 
 
 /**
+ * @summary Most-recent-first token-savings log entries
+ */
+export const GetTokenSavingsLogParams = zod.object({
+  "project": zod.coerce.string().describe('Project name or id (URL-encoded by the client)')
+})
+
+export const GetTokenSavingsLogQueryParams = zod.object({
+  "operation": zod.enum(['retrieve_context', 'search_code', 'prepare_task', 'get_project_briefing']).optional(),
+  "limit": zod.coerce.number().int().optional()
+})
+
+export const GetTokenSavingsLogResponseItem = zod.object({
+  "id": zod.string(),
+  "project_id": zod.string(),
+  "operation": zod.enum(['retrieve_context', 'search_code', 'prepare_task', 'get_project_briefing']),
+  "caller": zod.string(),
+  "actual_tokens": zod.number(),
+  "baseline_tokens": zod.number(),
+  "saved_tokens": zod.number(),
+  "created_at": zod.coerce.date()
+})
+export const GetTokenSavingsLogResponse = zod.array(GetTokenSavingsLogResponseItem)
+
+
+/**
+ * @summary Overall totals plus a per-operation breakdown of tokens saved
+ */
+export const GetTokenSavingsSummaryParams = zod.object({
+  "project": zod.coerce.string().describe('Project name or id (URL-encoded by the client)')
+})
+
+export const GetTokenSavingsSummaryResponse = zod.object({
+  "overall": zod.object({
+  "operation": zod.enum(['retrieve_context', 'search_code', 'prepare_task', 'get_project_briefing']).nullable(),
+  "call_count": zod.number(),
+  "actual_tokens_total": zod.number(),
+  "baseline_tokens_total": zod.number(),
+  "saved_tokens_total": zod.number()
+}),
+  "by_operation": zod.array(zod.object({
+  "operation": zod.enum(['retrieve_context', 'search_code', 'prepare_task', 'get_project_briefing']).nullable(),
+  "call_count": zod.number(),
+  "actual_tokens_total": zod.number(),
+  "baseline_tokens_total": zod.number(),
+  "saved_tokens_total": zod.number()
+}))
+})
+
+
+/**
  * @summary Advisory, strictly read-only AI plan draft proposal (T26, INV-PLAN-6)
  */
 export const GeneratePlanDraftParams = zod.object({

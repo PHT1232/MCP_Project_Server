@@ -8,7 +8,7 @@ import {
   Activity, AlertCircle, ArrowRight, Boxes, Check, CheckCircle2, ChevronDown, ChevronRight,
   Circle, CircleDot, Code2, Copy, Database, FileCode2, FileText, Folder, GitBranch,
   Layers3, LayoutDashboard, ListChecks, Loader2, Menu, Plus, RefreshCw, Search, Settings2,
-  Sparkles, Terminal, Trash2, Workflow, X, Zap,
+  PiggyBank, Sparkles, Terminal, Trash2, Workflow, X, Zap,
 } from 'lucide-react';
 import { Link, Route, Switch, useLocation, useParams, Router as WouterRouter } from 'wouter';
 
@@ -25,6 +25,7 @@ import {
 } from '@workspace/api-client-react';
 import { emptyGraph, mergeCodeMap, overlayTone, locateHit, relatedEntries, type CodeGraph, type MergedNode } from './lib/codemap';
 import Plans from './pages/Plans';
+import TokenSavings from './pages/TokenSavings';
 
 export const queryClient = new QueryClient();
 
@@ -155,6 +156,7 @@ function AppShell({ children }: { children: ReactNode }) {
     { href: `${projectRoot}/plans`, label: 'Plans', icon: Workflow },
     { href: `${projectRoot}/index`, label: 'Code index', icon: Database },
     { href: `${projectRoot}/code-map`, label: 'Code map', icon: Folder },
+    { href: `${projectRoot}/token-savings`, label: 'Token savings', icon: PiggyBank },
   ];
   return <div className="noise min-h-[100dvh] overflow-x-hidden bg-[#f1efe8] text-[#203238]">
     <aside className={cx('fixed inset-y-0 left-0 z-40 flex w-[248px] flex-col border-r border-[#26393f] bg-[#17292f] text-[#e9ede6] transition-transform md:translate-x-0', mobileOpen ? 'translate-x-0' : '-translate-x-full')}>
@@ -201,7 +203,7 @@ export function PageHeader({ eyebrow, title, description, actions }: { eyebrow: 
 
 export function ProjectTabs({ active }: { active: string }) {
   const project = decodeURIComponent(useParams<{ project: string }>().project ?? '');
-  const tabs = [['dashboard', 'Overview'], ['requirements', 'Requirements'], ['plans', 'Plans'], ['index', 'Code index'], ['code-map', 'Code map']];
+  const tabs = [['dashboard', 'Overview'], ['requirements', 'Requirements'], ['plans', 'Plans'], ['index', 'Code index'], ['code-map', 'Code map'], ['token-savings', 'Token savings']];
   return <div className="mb-6 flex gap-1 overflow-x-auto rounded-lg border border-[#d7dbd4] bg-[#e7e9e2] p-1">{tabs.map(([id, label]) => <Link key={id} href={`/projects/${encodeURIComponent(project)}/${id}`} data-testid={`tab-project-${id}`} className={cx('whitespace-nowrap rounded-md px-3 py-2 text-xs font-semibold transition-colors md:px-4', active === id ? 'bg-[#faf9f4] text-[#1e3036] shadow-[0_1px_2px_rgba(31,43,45,.08)]' : 'text-[#758187] hover:text-[#34464c]')}>{label}</Link>)}</div>;
 }
 
@@ -725,7 +727,7 @@ function NotFound() { return <div className="flex min-h-[100dvh] items-center ju
 
 function RoutedErrorBoundary({ children }: { children: ReactNode }) { const [location] = useLocation(); return <ErrorBoundary resetKey={location}>{children}</ErrorBoundary>; }
 function Router() {
-  return <RoutedErrorBoundary><Switch><Route path="/" component={HomePicker} /><Route path="/settings/ai"><AppShell><AISettings /></AppShell></Route><Route path="/projects/:project/dashboard"><AppShell><Dashboard /></AppShell></Route><Route path="/projects/:project/requirements"><AppShell><Requirements /></AppShell></Route><Route path="/projects/:project/plans"><AppShell><Plans /></AppShell></Route><Route path="/projects/:project/index"><AppShell><CodeIndex /></AppShell></Route><Route path="/projects/:project/code-map"><AppShell><CodeMap /></AppShell></Route><Route component={NotFound} /></Switch></RoutedErrorBoundary>;
+  return <RoutedErrorBoundary><Switch><Route path="/" component={HomePicker} /><Route path="/settings/ai"><AppShell><AISettings /></AppShell></Route><Route path="/projects/:project/dashboard"><AppShell><Dashboard /></AppShell></Route><Route path="/projects/:project/requirements"><AppShell><Requirements /></AppShell></Route><Route path="/projects/:project/plans"><AppShell><Plans /></AppShell></Route><Route path="/projects/:project/index"><AppShell><CodeIndex /></AppShell></Route><Route path="/projects/:project/code-map"><AppShell><CodeMap /></AppShell></Route><Route path="/projects/:project/token-savings"><AppShell><TokenSavings /></AppShell></Route><Route component={NotFound} /></Switch></RoutedErrorBoundary>;
 }
 function App() { return <QueryClientProvider client={queryClient}><TooltipProvider><WouterRouter base={import.meta.env.BASE_URL.replace(/\/$/, '')}><Router /></WouterRouter><Toaster /></TooltipProvider></QueryClientProvider>; }
 export default App;

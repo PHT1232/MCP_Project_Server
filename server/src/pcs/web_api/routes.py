@@ -163,7 +163,7 @@ async def _briefing(request: Request) -> Response:
     try:
         async with session_scope() as session:
             text = await service.get_project_briefing(
-                session, project=project, sections=sections, max_tokens=max_tokens
+                session, project=project, sections=sections, max_tokens=max_tokens, caller=caller
             )
     except Exception as exc:
         log_tool_call(

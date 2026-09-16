@@ -80,7 +80,11 @@ def _register_read_tools(mcp: FastMCP) -> None:
 
         async def op(session: AsyncSession) -> str:
             return await service.get_project_briefing(
-                session, project=project or "", sections=sections, max_tokens=max_tokens
+                session,
+                project=project or "",
+                sections=sections,
+                max_tokens=max_tokens,
+                caller=caller(ctx),
             )
 
         return await run_tool("get_project_briefing", project, ctx, op)

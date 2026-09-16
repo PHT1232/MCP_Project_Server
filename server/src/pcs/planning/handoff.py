@@ -12,6 +12,8 @@ No MCP or HTTP transport imports (AGENTS.md).
 
 from __future__ import annotations
 
+import logging
+from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -32,11 +34,48 @@ from pcs.planning.errors import TaskNotFoundError
 from pcs.planning.models import PlanTask
 from pcs.planning.types import PlanTaskView, PlanView
 from pcs.requirements.briefing import CONTRACT_TOKEN_CAP, get_task_contract
+from pcs.token_savings.baseline import full_file_tokens
+from pcs.token_savings.service import record_token_savings
 
 if TYPE_CHECKING:
     from pcs.db.models import Project
 
 __all__ = ["render_handoff_prompt"]
+
+logger = logging.getLogger("pcs")
+
+
+async def _record_handoff_baseline(
+    session: AsyncSession,
+    *,
+    project_id: str,
+    root_path: str,
+    caller: str,
+    actual_tokens: int,
+    task_tokens: int,
+    contract_tokens: int,
+    ranked_paths: Iterable[str],
+) -> None:
+    """Best-effort: baseline = the never-truncated task block (baseline ==
+    actual there) + the contract sub-part (same simplification as
+    prepare_task's free-text form — capped at 500 tokens regardless, so its
+    contribution to the total is small) + full on-disk content of every
+    distinct path hybrid search found relevant. Never raises."""
+    try:
+        code_baseline = full_file_tokens(root_path, ranked_paths)
+        baseline = task_tokens + contract_tokens + code_baseline
+        await record_token_savings(
+            session,
+            project_id=project_id,
+            operation="prepare_task",
+            caller=caller,
+            actual_tokens=actual_tokens,
+            baseline_tokens=baseline,
+        )
+    except Exception:
+        logger.warning(
+            "token_savings_record_failed", extra={"context": {"operation": "prepare_task"}}
+        )
 
 
 @dataclass(frozen=True)
@@ -188,6 +227,7 @@ async def render_handoff_prompt(
     project: str,
     task_id: str,
     max_tokens: int | None = None,
+    caller: str | None = None,
 ) -> dict[str, object]:
     """Bounded, role-neutral Markdown handoff prompt for one planned task (T25, INV-PLAN-5).
 
@@ -233,6 +273,18 @@ async def render_handoff_prompt(
     code_chunks = pack.chunks if pack is not None else []
 
     prompt = _render_prompt(task_block, contract_text, list(code_chunks))
+
+    if caller is not None:
+        await _record_handoff_baseline(
+            session,
+            project_id=proj.id,
+            root_path=proj.root_path,
+            caller=caller,
+            actual_tokens=estimate_tokens(prompt),
+            task_tokens=task_tokens,
+            contract_tokens=contract_tokens,
+            ranked_paths=(r.hit.path for r in hybrid.ranked),
+        )
 
     return {
         "project": proj.name,

@@ -19,6 +19,7 @@ tags:
   - name: index
   - name: codemap
   - name: plans
+  - name: token-savings
 
 paths:
   /health:
@@ -604,6 +605,66 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/SearchResponse"
+
+  /projects/{project}/token-savings:
+    get:
+      operationId: getTokenSavingsLog
+      tags: [token-savings]
+      summary: Most-recent-first token-savings log entries
+      parameters:
+        - $ref: "#/components/parameters/ProjectRef"
+        - name: operation
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/TokenSavingsOperation"
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Log entries
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/TokenSavingsLogEntry"
+        "400":
+          description: Invalid operation filter
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorBody"
+        "404":
+          description: Unknown project
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorBody"
+
+  /projects/{project}/token-savings/summary:
+    get:
+      operationId: getTokenSavingsSummary
+      tags: [token-savings]
+      summary: Overall totals plus a per-operation breakdown of tokens saved
+      parameters:
+        - $ref: "#/components/parameters/ProjectRef"
+      responses:
+        "200":
+          description: Summary
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TokenSavingsSummary"
+        "404":
+          description: Unknown project
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorBody"
 
   /projects/{project}/plans/generate-draft:
     post:
@@ -2958,3 +3019,65 @@ components:
         warning:
           type: string
           nullable: true
+
+    TokenSavingsOperation:
+      type: string
+      enum: [retrieve_context, search_code, prepare_task, get_project_briefing]
+
+    TokenSavingsLogEntry:
+      type: object
+      required:
+        - id
+        - project_id
+        - operation
+        - caller
+        - actual_tokens
+        - baseline_tokens
+        - saved_tokens
+        - created_at
+      properties:
+        id:
+          type: string
+        project_id:
+          type: string
+        operation:
+          $ref: "#/components/schemas/TokenSavingsOperation"
+        caller:
+          type: string
+        actual_tokens:
+          type: number
+        baseline_tokens:
+          type: number
+        saved_tokens:
+          type: number
+        created_at:
+          type: string
+          format: date-time
+
+    TokenSavingsOperationSummary:
+      type: object
+      required: [operation, call_count, actual_tokens_total, baseline_tokens_total, saved_tokens_total]
+      properties:
+        operation:
+          allOf:
+            - $ref: "#/components/schemas/TokenSavingsOperation"
+          nullable: true
+        call_count:
+          type: number
+        actual_tokens_total:
+          type: number
+        baseline_tokens_total:
+          type: number
+        saved_tokens_total:
+          type: number
+
+    TokenSavingsSummary:
+      type: object
+      required: [overall, by_operation]
+      properties:
+        overall:
+          $ref: "#/components/schemas/TokenSavingsOperationSummary"
+        by_operation:
+          type: array
+          items:
+            $ref: "#/components/schemas/TokenSavingsOperationSummary"

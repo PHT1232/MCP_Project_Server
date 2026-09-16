@@ -24,6 +24,7 @@ import {
   type CodeMap as CodeMapResponse, type Entry, type SyncReport,
 } from '@workspace/api-client-react';
 import { emptyGraph, mergeCodeMap, overlayTone, locateHit, relatedEntries, type CodeGraph, type MergedNode } from './lib/codemap';
+import Features from './pages/Features';
 import Plans from './pages/Plans';
 import TokenSavings from './pages/TokenSavings';
 
@@ -203,7 +204,7 @@ export function PageHeader({ eyebrow, title, description, actions }: { eyebrow: 
 
 export function ProjectTabs({ active }: { active: string }) {
   const project = decodeURIComponent(useParams<{ project: string }>().project ?? '');
-  const tabs = [['dashboard', 'Overview'], ['requirements', 'Requirements'], ['plans', 'Plans'], ['index', 'Code index'], ['code-map', 'Code map'], ['token-savings', 'Token savings']];
+  const tabs = [['dashboard', 'Overview'], ['requirements', 'Requirements'], ['features', 'Features'], ['plans', 'Plans'], ['index', 'Code index'], ['code-map', 'Code map'], ['token-savings', 'Token savings']];
   return <div className="mb-6 flex gap-1 overflow-x-auto rounded-lg border border-[#d7dbd4] bg-[#e7e9e2] p-1">{tabs.map(([id, label]) => <Link key={id} href={`/projects/${encodeURIComponent(project)}/${id}`} data-testid={`tab-project-${id}`} className={cx('whitespace-nowrap rounded-md px-3 py-2 text-xs font-semibold transition-colors md:px-4', active === id ? 'bg-[#faf9f4] text-[#1e3036] shadow-[0_1px_2px_rgba(31,43,45,.08)]' : 'text-[#758187] hover:text-[#34464c]')}>{label}</Link>)}</div>;
 }
 
@@ -727,7 +728,7 @@ function NotFound() { return <div className="flex min-h-[100dvh] items-center ju
 
 function RoutedErrorBoundary({ children }: { children: ReactNode }) { const [location] = useLocation(); return <ErrorBoundary resetKey={location}>{children}</ErrorBoundary>; }
 function Router() {
-  return <RoutedErrorBoundary><Switch><Route path="/" component={HomePicker} /><Route path="/settings/ai"><AppShell><AISettings /></AppShell></Route><Route path="/projects/:project/dashboard"><AppShell><Dashboard /></AppShell></Route><Route path="/projects/:project/requirements"><AppShell><Requirements /></AppShell></Route><Route path="/projects/:project/plans"><AppShell><Plans /></AppShell></Route><Route path="/projects/:project/index"><AppShell><CodeIndex /></AppShell></Route><Route path="/projects/:project/code-map"><AppShell><CodeMap /></AppShell></Route><Route path="/projects/:project/token-savings"><AppShell><TokenSavings /></AppShell></Route><Route component={NotFound} /></Switch></RoutedErrorBoundary>;
+  return <RoutedErrorBoundary><Switch><Route path="/" component={HomePicker} /><Route path="/settings/ai"><AppShell><AISettings /></AppShell></Route><Route path="/projects/:project/dashboard"><AppShell><Dashboard /></AppShell></Route><Route path="/projects/:project/requirements"><AppShell><Requirements /></AppShell></Route><Route path="/projects/:project/features"><AppShell><Features /></AppShell></Route><Route path="/projects/:project/plans"><AppShell><Plans /></AppShell></Route><Route path="/projects/:project/index"><AppShell><CodeIndex /></AppShell></Route><Route path="/projects/:project/code-map"><AppShell><CodeMap /></AppShell></Route><Route path="/projects/:project/token-savings"><AppShell><TokenSavings /></AppShell></Route><Route component={NotFound} /></Switch></RoutedErrorBoundary>;
 }
 function App() { return <QueryClientProvider client={queryClient}><TooltipProvider><WouterRouter base={import.meta.env.BASE_URL.replace(/\/$/, '')}><Router /></WouterRouter><Toaster /></TooltipProvider></QueryClientProvider>; }
 export default App;

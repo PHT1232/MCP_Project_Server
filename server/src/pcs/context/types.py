@@ -18,6 +18,12 @@ SECTION_CONVENTIONS: Final = "conventions"
 SECTION_DECISIONS: Final = "decisions"
 SECTION_REQUIREMENTS: Final = "requirements"
 SECTION_GLOSSARY: Final = "glossary"
+# Per-feature docs (description, implementing files via linked_files, and the
+# requirement it satisfies via related_entry_id). Deliberately excluded from
+# _RANK in assembly.py, so it never appears in get_project_briefing regardless
+# of the `sections` argument — read it back via get_section(project, "features")
+# to protect the briefing token budget (FR9g).
+SECTION_FEATURES: Final = "features"
 
 ALL_SECTIONS: Final[tuple[str, ...]] = (
     SECTION_OVERVIEW,
@@ -28,6 +34,7 @@ ALL_SECTIONS: Final[tuple[str, ...]] = (
     SECTION_DECISIONS,
     SECTION_REQUIREMENTS,
     SECTION_GLOSSARY,
+    SECTION_FEATURES,
 )
 
 SECTION_HEADINGS: Final[dict[str, str]] = {
@@ -39,6 +46,7 @@ SECTION_HEADINGS: Final[dict[str, str]] = {
     SECTION_DECISIONS: "Decisions",
     SECTION_REQUIREMENTS: "Requirements",
     SECTION_GLOSSARY: "Glossary",
+    SECTION_FEATURES: "Features",
 }
 
 # Lifecycle status (FR3, FR11). "deleted" is a soft-delete; the row is kept.

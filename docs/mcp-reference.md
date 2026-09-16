@@ -12,7 +12,7 @@ Arguments listed as `null` are optional. MCP framework context (`ctx`) is intern
 | `register_project` | `name`, `root_path`, `overview` | Project summary; indexes an existing root, starts its watcher, and initializes requirements sync. |
 | `configure_project` | `project=null`, `expiry_policy=null`, `expiry_days=null`, `briefing_token_budget=null`, `prepare_task_token_budget=null`, `headline_max_chars=null`, `detail_max_chars=null` | Updated project summary. |
 | `get_project_briefing` | `project=null`, `sections=null`, `max_tokens=null` | Compact Markdown briefing. `max_tokens` is `500`–`4000`; null uses project configuration. |
-| `get_section` | `section`, `project=null`, `include_resolved=false` | `{section, entries}`. Sections: `overview`, `focus`, `blockers`, `bugs`, `conventions`, `decisions`, `requirements`, `glossary`. |
+| `get_section` | `section`, `project=null`, `include_resolved=false` | `{section, entries}`. Sections: `overview`, `focus`, `blockers`, `bugs`, `conventions`, `decisions`, `requirements`, `glossary`, `features`. |
 | `get_entry` | `entry_id`, `project=null` | One verbatim entry; deleted/archived entries are hidden. |
 | `get_entry_history` | `entry_id`, `project=null` | Immutable revisions, including lifecycle changes. |
 | `update_overview` | `project=null`, `headline=null`, `detail=null` | Merged overview entry. |
@@ -42,6 +42,18 @@ Exact names are:
 
 For focus replacement semantics, prefer `set_current_focus` over `add_focus`.
 
+## Features
+
+Per-feature docs — what a feature does, which files implement it, and which requirement it satisfies — for humans browsing the codebase rather than an agent's compact briefing. Deliberately excluded from `get_project_briefing` regardless of the `sections` argument (protects the token budget); read them back with `get_section(project, "features")`.
+
+| Tool | Arguments and defaults | Behavior |
+|---|---|---|
+| `add_feature` | `project=null`, `headline=null`, `detail=null`, `linked_files=null`, `related_entry_id=null`, `priority=0` | Creates a feature entry. `linked_files` are the files that implement it; `related_entry_id` is the id of the requirements-section entry it satisfies. |
+| `update_feature` | `entry_id`, `project=null`, `headline=null`, `detail=null`, `linked_files=null`, `related_entry_id=null`, `priority=null` | Merge-updates supplied fields. |
+| `resolve_feature` | `entry_id`, `project=null` | Resolves the entry so it leaves active listings. |
+
+To populate this section, an agent asked to "explain the codebase's features, their files, and I/O" should write the result via `add_feature`/`update_feature` instead of a standalone `.md` file, so the control-panel Features view stays the source of truth.
+
 ## Requirements
 
 | Tool | Arguments and defaults | Result/behavior |
@@ -59,7 +71,7 @@ For focus replacement semantics, prefer `set_current_focus` over `add_focus`.
 | `create_acceptance_criterion` | `invariant_id`, `statement`, `evidence_kind` (`test`/`command`/`review`/`manual`/`file`), `project=null`, `key=null`, `required=true`, `independent_review="not-required"`, `sort_order=null` | Creates one criterion. Allocates `AC-N` when `key` is omitted. |
 | `update_acceptance_criterion` | `criterion_id`, `project=null`, `statement=null`, `evidence_kind=null`, `required=null`, `independent_review=null`, `key=null`, `sort_order=null` | Merge-update. Omitted fields stay. Empty payloads are rejected. Explicit JSON `null` rejects the whole call; `required=false` and `sort_order=0` are accepted. |
 | `delete_acceptance_criterion` | `criterion_id`, `project=null` | Soft-delete; history is kept. |
-| `record_requirement_evidence` | `criterion_id`, `kind` (`test`/`command`/`review`/`manual`/`file`), `result` (`passed`/`failed`/`manual-pending`), `source_commit` (7–40 hex; stored as full 40-char SHA), `project=null`, `command_ref=null`, `test_ref=null`, `file_ref=null`, `worktree_fingerprint=null`, `artifact_ref=null` | Append-only compact evidence. Does not change requirement status (D4). Rejects logs, diffs, secrets, and oversized fields. |
+| `record_requirement_evidence` | `criterion_id`, `kind` (`test`/`command`/`review`/`manual`/`file`), `result` (`passed`/`failed`/`manual-pending`), `source_commit` (7–40 hex; stored as full 40-char SHA), `project=null`, `command_ref=null`, `test_ref=null`, `file_ref=null`, `worktree_fingerprint=null`, `artifact_ref=null` | Append-only compact evidence. Does not change requirement status (D4). Rejects logs, diffs, secrets, and oversized fields. On a dirty worktree, `worktree_fingerprint` must exactly match the server-computed current value or the call is rejected with `dirty-worktree: worktree_fingerprint required/does not match (expected <hex>)` — no paths, but the expected hex value is included so the caller can retry with it verbatim. |
 | `get_requirement_evidence` | `requirement_id`, `project=null` | Compact evidence, violations, and close-gate state. No stdout or diffs. |
 | `add_requirement_violation` | `invariant_id`, `summary` (1–200 chars), `project=null`, `severity="blocking"` (`blocking`/`warning`), `file_ref=null`, `line_no=null` (≥1) | Records a review finding. |
 | `resolve_requirement_violation` | `violation_id`, `project=null` | Marks the finding resolved; stores resolver identity; history is kept. |

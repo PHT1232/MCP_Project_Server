@@ -287,3 +287,62 @@ async def test_requirement_status_round_trip() -> None:
         briefing = await service.get_project_briefing(session, project=PROJECT)
     assert fetched.requirement_status == "done"
     assert "1/1 done" in briefing
+
+
+async def test_features_section_round_trip_and_briefing_exclusion() -> None:
+    await _seed()
+    async with session_scope() as session:
+        req = await service.add_entry(
+            session,
+            project=PROJECT,
+            section="requirements",
+            headline="Checkout supports Apple Pay",
+        )
+        feature = await service.add_entry(
+            session,
+            project=PROJECT,
+            section="features",
+            headline="Checkout",
+            detail="Takes a cart + payment method, returns an order confirmation.",
+            linked_files=["src/checkout/handler.py", "src/checkout/payment.py"],
+            related_entry_id=req.id,
+        )
+    async with session_scope() as session:
+        listed = await service.get_section(session, project=PROJECT, section="features")
+        default_briefing = await service.get_project_briefing(session, project=PROJECT)
+        explicit_briefing = await service.get_project_briefing(
+            session, project=PROJECT, sections=["features"]
+        )
+    assert [e.id for e in listed] == [feature.id]
+    assert listed[0].linked_files == ("src/checkout/handler.py", "src/checkout/payment.py")
+    assert listed[0].related_entry_id == req.id
+    # Features never appear in the briefing, even when explicitly requested —
+    # they're not in assembly.py's _RANK, protecting the token budget (FR9g).
+    assert "Takes a cart + payment method" not in default_briefing
+    assert "Takes a cart + payment method" not in explicit_briefing
+
+    async with session_scope() as session:
+        updated = await service.update_entry(
+            session,
+            project=PROJECT,
+            entry_id=feature.id,
+            detail=(
+                "Takes a cart + payment method + shipping address, "
+                "returns an order confirmation."
+            ),
+            expected_section="features",
+        )
+    assert "shipping address" in updated.detail
+    assert updated.linked_files == ("src/checkout/handler.py", "src/checkout/payment.py")
+
+    async with session_scope() as session:
+        await service.resolve_entry(
+            session, project=PROJECT, entry_id=feature.id, expected_section="features"
+        )
+    async with session_scope() as session:
+        active = await service.get_section(session, project=PROJECT, section="features")
+        archived = await service.get_section(
+            session, project=PROJECT, section="features", include_resolved=True
+        )
+    assert active == []
+    assert any(e.id == feature.id and e.status == "resolved" for e in archived)

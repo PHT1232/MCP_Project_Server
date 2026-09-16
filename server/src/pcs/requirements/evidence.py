@@ -606,9 +606,13 @@ async def record_evidence(
     supplied_fp = _bound_fingerprint(worktree_fingerprint)
     dirty = current_fp is not None and current_fp != _CLEAN_FINGERPRINT
     if dirty and supplied_fp is None:
-        raise ValidationError("dirty-worktree: worktree_fingerprint required")
+        raise ValidationError(
+            f"dirty-worktree: worktree_fingerprint required (expected {current_fp})"
+        )
     if dirty and supplied_fp != current_fp:
-        raise ValidationError("dirty-worktree: worktree_fingerprint does not match")
+        raise ValidationError(
+            f"dirty-worktree: worktree_fingerprint does not match (expected {current_fp})"
+        )
     normalized_command_ref = _bound_optional(command_ref, field="command_ref", max_chars=REF_MAX)
     normalized_artifact_ref = _bound_optional(
         artifact_ref, field="artifact_ref", max_chars=ARTIFACT_MAX

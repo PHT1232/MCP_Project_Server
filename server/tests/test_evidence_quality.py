@@ -93,10 +93,11 @@ async def test_dirty_rejection_and_provisional_lifecycle_hide_paths(tmp_path: Pa
                 source_commit=sha,
             )
         message = str(caught.value)
-        assert message == "dirty-worktree: worktree_fingerprint required"
+        assert message.startswith("dirty-worktree: worktree_fingerprint required (expected ")
         assert "private-secret.py" not in message
         _, fingerprint = await evidence._repo_state(str(tmp_path))
         assert fingerprint is not None and len(fingerprint) == 64
+        assert fingerprint in message
         row = await evidence.record_evidence(
             session,
             project=PROJECT,

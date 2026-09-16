@@ -47,7 +47,14 @@ def register_evidence_tools(mcp: FastMCP) -> None:
         review_ref: Annotated[str | None, Field(max_length=80)] = None,
         ctx: Context[Any, Any] | None = None,
     ) -> dict[str, object]:
-        """Append compact evidence. Does not change requirement status (D4, T12)."""
+        """Append compact evidence. Does not change requirement status (D4, T12).
+
+        On a dirty worktree, `worktree_fingerprint` must exactly equal the value
+        the server computes for the project's current tree state. If omitted or
+        wrong, the rejection message includes that expected value directly
+        (`... (expected <hex>)`) so the caller can retry with it verbatim
+        instead of guessing.
+        """
 
         async def op(session: AsyncSession) -> dict[str, object]:
             view = await evidence.record_evidence(

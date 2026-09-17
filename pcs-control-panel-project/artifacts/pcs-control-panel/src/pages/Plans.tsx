@@ -496,6 +496,7 @@ function PlanDetail({ project, plan }: { project: string; plan: Plan }) {
   };
 
   const copyPrompt = async (task: PlanTask) => {
+    setBusyTaskId(task.id);
     prepareMutation.mutate(
       { project, data: { task_id: task.id } },
       {
@@ -505,9 +506,14 @@ function PlanDetail({ project, plan }: { project: string; plan: Plan }) {
             notify('Copied', `Agent handoff prompt for ${task.local_task_id} copied to clipboard.`);
           } catch (err) {
             notifyError('Copy agent prompt', err);
+          } finally {
+            setBusyTaskId(null);
           }
         },
-        onError: (err) => notifyError('Prepare agent prompt', err),
+        onError: (err) => {
+          setBusyTaskId(null);
+          notifyError('Prepare agent prompt', err);
+        },
       },
     );
   };

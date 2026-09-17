@@ -78,14 +78,39 @@ async def hybrid_search(
     limit: int = 20,
     backend: EmbeddingBackend | None = None,
     count_matches: bool = True,
+    prefer_semantic_over_fuzzy: bool = False,
 ) -> HybridResult:
     """Keyword + (optional) semantic search, fused by reciprocal rank (FR20, FR22).
 
     ``count_matches`` passes through to :func:`keyword_search` — set False
     only when the caller never surfaces ``total_matches``/``truncated``.
+
+    ``prefer_semantic_over_fuzzy=True`` drops keyword_search's fuzzy
+    ``similarity()`` tier (``fuzzy=False``) whenever semantic search is
+    actually going to run this call (a backend is configured and chunks are
+    embedded) — semantic search already covers "resembles this free-text
+    query" for natural-language input, and fuzzy-matching a long query
+    against every chunk both costs the most of anything in this function and
+    tends to rank incidental textual resemblance over real relevance. If
+    semantic ends up unavailable for this project, fuzzy stays on regardless
+    — it's the only fallback for natural-language queries without it. Default
+    False preserves exact current behavior (used by the ``search_code``
+    surface, where fuzzy substring/typo tolerance on short explicit queries
+    is valuable independent of semantic availability).
     """
     await ensure_index_schema(session)
     row = await resolve_project(session, project)
+
+    backend = backend if backend is not None else await get_embedding_backend(session)
+    semantic_ready = False
+    if backend is not None:
+        status = await session.get(IndexStatus, row.id)
+        embedded = (
+            status.embedded_chunk_count
+            if status is not None and not status.reindex_required
+            else 0
+        )
+        semantic_ready = bool(embedded)
 
     keyword_result = await keyword_search(
         session,
@@ -97,10 +122,10 @@ async def hybrid_search(
         globs=globs,
         limit=max(limit, 20),
         count_matches=count_matches,
+        fuzzy=not (prefer_semantic_over_fuzzy and semantic_ready),
     )
     keyword_hits = keyword_result.hits
 
-    backend = backend if backend is not None else await get_embedding_backend(session)
     if backend is None:
         ranked = hybrid_rank(keyword_hits, [], limit=limit)
         return HybridResult(
@@ -111,11 +136,7 @@ async def hybrid_search(
             keyword_total_matches=keyword_result.total_matches,
         )
 
-    status = await session.get(IndexStatus, row.id)
-    embedded = (
-        status.embedded_chunk_count if status is not None and not status.reindex_required else 0
-    )
-    if not embedded:
+    if not semantic_ready:
         ranked = hybrid_rank(keyword_hits, [], limit=limit)
         return HybridResult(
             ranked=ranked,
@@ -197,9 +218,15 @@ async def gather_relevant(
 ) -> HybridResult:
     """Relevance for a whole task description (FR22).
 
-    Semantic mode handles NL directly. In keyword-only mode a plain
-    ``plainto_tsquery`` of a long sentence AND-matches nothing, so we also probe
-    the salient terms individually and fuse the keyword hits.
+    Semantic mode handles NL directly — when it's available, the primary
+    call passes ``prefer_semantic_over_fuzzy=True`` so keyword_search skips
+    its expensive fuzzy ``similarity()`` tier and lets semantic ranking do
+    that job (cheaper and more precise for long free-text input; see
+    ``hybrid_search``'s docstring). In keyword-only mode (no semantic
+    backend) a plain ``plainto_tsquery`` of a long sentence AND-matches
+    nothing, so we also probe the salient terms individually and fuse the
+    keyword hits — fuzzy stays on for that fallback, since it's the only
+    signal available without semantic.
     """
     primary = await hybrid_search(
         session,
@@ -211,6 +238,7 @@ async def gather_relevant(
         limit=limit,
         backend=backend,
         count_matches=False,
+        prefer_semantic_over_fuzzy=True,
     )
     if primary.semantic_available or len(primary.ranked) >= 3:
         return primary

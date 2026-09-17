@@ -10,16 +10,19 @@ import shutil
 from collections.abc import Iterator
 from pathlib import Path
 from typing import cast
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from sqlalchemy import select, text
 
 from pcs.context import service as context_service
 from pcs.db.base import session_scope
+from pcs.index import hybrid as index_hybrid
 from pcs.index import retrieval, service
 from pcs.index.chunker import chunk_source
 from pcs.index.embedding import HashingEmbeddingBackend, set_embedding_backend_override
 from pcs.index.scip import ScipIndex, parse_scip_index
+from pcs.index.search import keyword_search
 
 pytestmark = pytest.mark.usefixtures("clean_db")
 
@@ -202,6 +205,61 @@ async def test_ac8_natural_language_query_finds_file_and_symbol(
     assert top["path"] == "shop/cart.py"
     assert top["symbol"] == "cart_total"
     assert top["matched_mode"] in {"semantic", "hybrid"}
+
+
+async def test_hybrid_search_prefer_semantic_over_fuzzy_disables_fuzzy_when_ready(
+    tmp_path: Path, hashing_backend: None
+) -> None:
+    """prefer_semantic_over_fuzzy=True skips keyword's fuzzy tier once semantic is ready.
+
+    Perf/quality fix (T-PREPARE-PERF follow-up): once chunks are embedded and
+    a backend is configured, fuzzy trigram matching a long free-text query is
+    both the most expensive part of hybrid_search and prone to surfacing
+    incidental resemblance over real relevance — semantic ranking already
+    covers that job for natural-language input.
+    """
+    status = await _register_and_index(tmp_path)
+    assert status.semantic_available is True
+
+    tracker = AsyncMock(wraps=keyword_search)
+
+    with patch("pcs.index.hybrid.keyword_search", new=tracker):
+        async with session_scope() as session:
+            await index_hybrid.hybrid_search(
+                session,
+                project=PROJECT,
+                query="how do we calculate the total price of the shopping cart",
+                prefer_semantic_over_fuzzy=True,
+            )
+
+    assert tracker.call_count == 1
+    assert tracker.call_args.kwargs["fuzzy"] is False
+
+
+async def test_hybrid_search_prefer_semantic_over_fuzzy_keeps_fuzzy_without_backend(
+    tmp_path: Path, no_backend: None
+) -> None:
+    """Without semantic actually available, prefer_semantic_over_fuzzy changes nothing.
+
+    Fuzzy matching is the only relevance signal for natural-language queries
+    when there's no embedding backend — it must stay on regardless of the
+    caller's preference.
+    """
+    await _register_and_index(tmp_path)
+
+    tracker = AsyncMock(wraps=keyword_search)
+
+    with patch("pcs.index.hybrid.keyword_search", new=tracker):
+        async with session_scope() as session:
+            result = await index_hybrid.hybrid_search(
+                session,
+                project=PROJECT,
+                query="how do we calculate the total price of the shopping cart",
+                prefer_semantic_over_fuzzy=True,
+            )
+
+    assert result.semantic_available is False
+    assert tracker.call_args.kwargs["fuzzy"] is True
 
 
 async def test_nfr10_unchanged_chunks_not_re_embedded(

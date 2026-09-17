@@ -462,6 +462,50 @@ async def test_keyword_search_count_matches_false_skips_count_query(tmp_path: Pa
     assert result.total_matches == 5
 
 
+async def test_keyword_search_fuzzy_false_keeps_exact_drops_fuzzy_only(tmp_path: Path) -> None:
+    """fuzzy=False keeps exact/FTS matches but drops trigram-similarity-only hits.
+
+    Perf/quality fix (T-PREPARE-PERF follow-up): similarity() isn't
+    index-accelerated and dominates keyword_search's cost for long queries,
+    while tending to surface only incidental resemblance rather than real
+    relevance. fuzzy=False must not affect exact/FTS/symbol/path matching.
+    """
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "exact.py").write_text("NEEDLE_MARKER = True\n", encoding="utf-8")
+    long_text = (
+        "Refactor the payment processing pipeline to handle async retries "
+        "gracefully without blocking the main thread"
+    )
+    (tmp_path / "src" / "fuzzy_only.py").write_text(f"# {long_text}\n", encoding="utf-8")
+    async with session_scope() as session:
+        await context_service.register_project(
+            session, name=PROJECT, root_path=str(tmp_path), overview=OVERVIEW
+        )
+    async with session_scope() as session:
+        await reindex(session, project=PROJECT, incremental=False)
+
+    # NEEDLE_MARKER is an exact/FTS token match on exact.py — unaffected by fuzzy.
+    async with session_scope() as session:
+        exact_default = await keyword_search(session, project=PROJECT, query="NEEDLE_MARKER")
+        exact_no_fuzzy = await keyword_search(
+            session, project=PROJECT, query="NEEDLE_MARKER", fuzzy=False
+        )
+    assert any(h.path.endswith("exact.py") for h in exact_default.hits)
+    assert any(h.path.endswith("exact.py") for h in exact_no_fuzzy.hits)
+
+    # A near-duplicate of fuzzy_only.py's text (one word swapped, one word
+    # appended) shares no exact substring and no complete FTS token-set match
+    # with it, but is trigram-similar enough to match only when fuzzy=True.
+    near_dup_query = long_text.replace("Refactor", "Rewrite") + " zzz_unique_suffix_marker"
+    async with session_scope() as session:
+        fuzzy_on = await keyword_search(session, project=PROJECT, query=near_dup_query)
+        fuzzy_off = await keyword_search(
+            session, project=PROJECT, query=near_dup_query, fuzzy=False
+        )
+    assert any(h.path.endswith("fuzzy_only.py") for h in fuzzy_on.hits)
+    assert not any(h.path.endswith("fuzzy_only.py") for h in fuzzy_off.hits)
+
+
 async def test_hybrid_search_count_matches_false_passes_through(tmp_path: Path) -> None:
     """hybrid_search's count_matches threads down to its keyword_search call.
 

@@ -275,6 +275,7 @@ async def keyword_search(
     globs: list[str] | None = None,
     limit: int = 20,
     count_matches: bool = True,
+    fuzzy: bool = True,
 ) -> SearchResult:
     """Exact + fuzzy + symbol + glob keyword search (FR20, FR21, FR29).
 
@@ -290,6 +291,18 @@ async def keyword_search(
     genuinely never surfaces ``total_matches``/``truncated`` (e.g.
     :func:`pcs.index.hybrid.gather_relevant`'s internal use) — the real
     ``search_code`` surface needs an accurate count and must keep the default.
+
+    ``fuzzy=False`` drops the ``similarity()`` OR-conditions (and their
+    contribution to scoring) entirely, keeping only exact/FTS/symbol/path
+    matches. ``similarity()`` isn't index-accelerated the way the ``%``
+    trigram operator is, so Postgres evaluates it per row for every row that
+    reaches the ORDER BY — for a long free-text query this dominates the
+    query's cost and, worse, tends to surface incidental noise (text that
+    merely resembles the query) over genuinely relevant hits. Only pass
+    ``False`` when a stronger relevance signal already covers that job (e.g.
+    :func:`pcs.index.hybrid.hybrid_search` when semantic search is available)
+    — with no semantic backend, fuzzy matching is the only fallback for
+    natural-language queries and must stay on.
     """
     await ensure_index_schema(session)
     row = await resolve_project(session, project)
@@ -314,6 +327,13 @@ async def keyword_search(
     ident = _IDENT.match(q) is not None
     like = "%" + _like_escape(q) + "%"
 
+    fuzzy_where = (
+        """
+             OR (c.symbol IS NOT NULL AND similarity(c.symbol, :q) > 0.3)
+             OR similarity(c.content, :q) > 0.2"""
+        if fuzzy
+        else ""
+    )
     where_sql = f"""
         c.project_id = :project_id
           {scope_sql}
@@ -322,11 +342,28 @@ async def keyword_search(
                 c.tsv @@ plainto_tsquery('simple', :q)
              OR c.content ILIKE :like ESCAPE '\\'
              OR c.symbol ILIKE :like ESCAPE '\\'
-             OR c.path ILIKE :like ESCAPE '\\'
-             OR (c.symbol IS NOT NULL AND similarity(c.symbol, :q) > 0.3)
-             OR similarity(c.content, :q) > 0.2
+             OR c.path ILIKE :like ESCAPE '\\'{fuzzy_where}
           )
     """
+
+    fuzzy_score = (
+        """,
+                COALESCE(similarity(c.symbol, :q), 0.0) * 0.9,
+                COALESCE(similarity(c.content, :q), 0.0) * 0.7"""
+        if fuzzy
+        else ""
+    )
+    fuzzy_case = (
+        """
+                WHEN similarity(c.symbol, :q) > 0.3 THEN 'symbol'
+                WHEN similarity(c.content, :q) > 0.2 THEN 'fuzzy'"""
+        if fuzzy
+        else ""
+    )
+    # Unreachable when fuzzy=False: the WHERE clause above only admits
+    # tsv/exact/symbol/path matches, and every earlier WHEN already covers
+    # those — kept as a safe catchall, never actually hit in that mode.
+    else_mode = "'fuzzy'" if fuzzy else "'fts'"
 
     sql = f"""
         SELECT
@@ -344,18 +381,14 @@ async def keyword_search(
                 CASE WHEN c.symbol ILIKE :like ESCAPE '\\' THEN 1.0 ELSE 0.0 END,
                 CASE WHEN c.content ILIKE :like ESCAPE '\\' THEN 0.85 ELSE 0.0 END,
                 CASE WHEN c.path ILIKE :like ESCAPE '\\' THEN 0.5 ELSE 0.0 END,
-                COALESCE(similarity(c.symbol, :q), 0.0) * 0.9,
-                COALESCE(similarity(c.content, :q), 0.0) * 0.7,
-                COALESCE(ts_rank(c.tsv, plainto_tsquery('simple', :q)), 0.0)
+                COALESCE(ts_rank(c.tsv, plainto_tsquery('simple', :q)), 0.0){fuzzy_score}
             ) AS score,
             CASE
                 WHEN c.symbol ILIKE :like ESCAPE '\\' THEN 'symbol'
                 WHEN c.content ILIKE :like ESCAPE '\\' THEN 'exact'
-                WHEN c.tsv @@ plainto_tsquery('simple', :q) THEN 'fts'
-                WHEN similarity(c.symbol, :q) > 0.3 THEN 'symbol'
-                WHEN similarity(c.content, :q) > 0.2 THEN 'fuzzy'
+                WHEN c.tsv @@ plainto_tsquery('simple', :q) THEN 'fts'{fuzzy_case}
                 WHEN c.path ILIKE :like ESCAPE '\\' THEN 'glob'
-                ELSE 'fuzzy'
+                ELSE {else_mode}
             END AS matched_mode
         FROM code_index.chunks c
         WHERE {where_sql}

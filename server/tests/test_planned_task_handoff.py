@@ -369,6 +369,20 @@ async def test_prompt_embeds_concrete_pcs_lifecycle_calls(tmp_path: Path) -> Non
     assert "get_code_map" in prompt
 
 
+async def test_prompt_frames_pcs_tool_use_as_mandatory(tmp_path: Path) -> None:
+    """A plain description of available tools was observed to still get
+    skipped by weaker models (Haiku 4.5) — the prompt must explicitly say
+    tool use is required, not just informational, and give it its own
+    heading so it reads as a hard requirement rather than background."""
+    await _register_and_index(tmp_path)
+    ids = await _seed_plan()
+    async with session_scope() as session:
+        result = await retrieval.prepare_task(session, project=PROJECT, task_id=ids["t1"])
+    prompt = cast(str, result["prompt"])
+    assert "### Required: use pcs" in prompt
+    assert "mandatory" in prompt.lower()
+
+
 async def test_prompt_mentions_evidence_only_when_requirement_linked(tmp_path: Path) -> None:
     await _register_and_index(tmp_path)
     ids = await _seed_plan(with_requirement=True)

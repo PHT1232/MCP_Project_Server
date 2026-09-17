@@ -169,21 +169,27 @@ def _render_task_block(
     objective, required AC IDs, and project name over general context" means
     in practice: everything else (contract detail, code) shrinks first.
 
-    The "Working with pcs" section exists because this prompt is designed to
+    The "Required: use pcs" section exists because this prompt is designed to
     be copy-pasted into a *different* agent/session that has none of this
     project's own instructions loaded (no CLAUDE.md/AGENTS.md mandate to use
     pcs, possibly not even pcs configured) — deferring to "read AGENTS.md
     first" alone was observed to get skipped by weaker models that just act
     on the self-contained task/code text below it. Tool calls are spelled out
     with project/plan_id/task_id already filled in so a cold-started agent
-    can act on them directly instead of inferring conventions.
+    can act on them directly instead of inferring conventions, and the intro
+    line explicitly says "mandatory, not optional" — a plain description of
+    available tools reads as informational and was observed to still get
+    skipped by weaker models; framing it as a requirement is more resistant
+    to that.
     """
     lines = [
         f"## Task Handoff — {task.local_task_id}: {task.title}",
         "",
-        f'This task lives in pcs MCP project "{project_name}", plan {plan_id}, '
-        f"task {task.id}. Use these pcs tools for its lifecycle — do not just "
-        "read the task below and start editing:",
+        "### Required: use pcs for this task's lifecycle",
+        f'This is a pcs MCP-tracked task — project "{project_name}", plan {plan_id}, '
+        f"task {task.id}. The steps below are mandatory, not optional suggestions: "
+        "do not start editing before claiming the task, and do not report this "
+        "task done without calling complete_task.",
         f'- Claim it first: claim_task(project="{project_name}", plan_id="{plan_id}", '
         f'task_id="{task.id}", claimed_by="<your agent/session name>"). Keep the '
         "claim_token it returns — heartbeat_task and complete_task both need it.",

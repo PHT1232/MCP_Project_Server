@@ -56,8 +56,8 @@ Per-feature docs — what a feature does, which files implement it, and which re
 
 | Tool | Arguments and defaults | Behavior |
 |---|---|---|
-| `add_feature` | `project=null`, `headline=null`, `detail=null`, `linked_files=null`, `related_entry_id=null`, `diagram=null`, `priority=0` | Creates a feature entry. `linked_files` are the files that implement it; `related_entry_id` is the id of the requirements-section entry it satisfies; `diagram` is Mermaid `sequenceDiagram` syntax rendered on the feature's detail page. |
-| `update_feature` | `entry_id`, `project=null`, `headline=null`, `detail=null`, `linked_files=null`, `related_entry_id=null`, `diagram=null`, `priority=null` | Merge-updates supplied fields. `diagram=""` clears it. |
+| `add_feature` | `project=null`, `headline=null`, `detail=null`, `linked_files=null`, `related_entry_id=null`, `diagram=null`, `priority=0` | Creates a feature entry. `linked_files` are the files that implement it; `related_entry_id` is the id of the requirements-section entry it satisfies; `diagram` is Mermaid `sequenceDiagram` syntax rendered on the feature's detail page, validated at write time (see below). |
+| `update_feature` | `entry_id`, `project=null`, `headline=null`, `detail=null`, `linked_files=null`, `related_entry_id=null`, `diagram=null`, `priority=null` | Merge-updates supplied fields. `diagram=""` clears it. `diagram` is validated the same way as `add_feature`. |
 | `resolve_feature` | `entry_id`, `project=null` | Resolves the entry so it leaves active listings. |
 
 To populate this section, an agent asked to "explain the codebase's features, their files, and I/O" should write the result via `add_feature`/`update_feature` instead of a standalone `.md` file, so the control-panel Features view stays the source of truth. Example diagram:
@@ -74,6 +74,25 @@ add_feature(
     DB-->>Server: user row
     Server-->>Client: Set-Cookie: session=...""",
 )
+```
+
+`diagram` is validated at write time (a pragmatic heuristic check, not a full Mermaid grammar parser) — malformed diagrams are hard-rejected with a specific, line-level `ValidationError`, never silently saved or auto-corrected:
+
+- Must start with a `sequenceDiagram` header as its first line.
+- No bare `;` anywhere — Mermaid treats `;` as a statement separator and will silently split/corrupt the line at render time.
+- Every `loop`/`alt`/`opt`/`par`/`critical`/`break`/`rect`/`box` must be closed with a matching `end`.
+- Every other non-blank line must be a recognized statement: a `participant`/`actor` declaration, a message (`A->>B: text`), a `Note` (`Note over A: text`), `activate`/`deactivate`, or a directive/comment (`autonumber`, `title`, `%%`).
+
+**Common validation failure — bare semicolon.** The most likely mistake, since prose message/Note text often contains one:
+
+```
+diagram="sequenceDiagram\n  Note over Service: does X; then Y"
+```
+
+is rejected (`diagram line 2 contains a literal ';': ...`). Rewrite as two statements or use different punctuation instead:
+
+```
+diagram="sequenceDiagram\n  Note over Service: does X, then Y"
 ```
 
 ## Requirements

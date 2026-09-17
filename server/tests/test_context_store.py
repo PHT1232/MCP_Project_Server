@@ -393,3 +393,117 @@ async def test_diagram_rejected_outside_features_and_over_max_chars() -> None:
                 headline="Too big",
                 diagram="x" * (DIAGRAM_MAX_CHARS + 1),
             )
+
+
+async def test_diagram_rejected_for_bare_semicolon_in_note() -> None:
+    await _seed()
+    async with session_scope() as session:
+        with pytest.raises(ValidationError, match="literal ';'"):
+            await service.add_entry(
+                session,
+                project=PROJECT,
+                section="features",
+                headline="Token savings tracking",
+                diagram=(
+                    "sequenceDiagram\n"
+                    "    Note over service: saved_tokens = max(0, baseline - actual); "
+                    "caller=None skips logging"
+                ),
+            )
+
+
+async def test_diagram_rejected_for_bare_semicolon_in_message() -> None:
+    await _seed()
+    async with session_scope() as session:
+        with pytest.raises(ValidationError, match="literal ';'"):
+            await service.add_entry(
+                session,
+                project=PROJECT,
+                section="features",
+                headline="Plan and task orchestration",
+                diagram=(
+                    "sequenceDiagram\n"
+                    "    claim_task->>Postgres: UPDATE task status=claimed, "
+                    "lease_expires_at; append task_events row"
+                ),
+            )
+
+
+async def test_diagram_accepted_for_valid_multi_participant_with_blocks() -> None:
+    await _seed()
+    diagram = (
+        "sequenceDiagram\n"
+        "    participant Agent\n"
+        "    actor Human\n"
+        "    Agent->>+Server: request\n"
+        "    loop retry\n"
+        "        Server-->>Agent: ack\n"
+        "    end\n"
+        "    alt success\n"
+        "        Server->>-Agent: done\n"
+        "    else failure\n"
+        "        Server-->>Agent: error\n"
+        "    end\n"
+        "    Note over Agent,Server: multi participant note"
+    )
+    async with session_scope() as session:
+        entry = await service.add_entry(
+            session,
+            project=PROJECT,
+            section="features",
+            headline="Valid diagram",
+            diagram=diagram,
+        )
+    assert entry.diagram == diagram
+
+
+async def test_diagram_rejected_for_missing_sequencediagram_header() -> None:
+    await _seed()
+    async with session_scope() as session:
+        with pytest.raises(ValidationError, match="must start with a 'sequenceDiagram'"):
+            await service.add_entry(
+                session,
+                project=PROJECT,
+                section="features",
+                headline="No header",
+                diagram="A->>B: hi",
+            )
+
+
+async def test_diagram_rejected_for_unbalanced_loop() -> None:
+    await _seed()
+    async with session_scope() as session:
+        with pytest.raises(ValidationError, match="unclosed block"):
+            await service.add_entry(
+                session,
+                project=PROJECT,
+                section="features",
+                headline="Unbalanced loop",
+                diagram="sequenceDiagram\n  loop retry\n  A->>B: hi",
+            )
+
+
+async def test_diagram_rejected_for_stray_end() -> None:
+    await _seed()
+    async with session_scope() as session:
+        with pytest.raises(ValidationError, match="no matching open block"):
+            await service.add_entry(
+                session,
+                project=PROJECT,
+                section="features",
+                headline="Stray end",
+                diagram="sequenceDiagram\n  A->>B: hi\n  end",
+            )
+
+
+async def test_diagram_rejected_for_unrecognized_line() -> None:
+    await _seed()
+    async with session_scope() as session:
+        with pytest.raises(ValidationError, match="doesn't look like valid Mermaid"):
+            await service.add_entry(
+                session,
+                project=PROJECT,
+                section="features",
+                headline="Garbage line",
+                diagram="sequenceDiagram\n  this is not a real statement",
+            )

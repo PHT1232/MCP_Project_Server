@@ -6,6 +6,8 @@ the other is derived by truncation — never by an LLM call (FR3b).
 
 from __future__ import annotations
 
+import re
+
 from pcs.context.types import (
     ALL_SECTIONS,
     DETAIL_MAX_CHARS,
@@ -103,12 +105,113 @@ def default_requirement_status(section: str, supplied: str | None) -> str | None
     return validate_requirement_status(supplied)
 
 
+_BLOCK_OPENERS = frozenset({"loop", "alt", "opt", "par", "critical", "break", "rect", "box"})
+_BLOCK_CONTINUATIONS = frozenset({"else", "and", "option"})
+
+_ACTOR = r'(?:"[^"]+"|[\w.\-]+)'
+_ARROW_RE = re.compile(
+    rf"^{_ACTOR}\s*(?:-->>|->>|-->|->|--x|-x|--\)|-\))[+-]?\s*{_ACTOR}\s*:.*$",
+    re.IGNORECASE,
+)
+_PARTICIPANT_RE = re.compile(
+    r"^(?:participant|actor|create\s+(?:participant|actor)|destroy)\s+\S.*$",
+    re.IGNORECASE,
+)
+_NOTE_RE = re.compile(r"^Note\s+(?:left of|right of|over)\s+.+:.*$", re.IGNORECASE)
+_ACTIVATE_RE = re.compile(r"^(?:activate|deactivate)\s+\S+$", re.IGNORECASE)
+_DIRECTIVE_RE = re.compile(r"^(?:autonumber\b.*|title\b.*|%%.*)$", re.IGNORECASE)
+
+
+def _validate_diagram_syntax(text: str) -> None:
+    """Heuristically reject a malformed Mermaid ``sequenceDiagram`` (agent-authored).
+
+    Not a full grammar parser — no such dependency exists in this backend, and
+    a real one is out of scope. This is a pragmatic guard against the mistakes
+    actually seen in practice: a missing header, a bare ``;`` (Mermaid treats
+    it as a statement separator and silently corrupts the line at render
+    time — the incident that motivated this function), unbalanced blocks, and
+    unrecognized statement shapes. Deliberately lenient elsewhere — no
+    required participant pre-declaration (Mermaid auto-declares on first
+    use), no else/and/option-vs-parent-block checking, case-insensitive
+    keywords — to keep false-positive risk on real diagrams near zero.
+    """
+    lines = text.splitlines()
+
+    first_line = lines[0].strip()
+    if first_line != "sequenceDiagram":
+        raise ValidationError(
+            "diagram must start with a 'sequenceDiagram' header as its first line; "
+            f"first line was {first_line!r} — add 'sequenceDiagram' on its own line "
+            "before any participant/message lines"
+        )
+
+    stack: list[tuple[str, int]] = []
+    for n, raw_line in enumerate(lines, start=1):
+        stripped = raw_line.strip()
+        if not stripped:
+            continue
+
+        if ";" in raw_line:
+            raise ValidationError(
+                f"diagram line {n} contains a literal ';': {stripped!r} — Mermaid "
+                "sequence diagrams treat ';' as a statement separator and will "
+                "silently split or corrupt this line at render time; remove the "
+                "semicolon (rewrite as two separate statement lines, or use ',' "
+                "/ '—' instead) and retry"
+            )
+
+        if stripped == "sequenceDiagram":
+            continue
+
+        first_word = stripped.split(None, 1)[0].lower()
+        if first_word in _BLOCK_OPENERS:
+            stack.append((first_word, n))
+            continue
+        if first_word in _BLOCK_CONTINUATIONS:
+            continue
+        if stripped.lower() == "end":
+            if not stack:
+                raise ValidationError(
+                    f"diagram line {n} has an 'end' with no matching open block — "
+                    "remove it, or add a matching loop/alt/opt/par/critical/break/"
+                    "rect/box above it"
+                )
+            stack.pop()
+            continue
+
+        if (
+            _ARROW_RE.match(stripped)
+            or _PARTICIPANT_RE.match(stripped)
+            or _NOTE_RE.match(stripped)
+            or _ACTIVATE_RE.match(stripped)
+            or _DIRECTIVE_RE.match(stripped)
+        ):
+            continue
+
+        raise ValidationError(
+            f"diagram line {n} doesn't look like valid Mermaid sequence-diagram "
+            f"syntax: {stripped!r} — expected a participant/actor declaration, a "
+            "message ('A->>B: text'), a Note ('Note over A: text'), "
+            "activate/deactivate, or a block keyword (loop/alt/opt/par/critical/"
+            "break/rect/box/else/and/option/end)"
+        )
+
+    if stack:
+        kind, n = stack[0]
+        raise ValidationError(
+            f"diagram has {len(stack)} unclosed block(s); the first is {kind!r} "
+            f"opened at line {n} — every loop/alt/opt/par/critical/break/rect/box "
+            "needs a matching 'end'"
+        )
+
+
 def bound_diagram(
     section: str, diagram: str | None, max_chars: int = DIAGRAM_MAX_CHARS
 ) -> str | None:
     """Agent-authored Mermaid ``sequenceDiagram`` text, features-section only.
 
-    Hard-rejects over ``max_chars`` (like ``detail`` — never truncated).
+    Hard-rejects over ``max_chars`` (like ``detail`` — never truncated) and
+    hard-rejects malformed Mermaid syntax (see :func:`_validate_diagram_syntax`).
     Empty/whitespace clears the field.
     """
     if section != SECTION_FEATURES:
@@ -123,4 +226,5 @@ def bound_diagram(
             f"diagram exceeds {max_chars} characters (FR9g/D13); "
             "shorten it and retry — the server will not truncate a supplied diagram"
         )
+    _validate_diagram_syntax(cleaned)
     return cleaned

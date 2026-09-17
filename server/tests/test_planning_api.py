@@ -174,6 +174,68 @@ def test_ac_plan_7_typed_operations_and_nested_routes_registered() -> None:
         assert path in paths
 
 
+# ---------------------------------------------------------------------------
+# create_plan_with_tasks: unknown-field errors name the offending field(s)
+# ---------------------------------------------------------------------------
+async def test_create_plan_with_tasks_docstring_documents_payload_shape() -> None:
+    """The tool's own registered description documents tasks/dependencies shape.
+
+    An agent introspecting this tool (not reading docs/mcp-reference.md)
+    should see enough to build a correct payload without guessing a sibling
+    tool's field names.
+    """
+    tools = {tool.name: tool for tool in await mcp.list_tools()}
+    description = tools["create_plan_with_tasks"].description or ""
+    for expected in ("local_task_id", "title", "objective", "task_local_id", "depends_on_local_id"):
+        assert expected in description
+    # Explicitly warns against reusing add_task_dependency's field names.
+    assert "add_task_dependency" in description
+
+
+async def test_create_plan_with_tasks_dependency_typo_names_offending_fields() -> None:
+    """Guessing add_task_dependency's field names in `dependencies` is named, not opaque."""
+    await _seed_project()
+    with pytest.raises(ToolError) as excinfo:
+        await _call(
+            "create_plan_with_tasks",
+            {
+                "project": PROJECT,
+                "title": "Two-task plan",
+                "goal": "Ship both",
+                "tasks": [
+                    {"local_task_id": "t1", "title": "First", "objective": "Do first"},
+                    {"local_task_id": "t2", "title": "Second", "objective": "Do second"},
+                ],
+                # Real-world mistake: reusing add_task_dependency's field names
+                # (task_id/depends_on_task_id) instead of create_plan_with_tasks's
+                # own (task_local_id/depends_on_local_id).
+                "dependencies": [{"task_id": "t2", "depends_on_task_id": "t1"}],
+            },
+        )
+    message = str(excinfo.value)
+    assert "task_id" in message
+    assert "depends_on_task_id" in message
+    assert "task_local_id" in message
+    assert "depends_on_local_id" in message
+
+
+async def test_create_plan_with_tasks_task_typo_names_offending_field() -> None:
+    await _seed_project()
+    with pytest.raises(ToolError) as excinfo:
+        await _call(
+            "create_plan_with_tasks",
+            {
+                "project": PROJECT,
+                "title": "One-task plan",
+                "goal": "Ship it",
+                "tasks": [{"id": "t1", "title": "First", "objective": "Do first"}],
+            },
+        )
+    message = str(excinfo.value)
+    assert "'id'" in message
+    assert "local_task_id" in message
+
+
 async def test_audit_log_contains_tool_project_caller_outcome() -> None:
     """Every MCP/HTTP planning call emits structured audit fields (NFR6)."""
     await _seed_project()

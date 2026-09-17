@@ -88,6 +88,24 @@ def _require_update(*values: object) -> None:
         raise PlanningValidationError(EMPTY_MUTATION)
 
 
+def _reject_unknown_spec_fields(
+    typed: dict[str, object], allowed: frozenset[str], *, label: str
+) -> None:
+    """Raise naming the actual offending field(s), not just UNKNOWN_FIELDS.
+
+    An agent guessing a payload shape (e.g. reusing a sibling tool's field
+    names) gets a bare "request contains unknown fields" with nothing to act
+    on otherwise — this puts the bad field(s) and the expected set directly
+    in the message so the caller can fix it without reading source or docs.
+    """
+    unexpected = sorted(name for name in typed if name not in allowed)
+    if unexpected:
+        expected = ", ".join(sorted(allowed))
+        raise PlanningValidationError(
+            f"{UNKNOWN_FIELDS} on this {label}: {unexpected} (expected: {expected})"
+        )
+
+
 def task_specs_from_payload(raw: object) -> list[TaskSpec]:
     """Convert a raw ``tasks`` payload into :class:`TaskSpec` (FR44, INV-PLAN-1)."""
     if not isinstance(raw, list) or not raw:
@@ -97,8 +115,7 @@ def task_specs_from_payload(raw: object) -> list[TaskSpec]:
         if not isinstance(item, dict):
             raise PlanningValidationError("Each task must be an object.")
         typed = {str(key): value for key, value in item.items()}
-        if any(name not in _TASK_SPEC_FIELDS for name in typed):
-            raise PlanningValidationError(UNKNOWN_FIELDS)
+        _reject_unknown_spec_fields(typed, _TASK_SPEC_FIELDS, label="task")
         for required in ("local_task_id", "title", "objective"):
             value = typed.get(required)
             if not isinstance(value, str) or not value.strip():
@@ -146,8 +163,7 @@ def dependency_specs_from_payload(raw: object) -> list[DependencySpec]:
         if not isinstance(item, dict):
             raise PlanningValidationError("Each dependency must be an object.")
         typed = {str(key): value for key, value in item.items()}
-        if any(name not in _DEPENDENCY_SPEC_FIELDS for name in typed):
-            raise PlanningValidationError(UNKNOWN_FIELDS)
+        _reject_unknown_spec_fields(typed, _DEPENDENCY_SPEC_FIELDS, label="dependency")
         task_local_id = typed.get("task_local_id")
         depends_on_local_id = typed.get("depends_on_local_id")
         if not isinstance(task_local_id, str) or not isinstance(depends_on_local_id, str):
@@ -228,7 +244,19 @@ def register_planning_tools(mcp: FastMCP) -> None:
         dependencies: list[dict[str, Any]] | None = None,
         ctx: Context[Any, Any] | None = None,
     ) -> dict[str, object]:
-        """Atomically create a plan with its task DAG (FR43-FR45, D18, D23)."""
+        """Atomically create a plan with its task DAG (FR43-FR45, D18, D23).
+
+        Each item in ``tasks`` is an object with required ``local_task_id``,
+        ``title``, ``objective`` (non-empty strings) and optional
+        ``acceptance_criteria``, ``linked_files``, ``requirement_ids`` (lists
+        of strings), and ``priority`` (int, default 0).
+
+        Each item in ``dependencies`` is ``{"task_local_id": ..., "depends_on_local_id": ...}``,
+        both referencing ``local_task_id`` values from ``tasks`` above. This is
+        NOT the same shape as ``add_task_dependency``, which uses real
+        ``task_id``/``depends_on_task_id`` values after the plan already
+        exists — don't reuse those field names here.
+        """
         who = caller(ctx)
 
         async def op(session: AsyncSession) -> dict[str, object]:

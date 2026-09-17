@@ -274,10 +274,22 @@ async def keyword_search(
     files: list[str] | None = None,
     globs: list[str] | None = None,
     limit: int = 20,
+    count_matches: bool = True,
 ) -> SearchResult:
     """Exact + fuzzy + symbol + glob keyword search (FR20, FR21, FR29).
 
     T04 should call this and merge semantic hits; do not duplicate the SQL.
+
+    ``count_matches=False`` skips the separate un-LIMITed COUNT(*) query used
+    to compute ``total_matches`` (``total_matches`` falls back to
+    ``len(hits)``, which is never accurate when results are actually
+    truncated). The COUNT re-evaluates the same fuzzy ``similarity()``
+    predicates against every row in the project with no LIMIT to short
+    -circuit it — for a long free-text query (e.g. a whole task description)
+    this can cost well over a second. Only pass ``False`` when the caller
+    genuinely never surfaces ``total_matches``/``truncated`` (e.g.
+    :func:`pcs.index.hybrid.gather_relevant`'s internal use) — the real
+    ``search_code`` surface needs an accurate count and must keep the default.
     """
     await ensure_index_schema(session)
     row = await resolve_project(session, project)
@@ -406,7 +418,7 @@ async def keyword_search(
             )
         )
     total_matches = len(hits)
-    if hits:
+    if hits and count_matches:
         count_params = {k: v for k, v in params.items() if k != "limit"}
         total_matches = int((await session.execute(count_stmt, count_params)).scalar_one())
     return SearchResult(

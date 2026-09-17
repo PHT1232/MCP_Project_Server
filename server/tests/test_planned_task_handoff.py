@@ -6,7 +6,7 @@ import json
 from contextlib import suppress
 from pathlib import Path
 from typing import Any, cast
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from mcp.server.fastmcp.exceptions import ToolError
@@ -15,6 +15,7 @@ from starlette.testclient import TestClient
 from pcs.context import service as context_service
 from pcs.context.types import PREPARE_TASK_TOKEN_MIN
 from pcs.db.base import session_scope
+from pcs.index import hybrid as index_hybrid
 from pcs.index import retrieval
 from pcs.index import service as index_service
 from pcs.mcp import build_http_app, mcp
@@ -156,6 +157,33 @@ async def test_task_id_produces_bounded_role_neutral_prompt_with_deps_and_contra
     assert deps[0]["completed"] is False
     split = cast(dict[str, int], result["split"])
     assert cast(int, result["token_estimate"]) <= split["budget"]
+
+
+async def test_task_id_with_requirement_calls_gather_relevant_only_once(
+    tmp_path: Path,
+) -> None:
+    """Perf regression (T-PREPARE-PERF): don't re-run the same search twice.
+
+    render_handoff_prompt already computes ranked code chunks via
+    gather_relevant before building the contract; it must pass those ranked
+    paths into get_task_contract rather than letting get_task_contract
+    silently re-run gather_relevant from scratch (get_task_contract does
+    exactly that whenever ranked_paths is omitted) — that duplication used to
+    double prepare_task's latency (a real ~7s handoff-prompt request measured
+    against this project dropped to ~2.4s once fixed).
+    """
+    await _register_and_index(tmp_path)
+    ids = await _seed_plan(with_requirement=True)
+
+    real_gather_relevant = index_hybrid.gather_relevant
+    tracker = AsyncMock(wraps=real_gather_relevant)
+
+    with patch("pcs.planning.handoff.gather_relevant", new=tracker):
+        async with session_scope() as session:
+            result = await retrieval.prepare_task(session, project=PROJECT, task_id=ids["t2"])
+
+    assert tracker.call_count == 1
+    assert "INV-CART-1" in cast(str, result["prompt"])
 
 
 async def test_dependency_marked_completed_once_prerequisite_is_done(tmp_path: Path) -> None:

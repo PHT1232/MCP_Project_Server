@@ -14,6 +14,7 @@ from sqlalchemy import text
 from pcs.context import service as context_service
 from pcs.db.base import session_scope
 from pcs.index.chunker import chunk_source
+from pcs.index.hybrid import hybrid_search
 from pcs.index.ignore import PathTraversalError, resolve_under_root, walk_repo
 from pcs.index.search import keyword_search
 from pcs.index.service import get_index_status, reindex, search_code
@@ -433,6 +434,58 @@ async def test_keyword_search_total_matches_exceeds_capped_hits(tmp_path: Path) 
 
     assert len(result.hits) == 5
     assert result.total_matches == 25
+
+
+async def test_keyword_search_count_matches_false_skips_count_query(tmp_path: Path) -> None:
+    """count_matches=False must not run the separate COUNT(*) (perf: T-PREPARE-PERF).
+
+    Same 25-hit fixture as the sibling test above, but with counting disabled:
+    total_matches falls back to len(hits) (== limit here) rather than the true
+    25, proving the expensive un-LIMITed COUNT query never ran.
+    """
+    (tmp_path / "src").mkdir()
+    for i in range(25):
+        (tmp_path / "src" / f"mod_{i}.py").write_text(f"NEEDLE_{i} = {i}\n", encoding="utf-8")
+    async with session_scope() as session:
+        await context_service.register_project(
+            session, name=PROJECT, root_path=str(tmp_path), overview=OVERVIEW
+        )
+    async with session_scope() as session:
+        await reindex(session, project=PROJECT, incremental=False)
+
+    async with session_scope() as session:
+        result = await keyword_search(
+            session, project=PROJECT, query="NEEDLE", limit=5, count_matches=False
+        )
+
+    assert len(result.hits) == 5
+    assert result.total_matches == 5
+
+
+async def test_hybrid_search_count_matches_false_passes_through(tmp_path: Path) -> None:
+    """hybrid_search's count_matches threads down to its keyword_search call.
+
+    hybrid_search floors the keyword-side limit at 20 (``max(limit, 20)``)
+    regardless of the caller's own ``limit``, so with 25 real matches and
+    counting disabled, keyword_total_matches should reflect that internal
+    20-cap (len(hits)), not the true 25 — proving the COUNT query was skipped.
+    """
+    (tmp_path / "src").mkdir()
+    for i in range(25):
+        (tmp_path / "src" / f"mod_{i}.py").write_text(f"NEEDLE_{i} = {i}\n", encoding="utf-8")
+    async with session_scope() as session:
+        await context_service.register_project(
+            session, name=PROJECT, root_path=str(tmp_path), overview=OVERVIEW
+        )
+    async with session_scope() as session:
+        await reindex(session, project=PROJECT, incremental=False)
+
+    async with session_scope() as session:
+        result = await hybrid_search(
+            session, project=PROJECT, query="NEEDLE", limit=5, count_matches=False
+        )
+
+    assert result.keyword_total_matches == 20
 
 
 async def test_unknown_project_search_lists_registered(tmp_path: Path) -> None:

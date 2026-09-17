@@ -77,8 +77,13 @@ async def hybrid_search(
     globs: list[str] | None = None,
     limit: int = 20,
     backend: EmbeddingBackend | None = None,
+    count_matches: bool = True,
 ) -> HybridResult:
-    """Keyword + (optional) semantic search, fused by reciprocal rank (FR20, FR22)."""
+    """Keyword + (optional) semantic search, fused by reciprocal rank (FR20, FR22).
+
+    ``count_matches`` passes through to :func:`keyword_search` — set False
+    only when the caller never surfaces ``total_matches``/``truncated``.
+    """
     await ensure_index_schema(session)
     row = await resolve_project(session, project)
 
@@ -91,6 +96,7 @@ async def hybrid_search(
         files=files,
         globs=globs,
         limit=max(limit, 20),
+        count_matches=count_matches,
     )
     keyword_hits = keyword_result.hits
 
@@ -204,6 +210,7 @@ async def gather_relevant(
         files=files,
         limit=limit,
         backend=backend,
+        count_matches=False,
     )
     if primary.semantic_available or len(primary.ranked) >= 3:
         return primary
@@ -221,6 +228,7 @@ async def gather_relevant(
             query=term,
             scope=scope,
             subtree=subtree,
+            count_matches=False,
             files=files,
             limit=limit,
         )

@@ -261,6 +261,12 @@ async def render_handoff_prompt(
             task=query,
             requirement_ids=list(task.requirement_ids),
             max_tokens=max(contract_cap, 80) if contract_cap else 80,
+            # Reuse the already-ranked paths from gather_relevant above so
+            # get_task_contract doesn't redundantly re-run the same
+            # keyword+semantic search from scratch (it defaults to doing so
+            # whenever ranked_paths is omitted) — this was doubling the
+            # latency of every prepare_task call.
+            ranked_paths=[hit.hit.path for hit in hybrid.ranked],
         )
         if task.requirement_ids and contract_cap
         else None

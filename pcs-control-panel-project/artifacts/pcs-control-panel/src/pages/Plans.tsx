@@ -232,7 +232,7 @@ export default function Plans() {
           ))}
         </section>
 
-        <section>
+        <section className="min-w-0">
           {!selectedPlanId && <p className="rounded-lg border border-dashed border-[#c7d0cb] bg-[#faf9f4] p-10 text-center text-sm text-[#7b888c]">Select a plan to see its tasks.</p>}
           {selectedPlanId && planQuery.isLoading && <div className="py-10 text-center"><Loader2 className="animate-spin mx-auto text-[#3155d8]" /></div>}
           {selectedPlanId && planQuery.isError && (

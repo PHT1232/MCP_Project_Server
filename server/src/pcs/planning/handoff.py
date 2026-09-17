@@ -160,15 +160,40 @@ def _dependency_statuses(task: PlanTaskView, plan: PlanView) -> list[_Dependency
     return statuses
 
 
-def _render_task_block(task: PlanTaskView, deps: list[_DependencyStatus]) -> str:
+def _render_task_block(
+    project_name: str, plan_id: str, task: PlanTaskView, deps: list[_DependencyStatus]
+) -> str:
     """The protected identity block: task id, objective, AC, deps (FR-T25).
 
     Never truncated by the caller — this is what "prioritize task ID,
     objective, required AC IDs, and project name over general context" means
     in practice: everything else (contract detail, code) shrinks first.
+
+    The "Working with pcs" section exists because this prompt is designed to
+    be copy-pasted into a *different* agent/session that has none of this
+    project's own instructions loaded (no CLAUDE.md/AGENTS.md mandate to use
+    pcs, possibly not even pcs configured) — deferring to "read AGENTS.md
+    first" alone was observed to get skipped by weaker models that just act
+    on the self-contained task/code text below it. Tool calls are spelled out
+    with project/plan_id/task_id already filled in so a cold-started agent
+    can act on them directly instead of inferring conventions.
     """
     lines = [
         f"## Task Handoff — {task.local_task_id}: {task.title}",
+        "",
+        f'This task lives in pcs MCP project "{project_name}", plan {plan_id}, '
+        f"task {task.id}. Use these pcs tools for its lifecycle — do not just "
+        "read the task below and start editing:",
+        f'- Claim it first: claim_task(project="{project_name}", plan_id="{plan_id}", '
+        f'task_id="{task.id}", claimed_by="<your agent/session name>"). Keep the '
+        "claim_token it returns — heartbeat_task and complete_task both need it.",
+        "- Call heartbeat_task periodically (same project/plan_id/task_id/claim_token) "
+        "to keep the lease alive while working.",
+        "- For anything beyond the code already included below, use search_code / "
+        "retrieve_context / get_code_map instead of ad hoc grep or file reads.",
+        f'- When finished: complete_task(project="{project_name}", plan_id="{plan_id}", '
+        f'task_id="{task.id}", claim_token=<the token from claim_task>) — a prose '
+        '"done" report alone does not update this task\'s status.',
         "",
         "Read AGENTS.md first and respect its declared file scope. Do not touch "
         "files outside this task's ownership without checking for conflicts.",
@@ -203,7 +228,9 @@ def _format_chunk(chunk: PackedChunk) -> str:
     return f"{header}\n```{lang}\n{chunk.content}\n```"
 
 
-def _render_prompt(task_block: str, contract_text: str, code_chunks: list[PackedChunk]) -> str:
+def _render_prompt(
+    task_block: str, contract_text: str, code_chunks: list[PackedChunk], has_requirement_ids: bool
+) -> str:
     parts = [task_block]
     parts.append("")
     parts.append(contract_text if contract_text else "CONTRACT\n(no linked requirement contracts)")
@@ -213,12 +240,22 @@ def _render_prompt(task_block: str, contract_text: str, code_chunks: list[Packed
         parts.extend(_format_chunk(chunk) for chunk in code_chunks)
     parts.append("")
     parts.append("### Verification")
-    parts.append(
-        "- Confirm every acceptance criterion above is satisfied before reporting done.\n"
-        "- Record evidence for any linked requirement criteria via "
-        "record_requirement_evidence.\n"
-        "- Report completion using this project's standard handoff template."
+    verification = [
+        "- Confirm every acceptance criterion above is satisfied before reporting done."
+    ]
+    # Only mention record_requirement_evidence when there's actually a linked
+    # requirement to record it against — otherwise it's a dead reference next
+    # to "(no linked requirement contracts)" above, easy to misread as a step
+    # to perform anyway.
+    if has_requirement_ids:
+        verification.append(
+            "- Record evidence for the linked requirement criteria via "
+            "record_requirement_evidence before calling complete_task."
+        )
+    verification.append(
+        "- Call complete_task to close this out — a prose report alone is not enough."
     )
+    parts.append("\n".join(verification))
     return "\n".join(parts)
 
 
@@ -255,7 +292,7 @@ async def render_handoff_prompt(
     budget = _clamp_budget(max_tokens, proj.prepare_task_token_budget or PREPARE_TASK_TOKEN_CAP)
 
     deps = _dependency_statuses(task, plan)
-    task_block = _render_task_block(task, deps)
+    task_block = _render_task_block(proj.name, plan.id, task, deps)
     task_tokens = estimate_tokens(task_block)
     remaining = max(0, budget - task_tokens)
 
@@ -289,7 +326,9 @@ async def render_handoff_prompt(
     pack = pack_code_chunks(hybrid, max_tokens=code_budget) if code_budget else None
     code_chunks = pack.chunks if pack is not None else []
 
-    prompt = _render_prompt(task_block, contract_text, list(code_chunks))
+    prompt = _render_prompt(
+        task_block, contract_text, list(code_chunks), bool(task.requirement_ids)
+    )
 
     if caller is not None:
         await _record_handoff_baseline(

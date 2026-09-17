@@ -341,12 +341,48 @@ async def test_prompt_mentions_agents_md_scope_and_evidence_recording(tmp_path: 
     prompt = cast(str, result["prompt"])
     assert "AGENTS.md" in prompt
     assert "file scope" in prompt.lower()
-    assert "record_requirement_evidence" in prompt
     assert "acceptance criteri" in prompt.lower()
+    # t1 has no linked requirement — record_requirement_evidence must not appear
+    # as a dead reference next to "(no linked requirement contracts)".
+    assert "record_requirement_evidence" not in prompt
+    assert "complete_task" in prompt
+
+
+async def test_prompt_embeds_concrete_pcs_lifecycle_calls(tmp_path: Path) -> None:
+    """The prompt is designed to be copy-pasted into a different, cold-started
+    agent/session with none of this project's own instructions loaded — it
+    must spell out claim_task/heartbeat_task/complete_task with the actual
+    project/plan_id/task_id filled in rather than only pointing at AGENTS.md,
+    since that indirection was observed to get skipped in practice."""
+    await _register_and_index(tmp_path)
+    ids = await _seed_plan()
+    async with session_scope() as session:
+        result = await retrieval.prepare_task(session, project=PROJECT, task_id=ids["t1"])
+    prompt = cast(str, result["prompt"])
+    assert f'project="{PROJECT}"' in prompt
+    assert f'plan_id="{ids["plan_id"]}"' in prompt
+    assert f'task_id="{ids["t1"]}"' in prompt
+    assert "claim_task(" in prompt
+    assert "heartbeat_task" in prompt
+    assert "search_code" in prompt
+    assert "retrieve_context" in prompt
+    assert "get_code_map" in prompt
+
+
+async def test_prompt_mentions_evidence_only_when_requirement_linked(tmp_path: Path) -> None:
+    await _register_and_index(tmp_path)
+    ids = await _seed_plan(with_requirement=True)
+    async with session_scope() as session:
+        result = await retrieval.prepare_task(session, project=PROJECT, task_id=ids["t2"])
+    prompt = cast(str, result["prompt"])
+    assert "record_requirement_evidence" in prompt
 
 
 # ---------------------------------------------------------------------------
-# Zero claim tokens, secrets, or raw diffs
+# Zero leaked claim token *values*, secrets, or raw diffs. The prompt does
+# legitimately mention the word "claim_token" as an instructional concept
+# (telling the receiving agent to capture the one claim_task itself returns
+# it) — what must never appear is an actual, already-issued secret value.
 # ---------------------------------------------------------------------------
 async def test_prompt_contains_zero_secrets_or_raw_diffs(tmp_path: Path) -> None:
     await _register_and_index(tmp_path)
@@ -358,7 +394,6 @@ async def test_prompt_contains_zero_secrets_or_raw_diffs(tmp_path: Path) -> None
     async with session_scope() as session:
         result = await retrieval.prepare_task(session, project=PROJECT, task_id=ids["t1"])
     dumped = json.dumps(result)
-    assert "claim_token" not in dumped
     assert claim.claim_token not in dumped
     prompt = cast(str, result["prompt"])
     assert "diff --git" not in prompt

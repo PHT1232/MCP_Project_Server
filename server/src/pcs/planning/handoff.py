@@ -124,8 +124,19 @@ async def _resolve_task(
 
 
 def _canonical_query(task: PlanTaskView) -> str:
-    """Retrieval query from title, objective, acceptance criteria, and linked files."""
-    parts = [task.title, task.objective, *task.acceptance_criteria, *task.linked_files]
+    """Retrieval query from title, objective, and linked files.
+
+    Deliberately excludes acceptance_criteria: they're checklist items, not
+    descriptions of what to search for, and concatenating every one of them
+    onto an already-long objective mostly adds length and noise rather than
+    retrieval signal. That extra length has a real cost — keyword_search's
+    fuzzy `similarity()` scoring runs against every WHERE-matched chunk (not
+    just the returned limit), so a shorter, more focused query is both
+    cheaper and, if anything, more precise. Acceptance criteria are still
+    shown to the agent in full via _render_task_block; this only affects what
+    gets searched for related code, not what's reported in the prompt.
+    """
+    parts = [task.title, task.objective, *task.linked_files]
     return "\n".join(part for part in parts if part)
 
 

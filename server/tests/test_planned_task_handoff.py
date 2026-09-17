@@ -186,6 +186,51 @@ async def test_task_id_with_requirement_calls_gather_relevant_only_once(
     assert "INV-CART-1" in cast(str, result["prompt"])
 
 
+async def test_canonical_query_excludes_acceptance_criteria_from_retrieval(
+    tmp_path: Path,
+) -> None:
+    """Perf/quality fix (T-PREPARE-PERF): AC text doesn't drive code retrieval.
+
+    Acceptance criteria are checklist items, not a description of what to
+    search for — including them in the retrieval query only added length
+    (cost) without adding signal, and could even surface it here (creating a
+    false impression of relevance). A file whose only matching content is a
+    marker that appears solely in an acceptance criterion (not the title,
+    objective, or linked_files) must not be preferentially surfaced.
+    """
+    (tmp_path / "shop").mkdir()
+    (tmp_path / "shop" / "cart.py").write_text(
+        "def cart_total(items):\n    return sum(unit_price(item) for item in items)\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "shop" / "unrelated.py").write_text(
+        "ZQXW_ONLY_IN_ACCEPTANCE_CRITERION = True\n", encoding="utf-8"
+    )
+    await _register_project(tmp_path)
+    async with session_scope() as session:
+        await index_service.reindex(session, project=PROJECT, incremental=False)
+
+    tasks = [
+        TaskSpec(
+            local_task_id="t1",
+            title="Add pricing helper",
+            objective="Implement unit_price so cart_total can use it.",
+            acceptance_criteria=["ZQXW_ONLY_IN_ACCEPTANCE_CRITERION must stay True"],
+        ),
+    ]
+    async with session_scope() as session:
+        plan = await planning_service.create_plan_with_tasks(
+            session, project=PROJECT, title="Cart pricing", goal="Ship it", tasks=tasks
+        )
+        await planning_service.activate_plan(session, PROJECT, plan.id)
+        task_id = plan.tasks[0].id
+
+    async with session_scope() as session:
+        result = await retrieval.prepare_task(session, project=PROJECT, task_id=task_id)
+
+    assert "unrelated.py" not in cast(str, result["prompt"])
+
+
 async def test_dependency_marked_completed_once_prerequisite_is_done(tmp_path: Path) -> None:
     await _register_and_index(tmp_path)
     ids = await _seed_plan()

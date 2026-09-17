@@ -176,7 +176,7 @@ export default function Plans() {
       {loadError.isError && <ErrorBanner testId="banner-plans-error" message={loadError.message} onRetry={loadError.retry} />}
 
       {newPlanOpen && (
-        <div className="mb-5 grid gap-3 rounded-lg border border-[#cbd7f4] bg-[#faf9f4] p-4 md:grid-cols-[1fr_1.6fr_auto] md:items-end">
+        <div className="mb-5 grid min-w-0 grid-cols-1 gap-3 rounded-lg border border-[#cbd7f4] bg-[#faf9f4] p-4 md:grid-cols-[1fr_1.6fr_auto] md:items-end">
           <Field testId="input-new-plan-title" label="Title" value={newTitle} onChange={setNewTitle} placeholder="e.g. Checkout migration" />
           <Field testId="input-new-plan-goal" label="Goal" value={newGoal} onChange={setNewGoal} placeholder="What does 'done' look like?" />
           <Button testId="button-submit-new-plan" onClick={createPlan} disabled={createPlanMutation.isPending}>
@@ -202,8 +202,8 @@ export default function Plans() {
         ))}
       </div>
 
-      <div className="grid gap-5 xl:grid-cols-[320px_1fr]">
-        <section className="space-y-2">
+      <div className="grid min-w-0 grid-cols-1 gap-5 xl:grid-cols-[320px_1fr]">
+        <section className="min-w-0 space-y-2">
           {plansQuery.isLoading && <div className="py-10 text-center"><Loader2 className="animate-spin mx-auto text-[#3155d8]" /></div>}
           {!plansQuery.isLoading && plans.length === 0 && (
             <p className="rounded-lg border border-dashed border-[#c7d0cb] bg-[#faf9f4] p-5 text-center text-xs text-[#7b888c]">No plans match this filter.</p>
@@ -220,7 +220,7 @@ export default function Plans() {
               )}
             >
               <div className="flex items-center justify-between gap-2">
-                <h3 className="truncate text-sm font-bold text-[#1e3036]">{p.title}</h3>
+                <h3 className="min-w-0 flex-1 truncate text-sm font-bold text-[#1e3036]">{p.title}</h3>
                 <Badge tone={PLAN_STATUS_TONE[p.status]} dot>{p.status}</Badge>
               </div>
               <p className="mt-1 line-clamp-2 text-xs leading-5 text-[#69777c]">{p.goal}</p>
@@ -579,7 +579,7 @@ function PlanDetail({ project, plan }: { project: string; plan: Plan }) {
         </div>
 
         {addTaskOpen && (
-          <div className="grid gap-3 border-b border-[#e4e6df] p-4 md:grid-cols-[.6fr_1fr_1.4fr_auto] md:items-end">
+          <div className="grid min-w-0 grid-cols-1 gap-3 border-b border-[#e4e6df] p-4 md:grid-cols-[.6fr_1fr_1.4fr_auto] md:items-end">
             <Field testId="input-task-local-id" label="Local id" value={taskLocalId} onChange={setTaskLocalId} placeholder="t1" />
             <Field testId="input-task-title" label="Title" value={taskTitle} onChange={setTaskTitle} placeholder="Add pricing helper" />
             <Field testId="input-task-objective" label="Objective" value={taskObjective} onChange={setTaskObjective} placeholder="What must be true when this is done?" />
@@ -614,14 +614,14 @@ function PlanDetail({ project, plan }: { project: string; plan: Plan }) {
         </div>
         {plan.tasks.length >= 2 && (
           <div className="flex flex-wrap items-end gap-3 border-b border-[#e4e6df] p-4">
-            <label className="text-xs font-semibold text-[#53646a]">Task
-              <select data-testid="select-dependency-task" value={depFrom} onChange={(e) => setDepFrom(e.target.value)} className="mt-1.5 h-10 rounded-md border border-[#ccd4d1] bg-[#f1efe8] px-2 text-sm outline-none">
+            <label className="min-w-0 max-w-full flex-1 text-xs font-semibold text-[#53646a]">Task
+              <select data-testid="select-dependency-task" value={depFrom} onChange={(e) => setDepFrom(e.target.value)} className="mt-1.5 h-10 w-full max-w-full rounded-md border border-[#ccd4d1] bg-[#f1efe8] px-2 text-sm outline-none">
                 <option value="">Choose…</option>
                 {plan.tasks.map((t) => <option key={t.id} value={t.id}>{t.local_task_id} — {t.title}</option>)}
               </select>
             </label>
-            <label className="text-xs font-semibold text-[#53646a]">Depends on
-              <select data-testid="select-dependency-depends-on" value={depOn} onChange={(e) => setDepOn(e.target.value)} className="mt-1.5 h-10 rounded-md border border-[#ccd4d1] bg-[#f1efe8] px-2 text-sm outline-none">
+            <label className="min-w-0 max-w-full flex-1 text-xs font-semibold text-[#53646a]">Depends on
+              <select data-testid="select-dependency-depends-on" value={depOn} onChange={(e) => setDepOn(e.target.value)} className="mt-1.5 h-10 w-full max-w-full rounded-md border border-[#ccd4d1] bg-[#f1efe8] px-2 text-sm outline-none">
                 <option value="">Choose…</option>
                 {plan.tasks.map((t) => <option key={t.id} value={t.id}>{t.local_task_id} — {t.title}</option>)}
               </select>

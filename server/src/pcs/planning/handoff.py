@@ -192,7 +192,14 @@ def _render_task_block(
     line explicitly says "mandatory, not optional" — a plain description of
     available tools reads as informational and was observed to still get
     skipped by weaker models; framing it as a requirement is more resistant
-    to that.
+    to that. The explicit "claim_task failing doesn't mean pcs is broken"
+    line exists because a weak model, given a claim_task error and no
+    guidance distinguishing it from a real outage, was observed to abandon
+    pcs entirely for the rest of the task instead of reading the error and
+    continuing with search_code/retrieve_context/complete_task as normal —
+    the only existing guidance on that distinction (onboarding_tools.TOOL_USAGE)
+    is returned solely by the separate `onboard` bootstrap tool, which a
+    cold-started agent given just this copied prompt never calls.
     """
     lines = [
         f"## Task Handoff — {task.local_task_id}: {task.title}",
@@ -205,6 +212,11 @@ def _render_task_block(
         f'- Claim it first: claim_task(project="{project_name}", plan_id="{plan_id}", '
         f'task_id="{task.id}", claimed_by="<your agent/session name>"). Keep the '
         "claim_token it returns — heartbeat_task and complete_task both need it.",
+        "- If claim_task fails, that is a normal outcome sometimes (already claimed, "
+        "unmet dependencies, wrong status) — its error message says which. It is NOT "
+        "a sign pcs itself is broken or unavailable: keep using search_code / "
+        "retrieve_context / get_code_map / complete_task normally, and tell the user "
+        "the specific error instead of silently abandoning the task or pcs entirely.",
         "- Call heartbeat_task periodically (same project/plan_id/task_id/claim_token) "
         "to keep the lease alive while working.",
         "- For anything beyond the code already included below, use search_code / "

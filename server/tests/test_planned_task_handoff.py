@@ -414,6 +414,22 @@ async def test_prompt_frames_pcs_tool_use_as_mandatory(tmp_path: Path) -> None:
     assert "mandatory" in prompt.lower()
 
 
+async def test_prompt_says_claim_failure_is_not_a_pcs_outage(tmp_path: Path) -> None:
+    """Observed live: a weak model (Haiku 4.5) given a claim_task error and no
+    guidance distinguishing it from pcs being broken abandoned pcs entirely
+    for the rest of the task. The only existing guidance for that distinction
+    (onboarding_tools.TOOL_USAGE) is returned solely by the separate `onboard`
+    bootstrap tool, which a cold-started agent given just this copied prompt
+    never calls — so the handoff prompt must say it directly."""
+    await _register_and_index(tmp_path)
+    ids = await _seed_plan()
+    async with session_scope() as session:
+        result = await retrieval.prepare_task(session, project=PROJECT, task_id=ids["t1"])
+    prompt = cast(str, result["prompt"])
+    assert "claim_task fails" in prompt
+    assert "not a sign pcs itself is broken" in prompt.lower()
+
+
 async def test_prompt_mentions_evidence_only_when_requirement_linked(tmp_path: Path) -> None:
     await _register_and_index(tmp_path)
     ids = await _seed_plan(with_requirement=True)

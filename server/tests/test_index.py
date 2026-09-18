@@ -575,6 +575,20 @@ async def test_mcp_index_tools_and_nfr6_audit(tmp_path: Path) -> None:
     assert "search_code" in seen
 
 
+async def test_retrieve_context_docstring_explains_task_is_required_with_files() -> None:
+    """An agent that omits `task` while narrowing with `files`/`scope` gets a
+    plain "task: Field required" validation error — already clear about what's
+    missing, but not about *why* it's still needed once files are given. The
+    tool's own registered description (what an agent introspecting the tool
+    sees, not docs/mcp-reference.md) must say so, and point at search_code for
+    the no-task-description case."""
+    tools = {tool.name: tool for tool in await mcp.list_tools()}
+    description = tools["retrieve_context"].description or ""
+    assert "required in every call" in description.lower()
+    assert "scope='files'" in description or 'scope="files"' in description
+    assert "search_code" in description
+
+
 async def test_http_index_routes_are_registered() -> None:
     app = build_http_app()
     paths = {getattr(route, "path", None) for route in app.routes}

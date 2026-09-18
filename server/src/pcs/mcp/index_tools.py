@@ -108,6 +108,21 @@ def register_index_tools(mcp: FastMCP) -> None:
 
         Ready for prompt injection. Uses hybrid retrieval when an embedding backend
         is configured, keyword-only otherwise (the response says which).
+
+        Args:
+            task: Required in every call, even with ``scope='files'`` — a short
+                description of what you're trying to accomplish. This is what
+                results are ranked/filtered for relevance against, not a label;
+                narrowing with ``files``/``subtree`` still needs it to decide
+                which chunks of those files actually matter. If you don't have
+                a task description and just want literal/structural matches in
+                specific files, use ``search_code`` instead (its ``query`` is a
+                literal search string, not a task).
+            project: Exact project name or id (D3).
+            max_tokens: Token budget for the returned pack.
+            scope: ``project``, ``subtree``, ``files``, or ``focus``.
+            subtree: Repo-relative directory when ``scope='subtree'``.
+            files: Repo-relative paths when ``scope='files'``.
         """
 
         async def op(session: AsyncSession) -> dict[str, object]:

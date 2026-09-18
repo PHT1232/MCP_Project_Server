@@ -21,11 +21,23 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from pcs.context.assembly import estimate_tokens
-from pcs.context.service import resolve_project
+from pcs.context.relevance import (
+    CONTEXT_ENTRIES_TOKEN_CAP,
+    CONTEXT_ENTRIES_TOKEN_FLOOR,
+    CONTEXT_ENTRY_MIN_TOKENS,
+    fit_text,
+    paths_from_text,
+    select_relevant_context_entries,
+)
+from pcs.context.service import get_section, resolve_project
 from pcs.context.types import (
     PREPARE_TASK_TOKEN_CAP,
     PREPARE_TASK_TOKEN_MAX,
     PREPARE_TASK_TOKEN_MIN,
+    SECTION_CONVENTIONS,
+    SECTION_DECISIONS,
+    SECTION_FOCUS,
+    EntryView,
 )
 from pcs.index.hybrid import gather_relevant
 from pcs.index.retrieval import PackedChunk, pack_code_chunks
@@ -234,12 +246,98 @@ def _format_chunk(chunk: PackedChunk) -> str:
     return f"{header}\n```{lang}\n{chunk.content}\n```"
 
 
+def _render_context_entries(
+    conventions: list[EntryView],
+    decisions: list[EntryView],
+    omitted_conventions: int,
+    omitted_decisions: int,
+    *,
+    max_tokens: int,
+) -> tuple[str, str]:
+    """Render selected conventions/decisions into ``(conventions_md, decisions_md)``.
+
+    Splits ``max_tokens`` evenly across every selected entry (both sections
+    combined) — the whole rendered line (headline + markdown scaffold +
+    detail), not just the detail text. An entry whose full line wouldn't fit
+    is truncated via ``fit_text`` on its detail; if what's left for detail
+    after the headline+scaffold overhead is below CONTEXT_ENTRY_MIN_TOKENS
+    (too little room for a meaningful truncated snippet), it's dropped
+    entirely rather than shown as a near-empty stub. Either return is "" when
+    nothing was selected for that section — the caller omits the heading
+    entirely rather than a "(none)" placeholder (these are supplementary,
+    unlike CONTRACT).
+    """
+    total_selected = len(conventions) + len(decisions)
+    if total_selected == 0 or max_tokens <= 0:
+        return "", ""
+    # Reserve worst-case room for both sections' heading + drill-down lines
+    # up front — they're outside the per-entry split but still count against
+    # max_tokens. Whether a given section actually renders isn't known yet
+    # (depends on scoring/truncation below), so reserve for both unconditionally;
+    # it's a small, fixed cost against the 400-token cap.
+    reserved = sum(
+        estimate_tokens(text)
+        for text in (
+            "### Relevant conventions",
+            "### Relevant decisions",
+            'Details: call get_section(section="conventions")',
+            'Details: call get_section(section="decisions")',
+        )
+    )
+    per_entry = max(0, max_tokens - reserved) // total_selected
+
+    def render_section(heading: str, section: str, entries: list[EntryView], omitted: int) -> str:
+        lines: list[str] = []
+        needs_drill_down = omitted > 0
+        for entry in entries:
+            # per_entry bounds the WHOLE rendered line, not just the detail
+            # text — the "- **{headline}**: " scaffold counts against it too,
+            # otherwise longer headlines would push the actual line past the
+            # intended per-entry share (and the section's CONTEXT_ENTRIES_TOKEN_CAP).
+            prefix = f"- **{entry.headline}**: "
+            overhead = estimate_tokens(prefix)
+            detail_budget = max(0, per_entry - overhead)
+            if overhead + estimate_tokens(entry.detail) > per_entry:
+                if detail_budget < CONTEXT_ENTRY_MIN_TOKENS:
+                    needs_drill_down = True
+                    continue
+                needs_drill_down = True
+            detail = fit_text(entry.detail, detail_budget) if entry.detail else ""
+            line = f"{prefix}{detail}" if detail else f"- **{entry.headline}**"
+            lines.append(line)
+        if not lines:
+            return ""
+        parts = [heading, *lines]
+        if needs_drill_down:
+            parts.append(f'Details: call get_section(section="{section}")')
+        return "\n".join(parts)
+
+    conventions_text = render_section(
+        "### Relevant conventions", SECTION_CONVENTIONS, conventions, omitted_conventions
+    )
+    decisions_text = render_section(
+        "### Relevant decisions", SECTION_DECISIONS, decisions, omitted_decisions
+    )
+    return conventions_text, decisions_text
+
+
 def _render_prompt(
-    task_block: str, contract_text: str, code_chunks: list[PackedChunk], has_requirement_ids: bool
+    task_block: str,
+    contract_text: str,
+    conventions_text: str,
+    decisions_text: str,
+    code_chunks: list[PackedChunk],
+    has_requirement_ids: bool,
 ) -> str:
     parts = [task_block]
     parts.append("")
     parts.append(contract_text if contract_text else "CONTRACT\n(no linked requirement contracts)")
+    if conventions_text:
+        parts.append("")
+        parts.append(conventions_text)
+    if decisions_text:
+        parts.append("")
+        parts.append(decisions_text)
     if code_chunks:
         parts.append("")
         parts.append("### Relevant code")
@@ -306,6 +404,7 @@ async def render_handoff_prompt(
 
     query = _canonical_query(task)
     hybrid = await gather_relevant(session, project=project, task=query, scope="project", limit=40)
+    ranked_paths = [hit.hit.path for hit in hybrid.ranked]
     have_code = bool(hybrid.ranked)
     code_floor = (remaining * 3) // 10 if have_code else 0
     contract_cap = min(CONTRACT_TOKEN_CAP, max(0, remaining - code_floor))
@@ -322,7 +421,7 @@ async def render_handoff_prompt(
             # keyword+semantic search from scratch (it defaults to doing so
             # whenever ranked_paths is omitted) — this was doubling the
             # latency of every prepare_task call.
-            ranked_paths=[hit.hit.path for hit in hybrid.ranked],
+            ranked_paths=ranked_paths,
         )
         if task.requirement_ids and contract_cap
         else None
@@ -330,12 +429,59 @@ async def render_handoff_prompt(
     contract_text = contract.text if contract is not None else ""
     contract_tokens = contract.token_estimate if contract is not None else 0
 
-    code_budget = max(0, remaining - contract_tokens) if have_code else 0
+    # A convention/decision explicitly linked to one of this task's own
+    # requirements (either passed in directly or auto-selected by the
+    # contract above) is a strong, domain-specific relevance signal.
+    related_requirement_ids = frozenset(task.requirement_ids) | frozenset(
+        contract.requirement_ids if contract is not None else ()
+    )
+    entries_cap = min(CONTEXT_ENTRIES_TOKEN_CAP, max(0, remaining - contract_tokens - code_floor))
+    conventions: list[EntryView] = []
+    decisions: list[EntryView] = []
+    omitted_conventions = omitted_decisions = 0
+    if entries_cap >= CONTEXT_ENTRIES_TOKEN_FLOOR:
+        focus_entries = await get_section(session, project=project, section=SECTION_FOCUS)
+        focus_text = " ".join(f"{e.headline} {e.detail}" for e in focus_entries)
+        focus_paths = [
+            *paths_from_text(query, focus_text),
+            *[p for e in focus_entries for p in e.linked_files],
+        ]
+        conventions, omitted_conventions = await select_relevant_context_entries(
+            session,
+            project=project,
+            section=SECTION_CONVENTIONS,
+            task=query,
+            focus_text=focus_text,
+            focus_paths=focus_paths,
+            ranked_paths=ranked_paths,
+            related_requirement_ids=related_requirement_ids,
+        )
+        decisions, omitted_decisions = await select_relevant_context_entries(
+            session,
+            project=project,
+            section=SECTION_DECISIONS,
+            task=query,
+            focus_text=focus_text,
+            focus_paths=focus_paths,
+            ranked_paths=ranked_paths,
+            related_requirement_ids=related_requirement_ids,
+        )
+    conventions_text, decisions_text = _render_context_entries(
+        conventions, decisions, omitted_conventions, omitted_decisions, max_tokens=entries_cap
+    )
+    entries_tokens = estimate_tokens(conventions_text) + estimate_tokens(decisions_text)
+
+    code_budget = max(0, remaining - contract_tokens - entries_tokens) if have_code else 0
     pack = pack_code_chunks(hybrid, max_tokens=code_budget) if code_budget else None
     code_chunks = pack.chunks if pack is not None else []
 
     prompt = _render_prompt(
-        task_block, contract_text, list(code_chunks), bool(task.requirement_ids)
+        task_block,
+        contract_text,
+        conventions_text,
+        decisions_text,
+        list(code_chunks),
+        bool(task.requirement_ids),
     )
 
     if caller is not None:
@@ -364,6 +510,7 @@ async def render_handoff_prompt(
             "task_tokens": task_tokens,
             "contract_tokens": contract_tokens,
             "contract_cap": contract_cap,
+            "context_entries_tokens": entries_tokens,
             "code_tokens": pack.token_estimate if pack is not None else 0,
             "code_budget": code_budget,
             "code_floor": code_floor if have_code else 0,

@@ -9,7 +9,6 @@ never an error. No MCP/HTTP imports (AGENTS.md).
 from __future__ import annotations
 
 import importlib
-import re
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Final, cast
@@ -17,9 +16,9 @@ from typing import Final, cast
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from pcs.context.assembly import estimate_tokens
+from pcs.context.relevance import fit_text, path_overlap, paths_from_text, tokens
 from pcs.context.service import get_entry, get_section
 from pcs.context.types import (
-    CHARS_PER_TOKEN,
     INVARIANT_KIND_FORBIDDEN_PATH,
     REQ_BLOCKED,
     REQ_DONE,
@@ -77,8 +76,6 @@ _STATUS_BOOST: Final[dict[str, int]] = {
     REQ_NOT_STARTED: 4,
     REQ_DONE: 0,
 }
-_WORD_RE = re.compile(r"[A-Za-z0-9_]{3,}")
-_PATHISH_RE = re.compile(r"[\w./-]+\.[A-Za-z0-9]+|[\w-]+/[\w./-]+")
 _DIFF_MARKERS: Final[tuple[str, ...]] = ("diff --git", "\n+++ ", "\n--- ", "\n@@ ")
 _LOG_MARKERS: Final[tuple[str, ...]] = ("stdout", "stderr", "traceback (most recent")
 
@@ -210,17 +207,6 @@ def _clamp_contract_budget(max_tokens: int | None) -> int:
             f"max_tokens must be in [{CONTRACT_TOKEN_MIN}, {CONTRACT_TOKEN_CAP}]; got {value}"
         )
     return value
-
-
-def _fit(text: str, max_tokens: int) -> str:
-    if max_tokens <= 0:
-        return ""
-    if estimate_tokens(text) <= max_tokens:
-        return text
-    max_chars = max_tokens * CHARS_PER_TOKEN
-    if max_chars <= 1:
-        return ""
-    return text[: max_chars - 1].rstrip() + "…"
 
 
 def _looks_like_log_or_diff(text: str) -> bool:
@@ -420,31 +406,6 @@ def _format_close_gate(gate: CloseGateSummary) -> str:
     )
 
 
-def _tokens(*parts: str) -> list[str]:
-    blob = " ".join(parts)
-    return [m.group(0).lower() for m in _WORD_RE.finditer(blob)]
-
-
-def _paths_from_text(*blobs: str) -> set[str]:
-    found: set[str] = set()
-    for blob in blobs:
-        for match in _PATHISH_RE.finditer(blob):
-            found.add(match.group(0).lower())
-    return found
-
-
-def _path_overlap(linked: Sequence[str], candidates: Sequence[str]) -> bool:
-    if not linked or not candidates:
-        return False
-    left = [p.lower().lstrip("./") for p in linked]
-    right = [p.lower().lstrip("./") for p in candidates]
-    for a in left:
-        for b in right:
-            if a == b or a.endswith("/" + b) or b.endswith("/" + a) or a in b or b in a:
-                return True
-    return False
-
-
 def _score_requirement(
     req: _ReqRef,
     *,
@@ -457,21 +418,21 @@ def _score_requirement(
     match = 0
     task_l = task.lower()
     if req.linked_files:
-        if _path_overlap(req.linked_files, ranked_paths):
+        if path_overlap(req.linked_files, ranked_paths):
             match += 100
-        if _path_overlap(req.linked_files, focus_paths):
+        if path_overlap(req.linked_files, focus_paths):
             match += 70
         if any(f.lower() in task_l for f in req.linked_files):
             match += 80
     if req.req_key and req.req_key.lower() in task_l:
         match += 50
     title_l = req.title.lower()
-    task_tokens = set(_tokens(task))
+    task_tokens = set(tokens(task))
     if title_l and title_l in task_l:
         match += 40
-    elif task_tokens and set(_tokens(req.title)) & task_tokens:
+    elif task_tokens and set(tokens(req.title)) & task_tokens:
         match += 25
-    if focus_text and set(_tokens(req.title)) & set(_tokens(focus_text)):
+    if focus_text and set(tokens(req.title)) & set(tokens(focus_text)):
         match += 15
     status = _STATUS_BOOST.get(req.status, 0)
     if req.status == REQ_DONE:
@@ -510,7 +471,7 @@ async def _select_requirements(
     focus_entries = await get_section(session, project=project, section=SECTION_FOCUS)
     focus_text = " ".join(f"{e.headline} {e.detail}" for e in focus_entries)
     focus_paths = [
-        *_paths_from_text(task, focus_text),
+        *paths_from_text(task, focus_text),
         *[p for e in focus_entries for p in e.linked_files],
     ]
     scored: list[tuple[int, int, str, _ReqRef]] = []
@@ -774,8 +735,8 @@ def _render_compact(
         if included:
             break
         fitted_item: _RankedStatement | None = None
-        for tokens in range(max_tokens, 0, -1):
-            fitted = _fit(item.line, tokens)
+        for budget in range(max_tokens, 0, -1):
+            fitted = fit_text(item.line, budget)
             candidate = _RankedStatement(rank=item.rank, kind=item.kind, line=fitted)
             if fitted and _fits([candidate], len(ranked) - 1):
                 fitted_item = candidate

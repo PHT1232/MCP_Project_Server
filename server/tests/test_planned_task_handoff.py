@@ -101,7 +101,10 @@ async def _seed_plan(*, project: str = PROJECT, with_requirement: bool = False) 
             dependencies=[DependencySpec(task_local_id="t2", depends_on_local_id="t1")],
         )
         await planning_service.activate_plan(session, project, plan.id)
-        return {"plan_id": plan.id, **{t.local_task_id: t.id for t in plan.tasks}}
+        result = {"plan_id": plan.id, **{t.local_task_id: t.id for t in plan.tasks}}
+        if req_id:
+            result["req_id"] = req_id
+        return result
 
 
 def _client() -> TestClient:
@@ -418,6 +421,140 @@ async def test_prompt_mentions_evidence_only_when_requirement_linked(tmp_path: P
         result = await retrieval.prepare_task(session, project=PROJECT, task_id=ids["t2"])
     prompt = cast(str, result["prompt"])
     assert "record_requirement_evidence" in prompt
+
+
+# ---------------------------------------------------------------------------
+# Relevant conventions/decisions surfaced in the prompt (not just pcs tool
+# usage) — an agent given only the copied prompt should see the project's
+# own accumulated conventions/decisions relevant to the task, not just be
+# told pcs has a get_section tool it could call.
+# ---------------------------------------------------------------------------
+async def _add_context_entry(
+    project: str,
+    section: str,
+    *,
+    headline: str,
+    detail: str = "Some project-specific detail worth knowing before touching this code.",
+    linked_files: tuple[str, ...] = (),
+    related_entry_id: str | None = None,
+    priority: int = 0,
+) -> str:
+    async with session_scope() as session:
+        entry = await context_service.add_entry(
+            session,
+            project=project,
+            section=section,
+            headline=headline,
+            detail=detail,
+            linked_files=list(linked_files),
+            related_entry_id=related_entry_id,
+            priority=priority,
+        )
+        return entry.id
+
+
+async def test_convention_with_matching_linked_files_appears_in_prompt(tmp_path: Path) -> None:
+    await _register_and_index(tmp_path)
+    ids = await _seed_plan()
+    await _add_context_entry(
+        PROJECT,
+        "conventions",
+        headline="cart.py always validates non-negative totals",
+        linked_files=("shop/cart.py",),
+    )
+    async with session_scope() as session:
+        result = await retrieval.prepare_task(session, project=PROJECT, task_id=ids["t2"])
+    prompt = cast(str, result["prompt"])
+    assert "### Relevant conventions" in prompt
+    assert "cart.py always validates non-negative totals" in prompt
+
+
+async def test_unrelated_convention_is_omitted(tmp_path: Path) -> None:
+    await _register_and_index(tmp_path)
+    ids = await _seed_plan()
+    await _add_context_entry(
+        PROJECT,
+        "conventions",
+        headline="Unrelated: logo upload files must be under 2MB",
+        linked_files=("modules/branding/logo.py",),
+    )
+    async with session_scope() as session:
+        result = await retrieval.prepare_task(session, project=PROJECT, task_id=ids["t1"])
+    prompt = cast(str, result["prompt"])
+    assert "### Relevant conventions" not in prompt
+    assert "logo upload" not in prompt
+
+
+async def test_no_signal_means_no_conventions_or_decisions_sections(tmp_path: Path) -> None:
+    await _register_and_index(tmp_path)
+    ids = await _seed_plan()
+    await _add_context_entry(
+        PROJECT, "conventions", headline="Totally unrelated topic about deployment scripts"
+    )
+    await _add_context_entry(
+        PROJECT, "decisions", headline="Totally unrelated topic about logo rendering"
+    )
+    async with session_scope() as session:
+        result = await retrieval.prepare_task(session, project=PROJECT, task_id=ids["t1"])
+    prompt = cast(str, result["prompt"])
+    assert "### Relevant conventions" not in prompt
+    assert "### Relevant decisions" not in prompt
+
+
+async def test_decision_boosted_by_related_requirement_id(tmp_path: Path) -> None:
+    await _register_and_index(tmp_path)
+    ids = await _seed_plan(with_requirement=True)
+    await _add_context_entry(
+        PROJECT,
+        "decisions",
+        headline="Cart totals decision with no textual overlap at all",
+        detail="xyzzy plugh unrelated words that share nothing with the task text.",
+        related_entry_id=ids["req_id"],
+    )
+    async with session_scope() as session:
+        result = await retrieval.prepare_task(session, project=PROJECT, task_id=ids["t2"])
+    prompt = cast(str, result["prompt"])
+    assert "### Relevant decisions" in prompt
+    assert "Cart totals decision with no textual overlap at all" in prompt
+
+
+async def test_context_entries_token_budget_respected(tmp_path: Path) -> None:
+    await _register_and_index(tmp_path)
+    ids = await _seed_plan()
+    big_detail = "shop/cart.py pricing rule detail. " * 200  # ~1500+ tokens raw
+    for i in range(3):
+        await _add_context_entry(
+            PROJECT,
+            "decisions",
+            headline=f"Cart pricing decision {i}",
+            detail=big_detail,
+            linked_files=("shop/cart.py",),
+        )
+    async with session_scope() as session:
+        result = await retrieval.prepare_task(session, project=PROJECT, task_id=ids["t2"])
+    split = cast(dict[str, object], result["split"])
+    assert cast(int, result["token_estimate"]) <= cast(int, split["budget"])
+    assert cast(int, split["context_entries_tokens"]) <= 400  # CONTEXT_ENTRIES_TOKEN_CAP
+
+
+async def test_oversized_decision_gets_truncation_marker_and_drill_down_line(
+    tmp_path: Path,
+) -> None:
+    await _register_and_index(tmp_path)
+    ids = await _seed_plan()
+    big_detail = "shop/cart.py pricing rule detail. " * 200
+    await _add_context_entry(
+        PROJECT,
+        "decisions",
+        headline="Cart pricing decision",
+        detail=big_detail,
+        linked_files=("shop/cart.py",),
+    )
+    async with session_scope() as session:
+        result = await retrieval.prepare_task(session, project=PROJECT, task_id=ids["t2"])
+    prompt = cast(str, result["prompt"])
+    assert "…" in prompt
+    assert 'call get_section(section="decisions")' in prompt
 
 
 # ---------------------------------------------------------------------------

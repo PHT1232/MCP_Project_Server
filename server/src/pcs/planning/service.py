@@ -1289,11 +1289,16 @@ async def claim_task(
     )
     prereq_ids = list(deps_res.scalars().all())
     if prereq_ids:
+        # limit(1): this only checks existence of an uncompleted prerequisite,
+        # not identity — scalar_one_or_none() raises MultipleResultsFound
+        # without it whenever 2+ prerequisites are still incomplete.
         uncompleted_res = await session.execute(
-            select(PlanTask.id).where(
+            select(PlanTask.id)
+            .where(
                 PlanTask.id.in_(prereq_ids),
                 PlanTask.status != TASK_STATUS_COMPLETED,
             )
+            .limit(1)
         )
         if uncompleted_res.scalar_one_or_none() is not None:
             raise InvalidStateTransitionError(
@@ -1849,12 +1854,17 @@ async def complete_task(
             )
             dt_prereqs = list(dt_deps_res.scalars().all())
 
-            # Check if any prerequisite is NOT completed
+            # Check if any prerequisite is NOT completed. limit(1): this only
+            # checks existence, not identity — scalar_one_or_none() raises
+            # MultipleResultsFound without it whenever dt has 2+ prerequisites
+            # still incomplete (the actual bug this comment replaced).
             uncompleted_res = await session.execute(
-                select(PlanTask.id).where(
+                select(PlanTask.id)
+                .where(
                     PlanTask.id.in_(dt_prereqs),
                     PlanTask.status != TASK_STATUS_COMPLETED,
                 )
+                .limit(1)
             )
             if uncompleted_res.scalar_one_or_none() is None:
                 # All prerequisites complete! Transition pending -> ready

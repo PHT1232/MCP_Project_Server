@@ -1628,6 +1628,64 @@ async def test_claim_pending_task_rejected() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Regression: complete_task must not crash when a downstream task still has
+# 2+ uncompleted prerequisites (real bug — MultipleResultsFound)
+# ---------------------------------------------------------------------------
+@pytest.mark.asyncio
+async def test_complete_task_survives_downstream_task_with_multiple_uncompleted_prereqs() -> None:
+    """Completing one of several prerequisites must not crash while checking
+    whether a downstream task can unlock.
+
+    Observed live: `complete_task` raised "Multiple rows were found when one
+    or none was required" whenever the task being completed had a downstream
+    task (C here) that still had 2+ *other* unfinished prerequisites. Root
+    cause: the uncompleted-prerequisite existence check used
+    `scalar_one_or_none()` on a query that can legitimately return more than
+    one row (SELECT ... WHERE id IN (prereqs) AND status != completed) — that
+    method requires 0 or 1 rows. Fixed with `.limit(1)` since only existence,
+    not identity, is being checked.
+    """
+    await _seed_project(PROJECT_A)
+
+    tasks = [
+        TaskSpec(local_task_id="A", title="A", objective="Obj A"),
+        TaskSpec(local_task_id="B", title="B", objective="Obj B"),
+        TaskSpec(local_task_id="D", title="D", objective="Obj D"),
+        TaskSpec(local_task_id="C", title="C", objective="Obj C"),
+    ]
+    deps = [
+        DependencySpec(task_local_id="C", depends_on_local_id="A"),
+        DependencySpec(task_local_id="C", depends_on_local_id="B"),
+        DependencySpec(task_local_id="C", depends_on_local_id="D"),
+    ]
+
+    async with session_scope() as session:
+        plan = await create_plan_with_tasks(session, PROJECT_A, "Fan-in Plan", "Goal", tasks, deps)
+        activated = await activate_plan(session, PROJECT_A, plan.id)
+
+    a = next(t for t in activated.tasks if t.local_task_id == "A")
+    c = next(t for t in activated.tasks if t.local_task_id == "C")
+    assert a.status == TASK_STATUS_READY
+    assert c.status == TASK_STATUS_PENDING  # 3 prerequisites, none done yet
+
+    async with session_scope() as session:
+        claim = await claim_task(session, PROJECT_A, plan.id, a.id, "worker-1", 1800)
+
+    # Completing A leaves C with 2 remaining uncompleted prerequisites (B, D)
+    # — this is exactly the shape that crashed before the fix.
+    async with session_scope() as session:
+        completed_a = await complete_task(
+            session, PROJECT_A, plan.id, a.id, claim_token=claim.claim_token
+        )
+    assert completed_a.status == TASK_STATUS_COMPLETED
+
+    async with session_scope() as session:
+        refreshed = await get_plan(session, PROJECT_A, plan.id)
+    c_after = next(t for t in refreshed.tasks if t.local_task_id == "C")
+    assert c_after.status == TASK_STATUS_PENDING  # still blocked on B and D
+
+
+# ---------------------------------------------------------------------------
 # Migration test: Upgrade & Downgrade roundtrip
 # ---------------------------------------------------------------------------
 def test_migration_upgrade_and_downgrade() -> None:

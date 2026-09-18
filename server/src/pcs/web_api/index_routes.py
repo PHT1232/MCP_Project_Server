@@ -14,7 +14,7 @@ from pcs.index.ignore import PathTraversalError
 from pcs.index.search import SearchScopeName
 from pcs.index.watch import ensure_watch
 from pcs.logging import log_tool_call
-from pcs.planning.errors import TaskNotFoundError
+from pcs.planning.errors import TaskAlreadyTerminalError, TaskNotFoundError
 
 if TYPE_CHECKING:
     from mcp.server.fastmcp import FastMCP
@@ -31,6 +31,8 @@ def _error_response(exc: Exception) -> JSONResponse:
         return JSONResponse({"error": str(exc), "available": exc.available}, status_code=404)
     if isinstance(exc, TaskNotFoundError):
         return JSONResponse({"error": str(exc)}, status_code=404)
+    if isinstance(exc, TaskAlreadyTerminalError):
+        return JSONResponse({"error": str(exc)}, status_code=409)
     if isinstance(exc, (ValueError, PathTraversalError, FileNotFoundError)):
         return JSONResponse({"error": str(exc)}, status_code=400)
     raise exc

@@ -134,7 +134,14 @@ export function TaskCard({
         {canComplete && (
           <Button testId={`button-complete-${task.id}`} size="sm" onClick={onComplete} disabled={busy}><Check size={13} />Complete</Button>
         )}
-        <Button testId={`button-copy-prompt-${task.id}`} size="sm" variant="quiet" onClick={onCopyPrompt} disabled={busy}>
+        <Button
+          testId={`button-copy-prompt-${task.id}`}
+          size="sm"
+          variant="quiet"
+          onClick={onCopyPrompt}
+          disabled={busy || terminal}
+          title={terminal ? 'This task is already completed/cancelled — no handoff prompt to copy.' : undefined}
+        >
           {busy ? <Loader2 className="animate-spin" size={13} /> : <Copy size={13} />}
           Copy agent prompt
         </Button>

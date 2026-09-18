@@ -65,3 +65,21 @@ class PlanNotActiveError(PlanningError):
 
 class InvalidStateTransitionError(PlanningValidationError):
     """Disallowed task status transition (FR44, FR47)."""
+
+
+class TaskAlreadyTerminalError(PlanningError):
+    """A handoff prompt was requested for a task already completed or cancelled.
+
+    Generating a "build this" prompt for finished work asks an agent to redo
+    it — observed live: prepare_task returned a full implementation prompt
+    for a task pcs already recorded as completed by a different agent.
+    """
+
+    def __init__(self, task_id: str, status: str) -> None:
+        self.task_id = task_id
+        self.status = status
+        super().__init__(
+            f"Task {task_id!r} is already {status!r} — refusing to generate a handoff "
+            "prompt for finished work. If it needs to be revisited, reopen it with "
+            "set_task_status first."
+        )

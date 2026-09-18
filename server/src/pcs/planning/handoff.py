@@ -30,9 +30,9 @@ from pcs.context.types import (
 from pcs.index.hybrid import gather_relevant
 from pcs.index.retrieval import PackedChunk, pack_code_chunks
 from pcs.planning import service as planning
-from pcs.planning.errors import TaskNotFoundError
+from pcs.planning.errors import TaskAlreadyTerminalError, TaskNotFoundError
 from pcs.planning.models import PlanTask
-from pcs.planning.types import PlanTaskView, PlanView
+from pcs.planning.types import TERMINAL_TASK_STATUSES, PlanTaskView, PlanView
 from pcs.requirements.briefing import CONTRACT_TOKEN_CAP, get_task_contract
 from pcs.token_savings.baseline import full_file_tokens
 from pcs.token_savings.service import record_token_savings
@@ -295,6 +295,8 @@ async def render_handoff_prompt(
     if not task_id.strip():
         raise ValueError("task_id must not be empty")
     proj, plan, task = await _resolve_task(session, project=project, task_id=task_id)
+    if task.status in TERMINAL_TASK_STATUSES:
+        raise TaskAlreadyTerminalError(task.id, task.status)
     budget = _clamp_budget(max_tokens, proj.prepare_task_token_budget or PREPARE_TASK_TOKEN_CAP)
 
     deps = _dependency_statuses(task, plan)

@@ -73,8 +73,8 @@ export const toneStyles: Record<Tone, string> = {
 
 export function cx(...values: Array<string | false | null | undefined>) { return values.filter(Boolean).join(' '); }
 
-export function Button({ children, onClick, variant = 'primary', size = 'md', className, type = 'button', disabled = false, testId }: {
-  children: ReactNode; onClick?: () => void; variant?: 'primary' | 'secondary' | 'quiet' | 'danger'; size?: 'sm' | 'md'; className?: string; type?: 'button' | 'submit'; disabled?: boolean; testId: string;
+export function Button({ children, onClick, variant = 'primary', size = 'md', className, type = 'button', disabled = false, testId, title }: {
+  children: ReactNode; onClick?: () => void; variant?: 'primary' | 'secondary' | 'quiet' | 'danger'; size?: 'sm' | 'md'; className?: string; type?: 'button' | 'submit'; disabled?: boolean; testId: string; title?: string;
 }) {
   const variants = {
     primary: 'bg-[#3155d8] text-[#f8f7f0] border-[#3155d8] hover:bg-[#2948be]',
@@ -82,7 +82,7 @@ export function Button({ children, onClick, variant = 'primary', size = 'md', cl
     quiet: 'bg-transparent text-[#52636a] border-transparent hover:bg-[#e7ebe8]',
     danger: 'bg-[#f7e1dd] text-[#97433d] border-[#e9c1bc] hover:bg-[#f1d3ce]',
   };
-  return <button data-testid={testId} type={type} onClick={onClick} disabled={disabled} className={cx('inline-flex items-center justify-center gap-2 rounded-md border font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50', variants[variant], size === 'sm' ? 'h-8 px-2.5 text-xs' : 'h-9 px-3.5 text-sm', className)}>{children}</button>;
+  return <button data-testid={testId} type={type} onClick={onClick} disabled={disabled} title={title} className={cx('inline-flex items-center justify-center gap-2 rounded-md border font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50', variants[variant], size === 'sm' ? 'h-8 px-2.5 text-xs' : 'h-9 px-3.5 text-sm', className)}>{children}</button>;
 }
 
 export function Badge({ children, tone = 'ink', dot = false, testId }: { children: ReactNode; tone?: Tone; dot?: boolean; testId?: string }) {

@@ -20,7 +20,7 @@ from pcs.index import retrieval
 from pcs.index import service as index_service
 from pcs.mcp import build_http_app, mcp
 from pcs.planning import service as planning_service
-from pcs.planning.errors import TaskNotFoundError
+from pcs.planning.errors import TaskAlreadyTerminalError, TaskNotFoundError
 from pcs.planning.types import DependencySpec, TaskSpec
 from pcs.requirements import contracts
 
@@ -328,6 +328,34 @@ async def test_nonexistent_task_id_returns_not_found(tmp_path: Path) -> None:
             await retrieval.prepare_task(
                 session, project=PROJECT, task_id="00000000-0000-0000-0000-000000000000"
             )
+
+
+# ---------------------------------------------------------------------------
+# A completed/cancelled task refuses to generate a "build this" prompt
+# ---------------------------------------------------------------------------
+async def test_completed_task_id_refuses_handoff_prompt(tmp_path: Path) -> None:
+    """Observed live: prepare_task happily regenerated a full implementation
+    prompt for a task pcs already recorded as completed by a different agent
+    — an agent handed that prompt would redo finished work. The task's own
+    status must gate the prompt, not just its acceptance criteria text."""
+    await _register_and_index(tmp_path)
+    ids = await _seed_plan()
+    async with session_scope() as session:
+        claim = await planning_service.claim_task(
+            session, PROJECT, ids["plan_id"], ids["t1"], claimed_by="worker"
+        )
+        await planning_service.complete_task(
+            session, PROJECT, ids["plan_id"], ids["t1"], claim_token=claim.claim_token
+        )
+    async with session_scope() as session:
+        with pytest.raises(TaskAlreadyTerminalError, match="already 'completed'"):
+            await retrieval.prepare_task(session, project=PROJECT, task_id=ids["t1"])
+
+    client = _client()
+    response = _http(
+        client, "POST", f"/api/projects/{PROJECT}/prepare-task", json_body={"task_id": ids["t1"]}
+    )
+    assert response.status_code == 409
 
 
 # ---------------------------------------------------------------------------

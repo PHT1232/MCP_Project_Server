@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "cmd=\"$(jq -r '.tool_input.command')\"; first_line=\"$(printf '%s\\n' \"$cmd\" | head -n1)\"; if printf '%s' \"$first_line\" | grep -qE '^[[:space:]]*(grep|egrep|fgrep|rg|ack|ag)\\b'; then jq -n --arg reason 'This project has a pcs MCP project registered (\"MCP Project server local\"). Use mcp__pcs__search_code / retrieve_context / get_code_map for code search instead of grep/rg (see CLAUDE.md pcs-first rule) -- it also finds semantic matches grep cannot. If this really is not a source-code search (filtering log/command output, git history, etc.), pipe it through that other command first so grep/rg is not the first thing in the pipeline.' '{hookSpecificOutput:{hookEventName:\"PreToolUse\",permissionDecision:\"deny\",permissionDecisionReason:$reason}}'; fi"
+            "command": "cmd=\"$(jq -r '.tool_input.command')\"; first_line=\"$(printf '%s\\n' \"$cmd\" | head -n1)\"; if printf '%s' \"$first_line\" | grep -qE '^[[:space:]]*(grep|egrep|fgrep|rg|ack|ag|awk)\\b'; then jq -n --arg reason 'This project has a pcs MCP project registered (\"MCP Project server local\"). Use mcp__pcs__search_code / retrieve_context / get_code_map for code search instead of grep/rg/awk (see CLAUDE.md pcs-first rule) -- it also finds semantic matches those cannot. If this really is not a source-code search (filtering log/command output, git history, etc.), pipe it through that other command first so grep/rg/awk is not the first thing in the pipeline.' '{hookSpecificOutput:{hookEventName:\"PreToolUse\",permissionDecision:\"deny\",permissionDecisionReason:$reason}}'; fi"
           }
         ]
       }

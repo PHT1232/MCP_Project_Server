@@ -223,10 +223,22 @@ async def gather_relevant(
     its expensive fuzzy ``similarity()`` tier and lets semantic ranking do
     that job (cheaper and more precise for long free-text input; see
     ``hybrid_search``'s docstring). In keyword-only mode (no semantic
-    backend) a plain ``plainto_tsquery`` of a long sentence AND-matches
-    nothing, so we also probe the salient terms individually and fuse the
-    keyword hits — fuzzy stays on for that fallback, since it's the only
-    signal available without semantic.
+    backend, or the embedding provider just failed/timed out) a plain
+    ``plainto_tsquery`` of a long sentence AND-matches nothing, so we also
+    probe the salient terms individually and fuse the keyword hits.
+
+    This per-term fan-out passes ``fuzzy=False``. Measured live against a
+    real 43-term task description with the embedding provider unreachable:
+    fuzzy's ``similarity()`` tier averaged ~787ms/term (sequential scan, not
+    index-accelerated — see ``keyword_search``'s own docstring) vs ~141ms/term
+    without it, a 5.6x difference that turns this fallback into the dominant
+    cost of the whole call (the exact scenario most likely to hit it — an
+    embedding backend that's down or slow — already pays its own
+    ``embedding_timeout_seconds`` before this loop even starts). Exact/prefix
+    keyword and FTS matching on these already-salient, dictionary-shaped
+    terms covers the common case; fuzzy's marginal recall for typos in a
+    human/agent-authored task description isn't worth 5.6x the latency in
+    a path whose whole purpose is graceful degradation.
     """
     primary = await hybrid_search(
         session,
@@ -259,6 +271,7 @@ async def gather_relevant(
             count_matches=False,
             files=files,
             limit=limit,
+            fuzzy=False,
         )
         extra.extend(result.hits)
     ranked = hybrid_rank(extra, [], limit=limit)

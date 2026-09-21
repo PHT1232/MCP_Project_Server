@@ -346,6 +346,15 @@ async def test_runtime_fallback_probes_terms_and_keeps_relevance_consumers_valid
     queries = [str(call.kwargs["query"]) for call in keyword.await_args_list]
     assert task in queries
     assert "cart_total" in queries
+    # Regression: the per-term fallback fan-out must pass fuzzy=False — its
+    # similarity() tier averaged ~787ms/term against a real large index vs
+    # ~141ms/term without it (a 5.6x cost measured live), turning a long task
+    # description's many terms into the dominant latency of the whole call,
+    # in exactly the scenario (embedding provider down) that already pays
+    # its own timeout before this loop even starts.
+    per_term_calls = [call for call in keyword.await_args_list if call.kwargs["query"] != task]
+    assert per_term_calls
+    assert all(call.kwargs.get("fuzzy") is False for call in per_term_calls)
     assert len(gathered.ranked) < 3
     assert gathered.ranked
     assert retrieved["mode"] == "keyword"

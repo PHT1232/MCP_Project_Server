@@ -110,6 +110,7 @@ EXPECTED_TOOLS = frozenset(
         "onboard",
         "add_new_project",
         "delete_project",
+        "export_project_context",
     }
 )
 

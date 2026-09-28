@@ -14,6 +14,7 @@ Requests may set `X-PCS-Caller`; absent values are logged as `frontend`. Handled
 | `DELETE /api/projects/{project}` | none | `{deleted: true, id, name}`. Hard-unregisters pcs-owned rows for that project; the git repo and `.project-context` files on disk are not touched. Name becomes reusable. `404` with `available` for an unknown project. |
 | `PATCH /api/projects/{project}` | Any of `expiry_policy`, `expiry_days`, `briefing_token_budget`, `prepare_task_token_budget`, `headline_max_chars`, `detail_max_chars` | Updated project summary. |
 | `GET /api/projects/{project}/briefing` | Query: optional comma-separated `sections`; optional `max_tokens` | `{project, briefing}`. |
+| `GET /api/projects/{project}/export` | Query: `format=markdown` (default) or `format=json` | `{format, filename, media_type, content, project, exported_at}`. Full dump of all nine context sections with no truncation. Requirements entries are entry-level only. `400` for an invalid format; `404` with `available` for an unknown project. Same envelope as the MCP `export_project_context` tool. |
 | `PUT /api/projects/{project}/focus` | JSON: `text` | Project summary after replacing current focus. |
 
 Project summaries contain `id`, `name`, `root_path`, `status_line`, `briefing_token_budget`, `prepare_task_token_budget`, `headline_max_chars`, `detail_max_chars`, `expiry_policy`, and `expiry_days`.

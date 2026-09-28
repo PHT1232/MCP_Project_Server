@@ -21,6 +21,7 @@ from pcs.mcp.codemap_tools import register_codemap_tools
 from pcs.mcp.compliance_tools import register_compliance_tools
 from pcs.mcp.contract_tools import register_contract_tools
 from pcs.mcp.evidence_tools import register_evidence_tools
+from pcs.mcp.export_tools import register_export_tools
 from pcs.mcp.index_tools import register_index_tools
 from pcs.mcp.onboarding_tools import register_onboarding_tools
 from pcs.mcp.planning_tools import register_planning_tools
@@ -30,6 +31,7 @@ from pcs.mcp.tools import register_tools
 from pcs.web_api import register_routes
 from pcs.web_api.ai_settings_routes import register_ai_settings_routes
 from pcs.web_api.codemap_routes import register_codemap_routes
+from pcs.web_api.export_routes import register_export_routes
 from pcs.web_api.index_routes import register_index_routes
 from pcs.web_api.onboarding_routes import register_onboarding_routes
 from pcs.web_api.planning_routes import register_planning_routes
@@ -151,6 +153,7 @@ register_evidence_tools(mcp)
 register_planning_tools(mcp)
 register_token_savings_tools(mcp)
 register_onboarding_tools(mcp)
+register_export_tools(mcp)
 register_resources(mcp)
 register_routes(mcp)
 register_ai_settings_routes(mcp)
@@ -161,6 +164,7 @@ register_source_routes(mcp)
 register_planning_routes(mcp)
 register_token_savings_routes(mcp)
 register_onboarding_routes(mcp)
+register_export_routes(mcp)
 
 
 def build_http_app() -> Starlette:

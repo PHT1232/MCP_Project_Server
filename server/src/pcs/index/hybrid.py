@@ -106,9 +106,7 @@ async def hybrid_search(
     if backend is not None:
         status = await session.get(IndexStatus, row.id)
         embedded = (
-            status.embedded_chunk_count
-            if status is not None and not status.reindex_required
-            else 0
+            status.embedded_chunk_count if status is not None and not status.reindex_required else 0
         )
         semantic_ready = bool(embedded)
 

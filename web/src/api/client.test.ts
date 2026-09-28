@@ -28,6 +28,7 @@ import {
   updateAiSettings,
   updateEntry,
   updateRequirementInvariant,
+  exportProjectContext,
 } from "./client";
 
 function mockFetch(body: unknown, ok = true, status = 200): ReturnType<typeof vi.fn> {
@@ -126,6 +127,26 @@ describe("api client", () => {
       "/api/projects/a%20b/briefing",
       expect.anything(),
     );
+  });
+
+  it("GETs project context export with the format query", async () => {
+    const fetchMock = mockFetch({
+      format: "json",
+      filename: "acme-context.json",
+      media_type: "application/json; charset=utf-8",
+      content: "{}\n",
+      project: { id: "1", name: "acme", root_path: "/r" },
+      exported_at: "2026-09-28T00:00:00+00:00",
+    });
+
+    const envelope = await exportProjectContext("acme", "json");
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/projects/acme/export?format=json",
+      expect.anything(),
+    );
+    expect(envelope.filename).toBe("acme-context.json");
+    expect(envelope.content).toBe("{}\n");
   });
 
   it("throws ApiError with the server's project list on 404", async () => {

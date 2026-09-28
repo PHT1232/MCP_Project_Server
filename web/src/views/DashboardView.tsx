@@ -2,7 +2,9 @@ import type { ReactNode } from "react";
 
 import { Card } from "../components/Card";
 import { Callout } from "../components/Callout";
+import { PillButton } from "../components/PillButton";
 import { SectionTitle } from "../components/Typography";
+import { useExportProjectContext } from "../hooks/useExport";
 import { useBriefing } from "../hooks/useProjects";
 import { errorText } from "../lib/errors";
 import { FocusPanel } from "./FocusPanel";
@@ -12,6 +14,7 @@ import { SectionPanel } from "./SectionPanel";
 /** FR36 — the non-graph context dashboard for one project. */
 export function DashboardView({ project }: { project: string }): ReactNode {
   const briefing = useBriefing(project);
+  const exportMutation = useExportProjectContext(project);
 
   return (
     <div className="flex flex-col gap-24">
@@ -41,6 +44,39 @@ export function DashboardView({ project }: { project: string }): ReactNode {
         title="Decisions"
         description="Choices made, with the reasoning behind them."
       />
+
+      <Card surface="elevated">
+        <div className="flex flex-col gap-16">
+          <SectionTitle>Export project context</SectionTitle>
+          <p className="text-body text-fey-graphite">
+            Download every context section in full as Markdown or JSON.
+            Requirements stay entry-level — no contracts nested underneath.
+          </p>
+          {exportMutation.isError ? (
+            <Callout tone="alert">{errorText(exportMutation.error)}</Callout>
+          ) : null}
+          <div className="flex flex-wrap gap-12">
+            <PillButton
+              size="sm"
+              disabled={exportMutation.isPending}
+              onClick={() => {
+                exportMutation.mutate("markdown");
+              }}
+            >
+              Download Markdown
+            </PillButton>
+            <PillButton
+              size="sm"
+              disabled={exportMutation.isPending}
+              onClick={() => {
+                exportMutation.mutate("json");
+              }}
+            >
+              Download JSON
+            </PillButton>
+          </div>
+        </div>
+      </Card>
 
       <Card surface="elevated">
         <div className="flex flex-col gap-16">

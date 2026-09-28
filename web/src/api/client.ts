@@ -183,6 +183,32 @@ export function getBriefing(project: string): Promise<Briefing> {
   return request<Briefing>(projectPath(project, "/briefing"));
 }
 
+/** T30/T31 — full context dump as Markdown or JSON (no briefing truncation). */
+export type ExportFormat = "markdown" | "json";
+
+export interface ProjectContextExport {
+  format: ExportFormat;
+  filename: string;
+  media_type: string;
+  content: string;
+  project: {
+    id: string;
+    name: string;
+    root_path: string;
+  };
+  exported_at: string;
+}
+
+export function exportProjectContext(
+  project: string,
+  format: ExportFormat = "markdown",
+): Promise<ProjectContextExport> {
+  const params = new URLSearchParams({ format });
+  return request<ProjectContextExport>(
+    projectPath(project, `/export?${params.toString()}`),
+  );
+}
+
 /** FR36 — one dashboard section with its entries. */
 export function getSection(
   project: string,
